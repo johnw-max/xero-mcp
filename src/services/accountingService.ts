@@ -70,6 +70,7 @@ import type {
   SalesInvoiceSnapshot,
   SupplierBillSnapshot,
   TaxRateSummary,
+  ActorTenantContext,
 } from "../providers/types.js";
 import type { ConnectionTicketService } from "./connectionTicketService.js";
 import { requireOAuthBoundRequestContext, type RequestContext } from "../security/requestContext.js";
@@ -1811,16 +1812,35 @@ export class AccountingService {
     input: unknown;
     action: () => Promise<T>;
     recordId?: (result: T) => string | undefined;
+    /**
+     * Optional Agent-visible projection used only for the governance output hash.
+     * The action result itself and all write receipts remain unchanged.
+     */
+    auditOutput?: (result: T) => unknown;
     governanceDisposition?: GovernanceDisposition;
+    /** Connection status alone may report a disconnected state without a bound tenant. */
+    allowUnresolvedTenant?: boolean;
+    /** Receives the already-resolved server-side tenant context without causing a second Provider lookup. */
+    onResolvedContext?: (context: ActorTenantContext | undefined) => void;
+    /**
+     * Re-resolves the server-owned binding after the Provider action and
+     * withholds the result if the active organisation changed mid-call.
+     * Ordinary MCP reads enable this to close the organisation-switch TOCTOU
+     * window; connection-status checks deliberately remain control-plane only.
+     */
+    revalidateContextAfterAction?: boolean;
   }): Promise<T> {
     const callId = options.callId ?? `call_${randomUUID()}`;
     const startedAt = new Date();
     const requestHash = hashObject(options.input);
     let tenantId: string | undefined;
     try {
-      tenantId = (await this.#provider.resolveContext(options.principal ?? options.actorId)).tenantId;
+      const resolvedContext = await this.#provider.resolveContext(options.principal ?? options.actorId);
+      tenantId = resolvedContext.tenantId;
+      options.onResolvedContext?.(resolvedContext);
     } catch {
       // Connection status and failed connection calls are still audited without a tenant.
+      options.onResolvedContext?.(undefined);
     }
 
     const intent: AuditIntent = {
@@ -1885,8 +1905,55 @@ export class AccountingService {
     }
 
     let result: T;
+    let auditOutput: unknown;
     try {
+      if (!tenantId && !options.allowUnresolvedTenant) {
+        throw new AppError(
+          "CONFIGURATION_ERROR",
+          "The Xero action could not be bound to a verified server-side organisation.",
+          { httpStatus: 503 },
+        );
+      }
       result = await options.action();
+      if (options.revalidateContextAfterAction) {
+        let revalidatedContext: ActorTenantContext;
+        try {
+          revalidatedContext = await this.#provider.resolveContext(options.principal ?? options.actorId);
+        } catch (error) {
+          throw new AppError(
+            "CONFIGURATION_ERROR",
+            "The Xero organisation binding could not be revalidated after the read.",
+            { httpStatus: 503, cause: error },
+          );
+        }
+        if (!tenantId || revalidatedContext.tenantId !== tenantId) {
+          throw new AppError(
+            "CONFIGURATION_ERROR",
+            "The Xero organisation binding changed while the read was running; the result was withheld.",
+            { httpStatus: 503 },
+          );
+        }
+      }
+      if (principal?.legacyDemo && !options.allowUnresolvedTenant) {
+        let revalidatedContext: ActorTenantContext;
+        try {
+          revalidatedContext = await this.#provider.resolveContext(principal);
+        } catch (error) {
+          throw new AppError(
+            "CONFIGURATION_ERROR",
+            "The legacy Xero tenant binding could not be revalidated after the action.",
+            { httpStatus: 503, cause: error },
+          );
+        }
+        if (!tenantId || revalidatedContext.tenantId !== tenantId) {
+          throw new AppError(
+            "CONFIGURATION_ERROR",
+            "The legacy Xero tenant binding changed while the action was running.",
+            { httpStatus: 503 },
+          );
+        }
+      }
+      auditOutput = options.auditOutput ? options.auditOutput(result) : result;
     } catch (error) {
       const safe = toSafeError(error);
       const completion: AuditCompletion = {
@@ -1935,7 +2002,7 @@ export class AccountingService {
         eventType: principal ? "mcp.tool.completed" : "user.action.completed",
         disposition: options.governanceDisposition ?? "NOT_EVALUATED",
         outcome: "SUCCEEDED",
-        outputHash: hashObject(result),
+        outputHash: hashObject(auditOutput),
         evidence: {
           toolName: options.toolName,
           policyEvaluation: "RECORDED_BY_EXISTING_CAPABILITY_AND_WRITE_GATES",

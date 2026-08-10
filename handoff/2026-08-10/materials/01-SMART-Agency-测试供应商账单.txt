@@ -1,0 +1,17 @@
+SUPPLIER INVOICE — SYNTHETIC TEST MATERIAL
+
+Supplier: SMART Agency
+Supplier reference: ZC-UAT-SMART-20260810-001
+Invoice date: 2026-08-10
+Due date: 2026-08-24
+Currency: USD
+
+Description: Design consulting retainer — August 2026
+Quantity: 1
+Unit price: 175.00
+Subtotal: 175.00
+Tax: Not shown on the supplier document
+Total due: 175.00
+
+This is synthetic material created only for testing the accounting-assistant workflow.
+It is not evidence that any real service was purchased, approved or paid.

@@ -22,6 +22,15 @@ Xero 仍是正式账本。PostgreSQL 只保存连接控制、短期确认状态�
 
 若目标公司已经包含在本次 Xero OAuth 授权中，无需重新登录 Xero。只有目标公司不在已授权列表时，才重新走 Xero OAuth。手动断开并重连仍保留为备用路径。
 
+## 当前实现与线上验收
+
+- 已部署版本：0.3.1 build `20260810.1`，公网工具数 44。
+- Agent2 已完成 `Demo Company (Global) / USD → zcloak / HKD → Demo Company (Global) / USD` 的往返切换；两次页面确认后都由 Agent 重新调用 `xero_get_organisation` 回读。
+- Work 已在独立 OAuth client 下回读 Demo Company，并从自然语言请求调用 `xero_start_organisation_switch` 返回一次性链接；为保持最终 Demo 状态，没有在 Work 确认切走。
+- 当前同一开发者测试身份可同时拥有 Agent2 与 Work 的独立 active installation；同一 client 重新授权仍会原子替换旧 grant，避免一个 Host 的授权覆盖另一个 Host。
+- 线上账套切换页已经收敛为单卡片授权结构：zCloak AI 品牌位于卡片外，Xero 请求与 Organisation 选择位于卡片内；390×844 视口下无横向或纵向溢出，主按钮无需滚动即可到达。
+- 写闸全程关闭，本轮 0 preparation、0 execute、0 Xero 会计写入。
+
 ## 关键安全边界
 
 - 一个 MCP installation 在任意时刻只有一个 current Organisation。
@@ -88,8 +97,8 @@ Xero 仍是正式账本。PostgreSQL 只保存连接控制、短期确认状态�
 
 ## 正式上线前仍需完成
 
-1. 在隔离 PostgreSQL 测试库执行 022–024 迁移及并发切换、append-only、备份恢复测试。
+1. 在公司环境继续验证并发切换、append-only、备份恢复和滚动发布；当前隔离 PostgreSQL 17 强制测试已经通过，但不替代生产演练。
 2. 将审计完成事件与业务状态通过同一事务 outbox 或等价机制收口，消除“业务已完成但完成事件暂未落库”的窗口。
 3. 明确审计留存期限、访问权限、数据主体请求、跨境存储和密钥轮换策略。
-4. ATP 正式规范可用后实现版本化 adapter，并用固定 fixtures 做双向/单向兼容测试。
+4. ATP 正式规范可用后实现版本化 adapter，并用固定 fixtures 做兼容测试。
 5. 若要宣称 SAFR aligned/compliant，需由治理、法律、安全和独立验证方依据最终系统及适用监管要求评估。

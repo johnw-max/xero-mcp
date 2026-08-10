@@ -28,6 +28,8 @@ Xero Refresh Token 的上游策略由 Xero 管理；本项目不把它暴露给 
 
 Agent 不能仅凭聊天文本静默切换，也不能把用户上传文件中的公司名当成授权。目标 Organisation 不在当前已授权列表时，才需要重新走 Xero OAuth。详细控制见 [Organisation 切换与治理审计设计](./XERO-ORGANISATION-SWITCH-AND-GOVERNANCE-AUDIT-ZH.md)。
 
+2026-08-10 线上验收已证明：同一个 Agent2 installation 可以从 `Demo Company (Global)` 切到 `zcloak`，按工具回读得到 HKD，再切回 Demo Company 并回读 USD；Work 的独立 OAuth client 同时保持自己的 Demo Company binding，不会被另一个 Host 的切换覆盖。
+
 ## 主动断开做什么
 
 产品的“断开 Xero”调用标准 OAuth `/revoke`，优先提交当前 MCP Refresh Token：

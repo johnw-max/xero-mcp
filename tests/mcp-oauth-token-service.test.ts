@@ -316,6 +316,7 @@ class FakeTokenRepository implements McpOAuthTokenRepositoryDependency {
         installationId: token.installationId,
         bindingId: token.bindingId,
         connectionId: token.connectionId,
+        bindingRevision: 7,
         authorizationId: "provider-authorization-1",
         workspaceId: "workspace-1",
         subjectType: "USER",
@@ -889,6 +890,7 @@ describe("McpOAuthTokenService", () => {
         installationId: "installation-1",
         bindingId: "binding-1",
         connectionId: "connection-1",
+        bindingRevision: 7,
         authorizationId: "provider-authorization-1",
         workspaceId: "workspace-1",
         subjectType: "USER",
@@ -906,6 +908,13 @@ describe("McpOAuthTokenService", () => {
     });
     expect(JSON.stringify(authInfo.extra)).not.toContain(accessOne);
     expect(JSON.stringify(authInfo.extra)).not.toMatch(/token|hash/i);
+
+    const stored = repository.access.get(
+      keyedOAuthSecretHash(config.tokenHashKey, "access_token", accessOne),
+    );
+    if (!stored) throw new Error("issued access token was not stored");
+    stored.resolved = { ...stored.resolved, bindingRevision: 0 };
+    await expect(service.verifyAccessToken(accessOne)).rejects.toBeInstanceOf(InvalidTokenError);
 
     await expect(service.verifyAccessToken("unknown-access-token"))
       .rejects.toBeInstanceOf(InvalidTokenError);

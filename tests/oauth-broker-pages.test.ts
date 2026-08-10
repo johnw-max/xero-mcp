@@ -22,11 +22,13 @@ describe("Xero broker organisation selection page", () => {
     expect(html).toContain('type="radio"');
     expect(html).toContain('name="connection_id"');
     expect(html).toContain("required");
-    expect(html).not.toContain("checked");
-    expect(html).toContain("PERSONAL POC — HOST IDENTITY UNVERIFIED");
+    expect(html).not.toMatch(/<input[^>]+\schecked(?:\s|>|=)/iu);
+    expect(html).toContain("Test connection · Intended for one user.");
     expect(html).toContain('action="/oauth/xero/select"');
-    expect(html).toContain("ask the Agent to switch Xero organisation");
-    expect(html).toContain("Reconnect through Xero OAuth only when the organisation is not in the authorised list");
+    expect(html).toContain("You can switch organisations later from the conversation.");
+    expect(html).toContain("Choose an organisation");
+    expect(html).not.toContain("Your connection stays controlled");
+    expect(html).not.toContain("content-grid");
   });
 
   it("renders every organisation without leaking unsafe markup", () => {
@@ -43,8 +45,11 @@ describe("Xero broker organisation selection page", () => {
     expect(html).toContain("Alpha &amp; Co");
     expect(html).toContain("&lt;Beta&gt;");
     expect(html).not.toContain("<script>");
-    expect(html).not.toContain("<img");
+    expect(html).not.toContain("<img src=x onerror=alert(1)>");
+    expect(html).toContain('data-connection-page="xero"');
+    expect(html).toContain('alt="Xero"');
     expect(html.match(/name="connection_id"/g)).toHaveLength(2);
+    expect(html.indexOf('class="product-brand"')).toBeLessThan(html.indexOf('class="card"'));
   });
 
   it("refuses to render an empty selection", () => {
@@ -78,7 +83,7 @@ describe("Personal POC Host return page", () => {
     expect(html).toContain('name="state" value="state-&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"');
     expect(html).toContain("Return to Agent2 &lt;Finance&gt;");
     expect(html).toContain("Trial &lt;Alpha &amp; Co&gt;");
-    expect(html).toContain("read the connection status and confirm this same organisation");
+    expect(html).toContain("Connection ready");
     expect(html.match(/id="return-to-host"/gu)).toHaveLength(1);
     expect(html.match(/type="submit"/gu)).toHaveLength(1);
     expect(html).not.toContain("href=");

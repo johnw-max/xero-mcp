@@ -1,6 +1,6 @@
 # Xero Accounting MCP Demo — Hetzner 部署与安全回滚
 
-> **当前 VPS 不使用本文件中的容器 Nginx 拓扑。** 现有宿主机 Nginx 已占用 80/443，stock-mcp 已使用 `127.0.0.1:18001`。0.3.0 发布必须遵循 [HETZNER-HOST-NGINX-RUNBOOK.md](./HETZNER-HOST-NGINX-RUNBOOK.md)：保留现有 blue `127.0.0.1:18002`，用 `compose.host-nginx.green.vps.yaml` 把候选 Xero 单独绑定到 `127.0.0.1:18004`，验收后再原子切换 upstream。本文件只保留为全新独立 VPS 的备选方案，不能与当前模式同时启动。
+> **当前 VPS 不使用本文件中的容器 Nginx 拓扑。** 现有宿主机 Nginx 已占用 80/443，stock-mcp 已使用 `127.0.0.1:18001`。0.3.1 发布必须遵循 [HETZNER-HOST-NGINX-RUNBOOK.md](./HETZNER-HOST-NGINX-RUNBOOK.md)：保留现有 blue `127.0.0.1:18002`，用 `compose.host-nginx.green.vps.yaml` 把候选 Xero 单独绑定到 `127.0.0.1:18004`，验收后再原子切换 upstream。本文件只保留为全新独立 VPS 的备选方案，不能与当前模式同时启动。
 
 ## 1. 状态与边界
 

@@ -123,6 +123,7 @@ function oauthPrincipal(scopes: string[], agentId = "agent-a") {
     installationId: `installation-${agentId}`,
     bindingId: `binding-${agentId}`,
     connectionId: "connection-a",
+    bindingRevision: 1,
     authorizationId: "authorization-a",
     workspaceId: "workspace-a",
     subjectType: "USER",

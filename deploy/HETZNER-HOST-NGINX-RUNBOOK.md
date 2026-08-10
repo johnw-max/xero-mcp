@@ -1,6 +1,6 @@
-# Xero MCP 0.3.0 — Hetzner / Agent2 Green 发布、回滚与验收
+# Xero MCP 0.3.1 — Hetzner / Agent2 Green 发布、回滚与验收
 
-状态：`0.3.0 RELEASE CANDIDATE RUNBOOK / NOT DEPLOYED`  
+状态：`0.3.1 DEPLOYED / ONLINE UAT PASSED / WRITES OFF`
 目标 Host：`Agent2`  
 目标 MCP slot：`accounting-mcp`；`quickbooks-accounting-mcp` 只做连续性检查  
 Xero canonical MCP：`https://mcp.jiayuanwang.xyz/mcp`  
@@ -8,7 +8,7 @@ QuickBooks canonical MCP：`https://mcp.jiayuanwang.xyz/quickbooks/mcp`
 Xero Agent2 精确回调：`https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callback`  
 QuickBooks Agent2 精确回调：`https://agent2.zcloak.ai/api/mcp/quickbooks-accounting-mcp/oauth/callback`
 
-> 本文只覆盖 Xero 0.3.0 发布。QuickBooks、stock-mcp 和 trade 是连续性保护对象，不在本次构建、迁移或重启范围。只有完成第 7 节线上验收后，才能表述为“Agent2 已连接 Xero 0.3.0”。目前仍应区分本地通过、已部署和线上真人通过。
+> 本文只覆盖 Xero 0.3.1 发布。QuickBooks、stock-mcp 和 trade 是连续性保护对象，不在本次构建、迁移或重启范围。0.3.1 已完成部署及 Agent2/Work 只读验收；仍需区分“受控 Demo 已通过”和“公司生产多用户已上线”。
 
 ## 1. 固定拓扑与运维边界
 
@@ -22,7 +22,7 @@ existing host Nginx
       |------------------------------|
 127.0.0.1:18002  blue       127.0.0.1:18004  green       127.0.0.1:18003
       |                              |                          |
-existing Xero rollback          Xero 0.3.0 candidate        QuickBooks unchanged
+existing Xero rollback          Xero 0.3.1 candidate        QuickBooks unchanged
       |                              |
 Xero OAuth / Accounting API    Intuit OAuth / QuickBooks API
       |------------------------------|
@@ -31,7 +31,7 @@ Xero OAuth / Accounting API    Intuit OAuth / QuickBooks API
 
 硬边界：
 
-- 现有 blue Xero 继续保留在 `127.0.0.1:18002`；0.3.0 green 只使用 `deploy/docker-compose/compose.host-nginx.green.vps.yaml` 并绑定 `127.0.0.1:18004`。
+- 现有 blue Xero 继续保留在 `127.0.0.1:18002`；0.3.1 green 只使用 `deploy/docker-compose/compose.host-nginx.green.vps.yaml` 并绑定 `127.0.0.1:18004`。
 - QuickBooks App 继续只绑定 `127.0.0.1:18003`，stock-mcp 继续使用 `127.0.0.1:18001`，PostgreSQL 不发布端口。
 - green Compose 只定义 `accounting-mcp-green`，通过 external network 复用现有 PostgreSQL；它不得定义、重建或停止 PostgreSQL、QuickBooks、Nginx、stock 或 trade。
 - Xero 与 QuickBooks 使用独立镜像变量；重启 QuickBooks 时不得隐式复用 `APP_IMAGE` 或回退到本地默认 tag。
@@ -50,7 +50,7 @@ OAuth Broker 开启后：
 - Xero access token 的典型有效期约 30 分钟；到期不是整条连接自动登出，服务会在授权仍有效时用 Xero refresh token 自动续期。Agent2 侧 MCP access token 默认 15 分钟，使用旋转 refresh token 续期；`/revoke` 提供主动失效入口并立即撤销 installation、binding 与整条 refresh family。
 - MCP token 固定到一个 installation、一个 binding 和一个 Xero connection；工具参数不能切换 Tenant。
 - 当前是 `PERSONAL_POC_ONLY=true`：一个预配置测试用户、一个 Host client、一个 active installation；不宣称团队身份隔离。
-- 0.3.0 当前固定公开 44 个工具：23 个会计读取、10 个准备、10 个受控执行，以及 1 个只生成短效确认链接的 Organisation 切换入口。会计读取覆盖 Organisation、Contact、Account、Tax、Invoice/Bill、Credit Note、Payment、Quote、Purchase Order、Manual Journal、Item、Bank Transaction 和有界 Trial Balance。
+- 0.3.1 当前固定公开 44 个工具：23 个会计读取、10 个准备、10 个受控执行，以及 1 个只生成短效确认链接的 Organisation 切换入口。会计读取覆盖 Organisation、Contact、Account、Tax、Invoice/Bill、Credit Note、Payment、Quote、Purchase Order、Manual Journal、Item、Bank Transaction 和有界 Trial Balance。
 - `xero.draft.write` 只允许受控创建 Supplier Bill、Sales Invoice、Quote、Purchase Order、Credit Note、Manual Journal 的 DRAFT，以及明确确认后的基础 Contact/非库存 Item 创建或修改。AUTHORISE/SUBMIT/POST、Payment、Credit Note allocation、Bank 写入、最终 reconciliation、Void/Delete、Attachment 和 Account/Tax 写入不开放。
 - Broker 的新 `xero.read` 授权必须包含 `accounting.payments.read`。OAuth-off 回滚中的旧连接若没有该 scope，原有连接/查询工具仍可工作，但 Payment 历史不可用并应提示重新授权；不能为了新增 Payment 读取让旧 Token 的全部工具整体断连。
 
@@ -58,7 +58,7 @@ OAuth Broker 开启后：
 
 ## 3. 必需配置与 Secret
 
-本候选版本固定放在 `/opt/xero-accounting-mcp-demo-0.3.0-20260810.1`；以下命令均从该目录执行。从 `deploy/env.vps.example` 复制为只在 VPS 存在的 `deploy/.env.vps`，权限设为 `0600`。真实 Secret 不进入 Git、聊天、截图或模型上下文。
+本候选版本固定放在 `/opt/xero-accounting-mcp-demo-0.3.1-20260810.1`；以下命令均从该目录执行。从 `deploy/env.vps.example` 复制为只在 VPS 存在的 `deploy/.env.vps`，权限设为 `0600`。真实 Secret 不进入 Git、聊天、截图或模型上下文。
 
 必须替换：
 
@@ -72,7 +72,7 @@ OAuth Broker 开启后：
 必须保持：
 
 ```text
-APP_IMAGE=xero-accounting-mcp-demo:0.3.0-xero-pilot-20260810.1
+APP_IMAGE=xero-accounting-mcp-demo:0.3.1-xero-pilot-20260810.1
 QUICKBOOKS_APP_IMAGE=xero-accounting-mcp-demo:0.2.12-quickbooks-20260806
 GREEN_APP_LOOPBACK_PORT=18004
 EXISTING_EGRESS_NETWORK=xero-accounting-mcp-demo_egress
@@ -162,7 +162,7 @@ docker compose \
 
 ## 5. 构建、迁移与启动
 
-### 5.1 只构建 Xero 0.3.0
+### 5.1 只构建 Xero 0.3.1
 
 主 Compose 只用于构建新 Xero 镜像和访问已经运行的 PostgreSQL；不得对其中的常驻服务执行 `up`：
 
@@ -179,13 +179,13 @@ docker compose \
   -f deploy/docker-compose/compose.host-nginx.vps.yaml \
   build --pull accounting-mcp
 docker image inspect \
-  xero-accounting-mcp-demo:0.3.0-xero-pilot-20260810.1 \
-  --format 'Xero 0.3.0 image: {{.Id}}'
+  xero-accounting-mcp-demo:0.3.1-xero-pilot-20260810.1 \
+  --format 'Xero 0.3.1 image: {{.Id}}'
 ```
 
 ### 5.2 迁移：有界锁等待，但不是严格零中断
 
-先执行只读防重检查，再只用 0.3.0 Xero 镜像运行一次 migration job；`--no-deps` 保证 Compose 不启动或重建 PostgreSQL/QuickBooks：
+先执行只读防重检查，再只用 0.3.1 Xero 镜像运行一次 migration job；`--no-deps` 保证 Compose 不启动或重建 PostgreSQL/QuickBooks：
 
 ```sh
 
@@ -256,7 +256,7 @@ sudo ss -ltnp | grep -E ':(18002|18003|18004)\b'
 GREEN_HEALTH=$(curl -fsS -H 'Host: mcp.jiayuanwang.xyz' \
   http://127.0.0.1:18004/healthz)
 printf '%s' "$GREEN_HEALTH" | grep -F '"status":"ok"'
-printf '%s' "$GREEN_HEALTH" | grep -F '"version":"0.3.0"'
+printf '%s' "$GREEN_HEALTH" | grep -F '"version":"0.3.1"'
 printf '%s' "$GREEN_HEALTH" | grep -F '"toolCount":44'
 printf '%s' "$GREEN_HEALTH" | grep -F \
   '"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"'
@@ -306,7 +306,7 @@ sudo /usr/local/sbin/switch-xero-upstream.sh status
 sudo /usr/local/sbin/switch-xero-upstream.sh green
 ```
 
-工具只允许把 `xero_accounting_mcp_demo` 在 18002/18004 之间切换；它先验证目标 health/ready。green 必须严格返回 ready，并精确匹配 0.3.0、44 个工具和工具集指纹。migration 020 成功后的常规 blue 回滚只允许目标 `18002`，其 health 必须为 HTTP 200、`status=ok`、`version=0.2.13`，ready 必须为 HTTP 200 的精确 `{"status":"ready","version":"0.2.13"}`。
+工具只允许把 `xero_accounting_mcp_demo` 在 18002/18004 之间切换；它先验证目标 health/ready。green 必须严格返回 ready，并精确匹配 0.3.1、44 个工具和工具集指纹。migration 020 成功后的常规 blue 回滚只允许目标 `18002`，其 health 必须为 HTTP 200、`status=ok`、`version=0.2.13`，ready 必须为 HTTP 200 的精确 `{"status":"ready","version":"0.2.13"}`。
 
 只有 migration 020 尚未恢复 legacy readiness、且确认必须应急恢复读侧入口时，才允许显式执行 `sudo ALLOW_BLUE_FORWARD_SCHEMA_NOT_READY=true /usr/local/sbin/switch-xero-upstream.sh blue`。此 break-glass 仅额外接受 HTTP 503 的精确 `{"status":"not_ready","version":"0.2.13"}`；脚本还必须通过 Docker 找到唯一同时匹配 Compose service `accounting-mcp` 和发布端口 18002 的运行中容器，精确核验绑定为 `3000/tcp|127.0.0.1|18002`，且唯一 `XERO_WRITE_ENABLED` 配置为 `false`。Docker 不可用、容器数量不唯一、绑定或环境无法精确证明时全部 fail-closed。loopback 预检与公网切换后检查执行相同规则，成功时输出 `WARNING=BLUE_FORWARD_SCHEMA_NOT_READY_BREAK_GLASS` 和 `BLUE_BREAK_GLASS_READ_ONLY_VERIFIED=true`。任何其他状态码、字段、版本或 body 都 fail-closed。
 
@@ -367,7 +367,7 @@ curl -i https://mcp.jiayuanwang.xyz/quickbooks/mcp
 
 预期：
 
-- health/ready 200；Xero `/healthz` 必须精确包含 `version=0.3.0`、`toolCount=44` 和 `toolsetHash=d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224`；Agent2 连接后的 `tools/list` 必须恰好返回同一 44 个工具；
+- health/ready 200；Xero `/healthz` 必须精确包含 `version=0.3.1`、`toolCount=44` 和 `toolsetHash=d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224`；Agent2 连接后的 `tools/list` 必须恰好返回同一 44 个工具；
 - metadata 只发布 Authorization Code、refresh、S256、`client_secret_basic` / `client_secret_post`、`xero.read` 与 `xero.draft.write`；
 - Xero resource 精确为 `https://mcp.jiayuanwang.xyz/mcp`，QuickBooks resource 精确为 `https://mcp.jiayuanwang.xyz/quickbooks/mcp`，bearer method 只有 header；
 - 无 Token 的 `/mcp` 返回 401，并带 path-specific `resource_metadata` challenge；
@@ -399,15 +399,15 @@ curl -i https://mcp.jiayuanwang.xyz/quickbooks/mcp
 ```sh
 sudo install -o root -g root -m 0700 \
   scripts/agent2_uat_write_gate_vps.sh \
-  /usr/local/sbin/xero-agent2-uat-write-gate-030-20260810-1
-sudo /usr/local/sbin/xero-agent2-uat-write-gate-030-20260810-1 install-failsafe
-sudo systemctl start xero-write-gate-boot-close-030-20260810-1.service
-sudo /usr/local/sbin/xero-agent2-uat-write-gate-030-20260810-1 preflight
-sudo /usr/local/sbin/xero-agent2-uat-write-gate-030-20260810-1 open
-sudo /usr/local/sbin/xero-agent2-uat-write-gate-030-20260810-1 status
+  /usr/local/sbin/xero-agent2-uat-write-gate-031-20260810-1
+sudo /usr/local/sbin/xero-agent2-uat-write-gate-031-20260810-1 install-failsafe
+sudo systemctl start xero-write-gate-boot-close-031-20260810-1.service
+sudo /usr/local/sbin/xero-agent2-uat-write-gate-031-20260810-1 preflight
+sudo /usr/local/sbin/xero-agent2-uat-write-gate-031-20260810-1 open
+sudo /usr/local/sbin/xero-agent2-uat-write-gate-031-20260810-1 status
 ```
 
-open 之前脚本会精确校验 0.3.0 image、44-tool contract、单一 active installation/binding、目标 tenant、公开 resource，以及 QuickBooks/PostgreSQL container 连续性。open 的同一次 Compose create 已直接使用 `XERO_RESTART_POLICY=no`，不存在先以 `unless-stopped` 创建、随后再修改策略的窗口；close、15 分钟自动关闭和 boot-close 则从创建瞬间使用 `unless-stopped`。自动关闭与 boot-close 都是 `Restart=on-failure`，最多 4 次启动（首次加最多 3 次重试），间隔 15 秒，限制在 15 分钟窗口内。boot-close 继续只是 Nginx 的非阻断 Wants；Docker 持续故障不会把共享 443 变成 Requires 依赖。`status` 在写闸开启时必须同时输出并验证 timer 触发目标、oneshot service、实际 restart policy、重试上限和当前重试次数；缺少或漂移即失败。写入窗口内只用合成材料走代表性 DRAFT：
+open 之前脚本会精确校验 0.3.1 image、44-tool contract、单一 active installation/binding、目标 tenant、公开 resource，以及 QuickBooks/PostgreSQL container 连续性。open 的同一次 Compose create 已直接使用 `XERO_RESTART_POLICY=no`，不存在先以 `unless-stopped` 创建、随后再修改策略的窗口；close、15 分钟自动关闭和 boot-close 则从创建瞬间使用 `unless-stopped`。自动关闭与 boot-close 都是 `Restart=on-failure`，最多 4 次启动（首次加最多 3 次重试），间隔 15 秒，限制在 15 分钟窗口内。boot-close 继续只是 Nginx 的非阻断 Wants；Docker 持续故障不会把共享 443 变成 Requires 依赖。`status` 在写闸开启时必须同时输出并验证 timer 触发目标、oneshot service、实际 restart policy、重试上限和当前重试次数；缺少或漂移即失败。写入窗口内只用合成材料走代表性 DRAFT：
 
 6. Agent 先展示完整拟写入字段、目标 Organisation、业务类型、金额/税额和幂等依据；用户在当前对话明确确认。
 7. 创建一张 DRAFT Bill 并按 Invoice ID 立即回读；重复相同请求不得产生第二张。
@@ -417,8 +417,8 @@ open 之前脚本会精确校验 0.3.0 image、44-tool contract、单一 active 
 11. 不等 15 分钟，验收结束立即主动关闭并复查：
 
 ```sh
-sudo /usr/local/sbin/xero-agent2-uat-write-gate-030-20260810-1 close
-sudo /usr/local/sbin/xero-agent2-uat-write-gate-030-20260810-1 status
+sudo /usr/local/sbin/xero-agent2-uat-write-gate-031-20260810-1 close
+sudo /usr/local/sbin/xero-agent2-uat-write-gate-031-20260810-1 status
 ```
 
 即使操作员忘记 close，timer 也会在 15 分钟后只重建 18004 green 为写关闭状态，不重启 QuickBooks/PostgreSQL。AUTHORISE/SUBMIT/POST、Payment/Allocation、Bank 写入、最终 reconciliation、Void/Delete、Attachment、Account/Tax 写入均不验，也不能把分析表述为报税或关账完成。
@@ -446,7 +446,7 @@ curl -sS -w '\nHTTP %{http_code}\n' https://mcp.jiayuanwang.xyz/readyz
 - migration 已成功时不做数据库逆迁移；`016_xero_document_type_duplicate_guards.sql` 的 schema 保留，旧 blue 只能在 `XERO_WRITE_ENABLED=false` 下作为读侧回滚。migration 020 成功后常规回滚必须拿到 200 ready，不得设置 `ALLOW_BLUE_FORWARD_SCHEMA_NOT_READY`。只有 020 尚未成功且满足上文容器只读证明时，才可使用显式 break-glass 接受精确 503；除此以外的 schema 不兼容一律停止并进入维护处置，禁止用删列/删表恢复。
 - 不修改 `QUICKBOOKS_APP_IMAGE`，不 build/restart/recreate QuickBooks、PostgreSQL、stock 或 trade。
 - 不执行 `down -v`，不删除 PostgreSQL 目录，不暗中撤销 Xero 全局授权，也不重新开放临时 SSH 22222/UFW 规则。
-- 只有明确决定回到 legacy 单人模式时，才可单独评审 `MCP_OAUTH_BROKER_ENABLED=false`；这不是常规 0.3.0 回滚动作。
+- 只有明确决定回到 legacy 单人模式时，才可单独评审 `MCP_OAUTH_BROKER_ENABLED=false`；这不是常规 0.3.1 回滚动作。
 
 ## 9. 交付口径
 
@@ -455,8 +455,8 @@ curl -sS -w '\nHTTP %{http_code}\n' https://mcp.jiayuanwang.xyz/readyz
 | 层级 | 可用表述 |
 |---|---|
 | 本地测试通过 | “OAuth Broker 与绑定逻辑已在本地/测试数据库通过” |
-| Hetzner green 部署通过 | “0.3.0 已在 18004 通过精确版本、44-tool contract、ready 与依赖连续性检查，尚未切流” |
-| Hetzner 切流通过 | “公网已切至 0.3.0 green，blue 18002 保留可回滚，QuickBooks/stock/trade 未重启” |
+| Hetzner green 部署通过 | “0.3.1 已在 18004 通过精确版本、44-tool contract、ready 与依赖连续性检查，尚未切流” |
+| Hetzner 切流通过 | “公网已切至 0.3.1 green，blue 18002 保留可回滚，QuickBooks/stock/trade 未重启” |
 | Agent2 真人连接通过 | “Agent2 单人 Xero Personal POC 已连通” |
 | 会计主流程通过 | “Agent2 已完成存量读取、材料分析、受确认 DRAFT 写入、Xero 精确回读与写闸关闭” |
 

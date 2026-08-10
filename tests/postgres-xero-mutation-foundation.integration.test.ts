@@ -111,6 +111,7 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
       installationId,
       bindingId,
       connectionId,
+      bindingRevision: 1,
       authorizationId,
       workspaceId,
       subjectType: "USER",

@@ -95,11 +95,11 @@ next_count() {
 case "$url" in
   http://127.0.0.1:18004/healthz)
     test "$max_time" = "15" || exit 67
-    printf '%s' '{"status":"ok","version":"0.3.0","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
+    printf '%s' '{"status":"ok","version":"0.3.1","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
     ;;
   http://127.0.0.1:18004/readyz)
     test "$max_time" = "15" || exit 67
-    printf '%s' '{"status":"ready","version":"0.3.0"}'
+    printf '%s' '{"status":"ready","version":"0.3.1"}'
     ;;
   */quickbooks/healthz)
     count=$(next_count quickbooks-health-count)
@@ -136,14 +136,14 @@ case "$url" in
         if test "$count" -eq 1; then
           printf '%s' '{"status":"ok","version":"0.2.13","toolCount":15}'
         else
-          printf '%s' '{"status":"ok","version":"0.3.0","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
+          printf '%s' '{"status":"ok","version":"0.3.1","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
         fi
         ;;
       target_always_wrong)
         printf '%s' '{"status":"ok","version":"0.2.13","toolCount":15}'
         ;;
       target_ready|quickbooks_always_wrong)
-        printf '%s' '{"status":"ok","version":"0.3.0","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
+        printf '%s' '{"status":"ok","version":"0.3.1","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
         ;;
       *) exit 65 ;;
     esac
@@ -160,14 +160,14 @@ case "$url" in
         if test "$count" -eq 1; then
           printf '%s' '{"status":"ready","version":"0.2.13"}'
         else
-          printf '%s' '{"status":"ready","version":"0.3.0"}'
+          printf '%s' '{"status":"ready","version":"0.3.1"}'
         fi
         ;;
       target_always_wrong)
         printf '%s' '{"status":"ready","version":"0.2.13"}'
         ;;
       target_ready|quickbooks_always_wrong)
-        printf '%s' '{"status":"ready","version":"0.3.0"}'
+        printf '%s' '{"status":"ready","version":"0.3.1"}'
         ;;
       *) exit 65 ;;
     esac

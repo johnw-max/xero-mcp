@@ -46,9 +46,19 @@ import {
 } from "../domain/xeroContactItemMutationSchemas.js";
 import type { AccountingService } from "../services/accountingService.js";
 import type { OrganisationSwitchService } from "../services/organisationSwitchService.js";
-import { createXeroTrialBalanceCallToolResult } from "../services/xeroTrialBalanceBounds.js";
+import {
+  createXeroTrialBalanceCallToolResult,
+  type XeroTrialBalanceAgentResult,
+} from "../services/xeroTrialBalanceBounds.js";
 import type { RequestContext } from "../security/requestContext.js";
 import { XERO_RELEASE_VERSION } from "../xeroRelease.js";
+import type { ActorTenantContext } from "../providers/types.js";
+import {
+  buildNormalizedXeroReadEvidence,
+  getXeroReadEvidenceProfile,
+  normalizedXeroReadPayload,
+  safeXeroReadResult,
+} from "./xeroReadEvidence.js";
 
 function success(value: unknown): CallToolResult {
   const payload = { result: value };
@@ -94,6 +104,39 @@ async function audited<T>(options: {
   formatSuccess?: (result: T, auditCallId: string) => CallToolResult;
 }): Promise<CallToolResult> {
   const auditCallId = `call_${randomUUID()}`;
+  const readEvidenceProfile = getXeroReadEvidenceProfile(options.toolName);
+  let tenantContext: ActorTenantContext | undefined;
+  let tenantResolutionObserved = false;
+  let preparedReadResult: CallToolResult | undefined;
+  const prepareReadResult = (result: T): unknown => {
+    const safeResult = safeXeroReadResult(result);
+    const evidence = buildNormalizedXeroReadEvidence({
+      toolName: options.toolName,
+      auditCallId,
+      requestContext: options.context,
+      ...(tenantContext ? { tenantContext } : {}),
+      input: options.input,
+      safeResult,
+    });
+    if (!evidence) throw new Error(`Missing normalized read-evidence profile for ${options.toolName}.`);
+    if (options.toolName === "xero_get_trial_balance") {
+      preparedReadResult = createXeroTrialBalanceCallToolResult(
+        safeResult as XeroTrialBalanceAgentResult,
+        evidence,
+      ) as CallToolResult;
+      const text = preparedReadResult.content[0];
+      if (text?.type !== "text") {
+        throw new Error("Trial Balance read evidence did not produce canonical text content.");
+      }
+      return JSON.parse(text.text) as unknown;
+    }
+    const payload = normalizedXeroReadPayload(safeResult, evidence);
+    preparedReadResult = {
+      content: [{ type: "text", text: JSON.stringify(payload) }],
+      structuredContent: payload,
+    };
+    return payload;
+  };
   try {
     const result = await options.service.withAudit({
       callId: auditCallId,
@@ -106,6 +149,7 @@ async function audited<T>(options: {
         : options.requiredScope === "xero.draft.write"
           ? "AUTO_EXECUTE"
           : "OBSERVE",
+      allowUnresolvedTenant: options.toolName === "xero_connection_status",
       action: () => {
         if (!options.context.scopes.includes(options.requiredScope)) {
           throw new AppError(
@@ -114,10 +158,30 @@ async function audited<T>(options: {
             { httpStatus: 403 },
           );
         }
+        if (options.toolName !== "xero_connection_status" && tenantResolutionObserved && tenantContext === undefined) {
+          throw new AppError(
+            "CONFIGURATION_ERROR",
+            "The Xero ledger read could not be bound to a verified server-side organisation.",
+            { httpStatus: 503 },
+          );
+        }
         return options.action();
       },
+      onResolvedContext: (resolved) => {
+        tenantResolutionObserved = true;
+        tenantContext = resolved;
+      },
+      ...(readEvidenceProfile && options.toolName !== "xero_connection_status"
+        ? { revalidateContextAfterAction: true }
+        : {}),
+      ...(readEvidenceProfile ? { auditOutput: prepareReadResult } : {}),
       ...(options.recordId ? { recordId: options.recordId } : {}),
     });
+    if (readEvidenceProfile) {
+      if (!preparedReadResult) prepareReadResult(result);
+      if (!preparedReadResult) throw new Error(`Missing prepared read result for ${options.toolName}.`);
+      return preparedReadResult;
+    }
     return options.formatSuccess ? options.formatSuccess(result, auditCallId) : success(result);
   } catch (error) {
     return failure(error);
@@ -139,7 +203,7 @@ export function createAccountingMcpServer(
     "xero_connection_status",
     {
       title: "Xero connection status",
-      description: "Returns the exact Xero organisation currently bound to this Agent. Organisation changes require a separate short-lived user confirmation page and never happen silently from chat text.",
+      description: "Returns connector control-plane health and a safe bound-connection display. It does not prove a ledger target; use xero_get_organisation for target verification. Organisation changes require a separate short-lived user confirmation page and never happen silently from chat text.",
       inputSchema: noInputSchema,
       annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false },
     },
@@ -1043,7 +1107,6 @@ export function createAccountingMcpServer(
       toolName: "xero_get_trial_balance",
       input,
       action: () => service.getTrialBalance(context, input),
-      formatSuccess: createXeroTrialBalanceCallToolResult,
     }),
   );
 

@@ -105,6 +105,8 @@ export interface ResolveAgentConnectionBindingInput {
 export interface ResolvedAgentConnectionBinding {
   installationId: string;
   bindingId: string;
+  /** Monotonic revision of the installation's server-owned active binding row. */
+  bindingRevision: number;
   workspaceId: string;
   subjectType: BindingSubjectType;
   subjectId: string;
@@ -381,6 +383,8 @@ export interface ResolvedMcpAccessToken {
   installationId: string;
   bindingId: string;
   connectionId: string;
+  /** Monotonic revision resolved from the current active binding, never from token claims. */
+  bindingRevision: number;
   authorizationId: string;
   workspaceId: string;
   subjectType: BindingSubjectType;

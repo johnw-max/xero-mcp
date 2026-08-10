@@ -378,6 +378,8 @@ export class McpOAuthTokenService {
       resolved.resource !== this.#config.resourceUri ||
       resolved.audience !== this.#config.resourceUri ||
       resolved.expiresAt <= now ||
+      !Number.isSafeInteger(resolved.bindingRevision) ||
+      resolved.bindingRevision < 1 ||
       !hasExactSupportedScopes(resolved.grantedScopes, this.#config.scopes)
     ) {
       throw invalidToken();
@@ -394,6 +396,7 @@ export class McpOAuthTokenService {
         installationId: resolved.installationId,
         bindingId: resolved.bindingId,
         connectionId: resolved.connectionId,
+        bindingRevision: resolved.bindingRevision,
         authorizationId: resolved.authorizationId,
         workspaceId: resolved.workspaceId,
         subjectType: resolved.subjectType,

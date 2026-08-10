@@ -174,7 +174,7 @@ function setSelectionPageHeaders(response: Response): void {
   setPrivateBrowserHeaders(response);
   response.setHeader(
     "Content-Security-Policy",
-    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   );
 }
 
@@ -182,7 +182,7 @@ function setPersonalPocReturnPageHeaders(response: Response, formAction: string)
   setPrivateBrowserHeaders(response);
   response.setHeader(
     "Content-Security-Policy",
-    `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; base-uri 'none'; frame-ancestors 'none'`,
+    `default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action ${formAction}; base-uri 'none'; frame-ancestors 'none'`,
   );
 }
 

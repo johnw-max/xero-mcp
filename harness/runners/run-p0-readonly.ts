@@ -246,6 +246,7 @@ function readOnlyResolvedToken(tenantId: string): ResolvedMcpAccessToken {
     installationId: "installation_p0_readonly_001",
     bindingId: "binding_p0_readonly_001",
     connectionId: SYNTHETIC_CONNECTION_ID,
+    bindingRevision: 1,
     authorizationId: "authorization_p0_readonly_001",
     workspaceId: "workspace_p0_readonly",
     subjectType: "USER",
@@ -307,6 +308,19 @@ function callToolPayload(callToolResult: CallToolResult | undefined): unknown {
 
 function toolResult(callToolResult: CallToolResult | undefined): unknown {
   return valueObject(callToolPayload(callToolResult))?.result;
+}
+
+function readEvidence(execution: ToolExecution | undefined): JsonObject | undefined {
+  return valueObject(callToolPayload(execution?.callToolResult));
+}
+
+function safeXeroTargetRef(tenantId: string): string {
+  return `xero-target:${hashObject({ provider: "xero", tenantId }).slice(0, 32)}`;
+}
+
+function auditReferenceWasPersisted(execution: ToolExecution | undefined, evidence: JsonObject | undefined): boolean {
+  const auditRef = evidence?.tool_call_or_audit_ref;
+  return typeof auditRef === "string" && execution?.audits.some((audit) => audit.callId === auditRef) === true;
 }
 
 function unique(values: string[]): string[] {
@@ -658,7 +672,9 @@ function evaluateConnection(options: {
   writeProbe: ToolExecution;
 }): OracleCaseResult {
   const status = valueObject(options.executions.get("connection_status")?.result);
-  const organisation = valueObject(options.executions.get("get_organisation")?.result);
+  const organisationExecution = options.executions.get("get_organisation");
+  const organisation = valueObject(organisationExecution?.result);
+  const organisationEvidence = readEvidence(organisationExecution);
   const refs = [...options.executions.values()].flatMap((execution) => execution.evidenceRefs);
   const providerCalls = [...options.executions.values()].flatMap((execution) => execution.providerCalls);
   const inputHasTenantSelector = [...options.executions.values()].some((execution) => recursiveContainsTenantSelector(execution.input));
@@ -675,11 +691,37 @@ function evaluateConnection(options: {
     (JSON.stringify(options.writeProbe.structuredContent) ?? "").includes("xero.draft.write") &&
     options.writeProbe.providerCalls.every((call) => call.method !== "createDraftSupplierBill") &&
     options.provider.writeAttempts === 0;
+  const expectedSafeTargetRef = safeXeroTargetRef(options.tenantId);
+  const organisationFactPaths = Array.isArray(organisationEvidence?.fact_paths)
+    ? organisationEvidence.fact_paths.map(String)
+    : [];
+  const targetEvidencePassed = organisation?.name === options.provider.tenantName &&
+    typeof organisation?.baseCurrency === "string" &&
+    !hasOwn(organisation, "organisationId") &&
+    organisationEvidence?.capability_id === "ledger.target.resolve" &&
+    organisationEvidence?.bound_target_ref_safe === expectedSafeTargetRef &&
+    organisationEvidence?.organisation_display_name === options.provider.tenantName &&
+    organisationEvidence?.base_currency === organisation.baseCurrency &&
+    typeof organisationEvidence?.binding_revision === "string" &&
+    !String(organisationEvidence.binding_revision).includes(options.tenantId) &&
+    auditReferenceWasPersisted(organisationExecution, organisationEvidence) &&
+    organisationFactPaths.includes("/result/name") &&
+    organisationFactPaths.includes("/result/baseCurrency") &&
+    !JSON.stringify(callToolPayload(organisationExecution?.callToolResult)).includes(options.tenantId);
   const oracleResults = [
     oracle("exact_43_tools", sameStringSet(options.listTools, PINNED_TOOL_SURFACE), options.listTools, [options.listToolsRef], "tools/list must equal the independent pinned 43-tool surface."),
     oracle("connected_true", status?.connected === true, status?.connected ?? null, options.executions.get("connection_status")?.evidenceRefs ?? [], "Connection status must be true from parsed model-visible MCP output."),
     oracle("write_scope_absent", scopes.includes("xero.draft.write") === false && sameStringSet(scopes, ["xero.read"]), scopes, options.executions.get("connection_status")?.evidenceRefs ?? [], "The bound installation must expose only xero.read."),
-    oracle("exact_org_id", organisation?.organisationId === options.tenantId, organisation?.organisationId ?? null, options.executions.get("get_organisation")?.evidenceRefs ?? [], "Organisation output must match the server-bound synthetic tenant."),
+    oracle("exact_org_id", targetEvidencePassed, {
+      name: organisation?.name ?? null,
+      baseCurrency: organisation?.baseCurrency ?? null,
+      rawOrganisationIdPresent: hasOwn(organisation, "organisationId"),
+      capabilityId: organisationEvidence?.capability_id ?? null,
+      boundTargetRefSafe: organisationEvidence?.bound_target_ref_safe ?? null,
+      bindingRevision: organisationEvidence?.binding_revision ?? null,
+      auditRefPersisted: auditReferenceWasPersisted(organisationExecution, organisationEvidence),
+      factPaths: organisationFactPaths,
+    }, organisationExecution?.evidenceRefs ?? [], "Organisation output must match the server-bound synthetic tenant through a safe target/binding evidence envelope without exposing the raw tenant locator."),
     oracle("provider_binding_exact", bindingPassed, bindingObserved, refs, "Every Provider call must use the OAuth connection binding and one exact tenant."),
     oracle("no_tenant_parameter", !inputHasTenantSelector, { inputHasTenantSelector }, refs, "No MCP tool input may select a tenant or organisation."),
     oracle("read_scope_blocks_schema_valid_write", writeBlocked, {
@@ -751,11 +793,23 @@ function evaluateHistory(options: {
   const page2 = options.executions.get("ap_page_2")?.result as InvoiceListResult | undefined;
   const payments1 = options.executions.get("payment_page_1")?.result as PaymentListResult | undefined;
   const payments2 = options.executions.get("payment_page_2")?.result as PaymentListResult | undefined;
-  const exact = valueObject(options.executions.get("exact_bill")?.result);
+  const exactExecution = options.executions.get("exact_bill");
+  const exact = valueObject(exactExecution?.result);
+  const exactEvidence = readEvidence(exactExecution);
   const invoiceIds = unique([...(page1?.invoices ?? []), ...(page2?.invoices ?? [])].map((invoice) => invoice.invoiceId));
   const paymentTypes = unique([...(payments1?.payments ?? []), ...(payments2?.payments ?? [])].map((payment) => payment.type));
   const requiredTypes = ["ACCPAYPAYMENT", "APCREDITPAYMENT", "APPREPAYMENTPAYMENT", "APOVERPAYMENTPAYMENT"];
   const refs = [...options.executions.values()].flatMap((execution) => execution.evidenceRefs);
+  const expectedSafeTargetRef = safeXeroTargetRef(options.tenantId);
+  const exactFactPaths = Array.isArray(exactEvidence?.fact_paths) ? exactEvidence.fact_paths.map(String) : [];
+  const exactReadPassed = exact?.invoiceId === "40000000-0000-4000-8000-000000000001" &&
+    !hasOwn(exact, "tenantId") &&
+    exactEvidence?.capability_id === "ledger.object.read_exact" &&
+    exactEvidence?.bound_target_ref_safe === expectedSafeTargetRef &&
+    typeof exactEvidence?.binding_revision === "string" &&
+    auditReferenceWasPersisted(exactExecution, exactEvidence) &&
+    exactFactPaths.includes("/result/invoiceId") &&
+    !JSON.stringify(callToolPayload(exactExecution?.callToolResult)).includes(options.tenantId);
   const oracleResults = [
     successfulManifestSteps(options.scenario, options.executions),
     oracle("ap_page_1_has_next", page1?.pagination.hasNextPage === true, page1?.pagination ?? null, options.executions.get("ap_page_1")?.evidenceRefs ?? [], "AP page 1 must explicitly prove another page exists."),
@@ -767,11 +821,16 @@ function evaluateHistory(options: {
     ].every((id) => invoiceIds.includes(id)), invoiceIds, refs, "Both pages must aggregate to the three unique synthetic AP bills."),
     oracle("payment_history_complete", payments2?.pagination.hasNextPage === false, payments2?.pagination ?? null, options.executions.get("payment_page_2")?.evidenceRefs ?? [], "The second payment page must explicitly complete the history."),
     oracle("all_ap_payment_types_seen", requiredTypes.every((type) => paymentTypes.includes(type as never)), paymentTypes, refs, "Cash payment, AP credit, AP prepayment, and AP overpayment types must all be evidenced."),
-    oracle("exact_bill_same_id", exact?.invoiceId === "40000000-0000-4000-8000-000000000001" && exact?.tenantId === options.tenantId, {
+    oracle("exact_bill_same_id", exactReadPassed, {
       invoiceId: exact?.invoiceId ?? null,
-      tenantId: exact?.tenantId ?? null,
+      rawTenantIdPresent: hasOwn(exact, "tenantId"),
+      capabilityId: exactEvidence?.capability_id ?? null,
+      boundTargetRefSafe: exactEvidence?.bound_target_ref_safe ?? null,
+      bindingRevision: exactEvidence?.binding_revision ?? null,
+      auditRefPersisted: auditReferenceWasPersisted(exactExecution, exactEvidence),
+      factPaths: exactFactPaths,
       linesTruncated: exact?.linesTruncated ?? null,
-    }, options.executions.get("exact_bill")?.evidenceRefs ?? [], "Exact-ID supplier bill readback must preserve both record ID and bound tenant ID."),
+    }, exactExecution?.evidenceRefs ?? [], "Exact-ID supplier bill readback must preserve the record ID and matching safe target/binding evidence without exposing the raw tenant locator."),
   ];
   return finalizeCase({ scenario: options.scenario, oracleResults, evidenceRefs: refs });
 }

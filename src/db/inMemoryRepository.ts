@@ -238,6 +238,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
   readonly #oauthInstallations = new Map<string, OAuthInstallation>();
   readonly #agentConnectionBindings = new Map<string, AgentConnectionBinding>();
   readonly #activeBindingIds = new Map<string, string>();
+  readonly #activeBindingRevisions = new Map<string, number>();
   readonly #organisationSwitchSessions = new Map<string, OrganisationSwitchSession>();
   readonly #oauthBrokerFlows = new Map<string, OAuthBrokerFlow>();
   readonly #oauthBrokerAuthorizationFlows = new Map<string, OAuthBrokerAuthorizationFlow>();
@@ -462,6 +463,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     this.#agentConnectionBindings.set(saved.bindingId, clone(saved));
     if (!this.#activeBindingIds.has(saved.installationId)) {
       this.#activeBindingIds.set(saved.installationId, saved.bindingId);
+      this.#activeBindingRevisions.set(saved.installationId, 1);
     }
     return clone(saved);
   }
@@ -566,7 +568,9 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       };
       this.#agentConnectionBindings.set(targetBinding.bindingId, clone(targetBinding));
     }
+    const nextBindingRevision = this.#currentBindingRevision(context.session.installationId) + 1;
     this.#activeBindingIds.set(context.session.installationId, targetBinding.bindingId);
+    this.#activeBindingRevisions.set(context.session.installationId, nextBindingRevision);
     const consumed: OrganisationSwitchSession = {
       ...context.session,
       consumedAt: input.now,
@@ -931,6 +935,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     this.#oauthInstallations.set(flow.installationId, activatedInstallation);
     this.#agentConnectionBindings.set(binding.bindingId, binding);
     this.#activeBindingIds.set(binding.installationId, binding.bindingId);
+    this.#activeBindingRevisions.set(binding.installationId, 1);
     this.#oauthAuthorizationCodes.set(authorizationCode.codeHash, authorizationCode);
     this.#oauthBrokerAuthorizationFlows.set(flow.flowHash, completed);
     return {
@@ -2652,6 +2657,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     const resolved: ResolvedAgentConnectionBinding = {
       installationId: installation.installationId,
       bindingId: binding.bindingId,
+      bindingRevision: this.#currentBindingRevision(installation.installationId),
       workspaceId: binding.workspaceId,
       subjectType: binding.subjectType,
       subjectId: binding.subjectId,
@@ -2690,6 +2696,13 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     return [...this.#agentConnectionBindings.values()].find(
       (binding) => binding.installationId === installationId && binding.status === "ACTIVE",
     )?.bindingId ?? "";
+  }
+
+  #currentBindingRevision(installationId: string): number {
+    const explicit = this.#activeBindingRevisions.get(installationId);
+    if (explicit !== undefined) return explicit;
+    // Compatibility for in-memory fixtures created before active-binding epochs were tracked.
+    return this.#currentBindingId(installationId) ? 1 : 0;
   }
 
   #requireActiveBindingTuple(

@@ -1,0 +1,9 @@
+INTERNAL TEST NOTE
+
+The business description and total on the attached synthetic SMART Agency invoice look reasonable for review.
+
+Please compare the supplier and reference against Xero history and suggest an expense account only if the current Xero chart of accounts supports it.
+
+The supplier document does not show a tax rate or tax amount. Ask the accountant to confirm the tax treatment. Do not assume tax exempt, zero rated or No Tax.
+
+This note is not approval to create, authorise, submit, send or pay anything in Xero.

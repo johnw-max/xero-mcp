@@ -124,6 +124,20 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String) : [];
 }
 
+function positiveSafeInteger(value: unknown, field: string): number {
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string" && /^[1-9][0-9]*$/u.test(value)
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new AppError("CONFIGURATION_ERROR", `The database returned an invalid ${field}.`, {
+      httpStatus: 500,
+    });
+  }
+  return parsed;
+}
+
 function isScopeSubset(candidate: string[], allowed: string[]): boolean {
   const allowedSet = new Set(allowed);
   return candidate.every((scope) => allowedSet.has(scope));
@@ -445,6 +459,7 @@ function mapResolvedAgentBinding(row: Row): ResolvedAgentConnectionBinding {
   const resolved: ResolvedAgentConnectionBinding = {
     installationId: String(row.oauth_installation_id),
     bindingId: String(row.binding_id),
+    bindingRevision: positiveSafeInteger(row.binding_revision, "active binding revision"),
     workspaceId: String(row.workspace_id),
     subjectType: row.subject_type as ResolvedAgentConnectionBinding["subjectType"],
     subjectId: String(row.subject_id),
@@ -1270,7 +1285,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
     input: ResolveAgentConnectionBindingInput,
   ): Promise<ResolvedAgentConnectionBinding | undefined> {
     const result = await this.pool.query(
-      `SELECT binding.*, connection.authorization_id, connection.tenant_id,
+      `SELECT binding.*, active.binding_revision, connection.authorization_id, connection.tenant_id,
               connection.tenant_name, connection.provider_connection_id
        FROM agent_connection_bindings binding
        JOIN oauth_installations installation
@@ -1381,7 +1396,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
   ): Promise<OrganisationSwitchContext | undefined> {
     if (!isValidDate(now)) return undefined;
     const result = await this.pool.query(
-      `SELECT switch.*, binding.*, connection.authorization_id, connection.tenant_id,
+      `SELECT switch.*, binding.*, active.binding_revision, connection.authorization_id, connection.tenant_id,
               connection.tenant_name, connection.provider_connection_id
        FROM organisation_switch_sessions switch
        JOIN oauth_installation_active_bindings active
@@ -1543,7 +1558,8 @@ export class PostgresAccountingRepository implements AccountingRepository {
            changed_at = $4
          WHERE oauth_installation_id = $1
            AND binding_id = $5
-           AND connection_id = $6`,
+           AND connection_id = $6
+         RETURNING binding_revision`,
         [
           sessionRow.oauth_installation_id,
           targetBindingRow.binding_id,
@@ -1568,10 +1584,14 @@ export class PostgresAccountingRepository implements AccountingRepository {
         return undefined;
       }
       await client.query("COMMIT");
+      const currentBindingRow: Row = {
+        ...targetBindingRow,
+        binding_revision: updatedActive.rows[0]?.binding_revision,
+      };
       return {
         session: mapOrganisationSwitchSession(consumed.rows[0] as Row),
         previousBinding: mapResolvedAgentBinding(previousRow),
-        currentBinding: mapResolvedAgentBinding(targetBindingRow),
+        currentBinding: mapResolvedAgentBinding(currentBindingRow),
         changed: String(previousRow.connection_id) !== String(targetBindingRow.connection_id),
       };
     } catch (error) {
@@ -2651,18 +2671,18 @@ export class PostgresAccountingRepository implements AccountingRepository {
               access_token.issued_at, access_token.expires_at,
               binding.oauth_installation_id, binding.binding_id, binding.workspace_id,
               binding.subject_type, binding.subject_id, binding.agent_id, binding.connection_id,
-              binding.policy_id, connection.authorization_id, connection.tenant_id
+              binding.policy_id, active.binding_revision, connection.authorization_id, connection.tenant_id
        FROM mcp_access_tokens access_token
        JOIN agent_connection_bindings source_binding
          ON source_binding.binding_id = access_token.binding_id
         AND source_binding.oauth_installation_id = access_token.oauth_installation_id
         AND source_binding.connection_id = access_token.connection_id
-       LEFT JOIN oauth_installation_active_bindings active
+       JOIN oauth_installation_active_bindings active
          ON active.oauth_installation_id = access_token.oauth_installation_id
        JOIN agent_connection_bindings binding
-         ON binding.binding_id = COALESCE(active.binding_id, source_binding.binding_id)
+         ON binding.binding_id = active.binding_id
         AND binding.oauth_installation_id = access_token.oauth_installation_id
-        AND binding.connection_id = COALESCE(active.connection_id, source_binding.connection_id)
+        AND binding.connection_id = active.connection_id
        JOIN oauth_installations installation
          ON installation.installation_id = binding.oauth_installation_id
        JOIN provider_connections connection ON connection.connection_id = binding.connection_id
@@ -2701,6 +2721,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
       installationId: String(row.oauth_installation_id),
       bindingId: String(row.binding_id),
       connectionId: String(row.connection_id),
+      bindingRevision: positiveSafeInteger(row.binding_revision, "active binding revision"),
       authorizationId: String(row.authorization_id),
       workspaceId: String(row.workspace_id),
       subjectType: row.subject_type as ResolvedMcpAccessToken["subjectType"],

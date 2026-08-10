@@ -119,10 +119,10 @@
               "strength": "HARD",
               "kind": "JSON_PATH",
               "source": "TOOL_OUTPUT",
-              "path": "$.result.organisationId",
+              "path": "$.bound_target_ref_safe",
               "operator": "EQ",
-              "expected": "10000000-0000-4000-8000-000000000001",
-              "evidence_required": ["tool output", "provider call principal"],
+              "expected": "xero-target:dc9d3f00dd10d78457f4b82e437e258b",
+              "evidence_required": ["normalized read envelope", "persisted audit reference", "provider call principal"],
               "on_failure": "FAIL_CASE"
             }
           ]

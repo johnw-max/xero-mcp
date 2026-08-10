@@ -120,6 +120,7 @@ describeWithPostgres("Postgres organisation switching and governance audit", () 
       now,
     });
     if (!before) throw new Error("seeded access token did not resolve");
+    expect(before.bindingRevision).toBe(1);
 
     const service = new OrganisationSwitchService({
       repository,
@@ -150,6 +151,29 @@ describeWithPostgres("Postgres organisation switching and governance audit", () 
       agentId: ids.agent,
       connectionId: ids.connectionA,
     })).resolves.toBeUndefined();
+    const afterSwitch = await repository.resolveMcpAccessToken({
+      tokenHash: ids.accessHash,
+      expectedResource: resource,
+      expectedAudience: resource,
+      now,
+    });
+    expect(afterSwitch).toMatchObject({
+      bindingId: ids.bindingB,
+      connectionId: ids.connectionB,
+      bindingRevision: 2,
+      tenantId: ids.tenantB,
+    });
+
+    const bumped = await repository.pool.query<{ binding_revision: string }>(
+      `UPDATE oauth_installation_active_bindings
+       SET binding_revision = binding_revision + 1
+       WHERE oauth_installation_id = $1
+         AND binding_id = $2
+         AND connection_id = $3
+       RETURNING binding_revision`,
+      [ids.installation, ids.bindingB, ids.connectionB],
+    );
+    expect(Number(bumped.rows[0]?.binding_revision)).toBe(3);
     await expect(repository.resolveMcpAccessToken({
       tokenHash: ids.accessHash,
       expectedResource: resource,
@@ -158,6 +182,7 @@ describeWithPostgres("Postgres organisation switching and governance audit", () 
     })).resolves.toMatchObject({
       bindingId: ids.bindingB,
       connectionId: ids.connectionB,
+      bindingRevision: 3,
       tenantId: ids.tenantB,
     });
 

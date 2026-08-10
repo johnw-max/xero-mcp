@@ -1,3 +1,8 @@
+import {
+  XERO_LOGO_DATA_URI,
+  ZCLOAK_APP_ICON_DATA_URI,
+} from "./brandAssets.js";
+
 export interface SelectableXeroOrganisation {
   connectionId: string;
   tenantName: string;
@@ -12,6 +17,18 @@ export interface SwitchableXeroOrganisation {
   current: boolean;
 }
 
+interface ConnectionShellOptions {
+  title: string;
+  eyebrow: string;
+  description: string;
+  content: string;
+  providerKey: string;
+  providerName: string;
+  providerLogoDataUri: string;
+  footer?: string;
+  status?: "ready" | "attention";
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
     "&": "&amp;",
@@ -22,11 +39,58 @@ function escapeHtml(value: string): string {
   })[character] as string);
 }
 
-function organisationHint(organisation: SelectableXeroOrganisation): string {
-  const suffix = organisation.tenantId.length > 8
-    ? organisation.tenantId.slice(-8)
-    : organisation.tenantId;
-  return [organisation.tenantType, `ID …${suffix}`].filter(Boolean).join(" · ");
+function readableExpiry(value: Date): string {
+  const iso = value.toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
+function renderProviderMark(options: ConnectionShellOptions): string {
+  return `<div class="provider-mark" aria-label="Request from ${escapeHtml(options.providerName)}">
+    <img src="${options.providerLogoDataUri}" alt="${escapeHtml(options.providerName)}">
+  </div>`;
+}
+
+function renderConnectionShell(options: ConnectionShellOptions): string {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light"><title>${escapeHtml(options.title)}</title>
+<style>
+:root{--surface:#fff;--surface-soft:#f7f9f8;--ink:#17201d;--muted:#65716c;--line:#dfe6e2;--green:#236d5d;--green-dark:#165548;--green-soft:#eaf4f0;--amber:#8b560f;--amber-soft:#fff7e8;--shadow:0 18px 52px rgba(28,56,47,.11);font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#17201d;background:#f3f6f4}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 50% 0%,rgba(51,155,128,.12),transparent 27rem),linear-gradient(180deg,#f8faf9 0%,#f1f5f3 100%);color:var(--ink)}
+.page{min-height:100vh;padding:42px 18px 34px}.product-brand{width:max-content;margin:0 auto 22px;display:flex;align-items:center;gap:10px;font-size:17px;font-weight:770;letter-spacing:-.02em}.product-brand img{width:42px;height:42px;border-radius:12px;box-shadow:0 8px 20px rgba(20,79,65,.18)}
+.card{width:min(100%,540px);margin:0 auto;background:rgba(255,255,255,.97);border:1px solid rgba(211,222,216,.92);border-radius:22px;box-shadow:var(--shadow);overflow:hidden;backdrop-filter:blur(10px)}
+.intro{padding:30px 32px 24px;text-align:center;border-bottom:1px solid var(--line)}.provider-mark{width:118px;height:58px;margin:0 auto 18px;display:flex;align-items:center;justify-content:center;padding:14px 16px;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 24px rgba(32,72,60,.08)}.provider-mark img{display:block;width:100%;height:100%;object-fit:contain}
+.eyebrow{margin:0 0 8px;color:var(--green);font-size:11px;font-weight:800;letter-spacing:.11em;text-transform:uppercase}.intro h1{margin:0;font-size:30px;line-height:1.16;letter-spacing:-.032em}.description{max-width:410px;margin:11px auto 0;color:var(--muted);font-size:14px;line-height:1.55}
+.main-content{padding:24px 32px 30px;min-width:0}.section-label{margin:0 0 10px;font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#52605b}
+fieldset{min-width:0;margin:0;padding:0;border:0}legend{width:100%;padding:0;margin:0 0 12px;font-weight:760;font-size:15px}.organisation-list{display:grid;gap:10px}.organisation{position:relative;display:flex;align-items:center;gap:13px;min-height:64px;padding:13px 15px;border:1px solid var(--line);border-radius:14px;background:#fff;cursor:pointer;transition:border-color .16s,box-shadow .16s,background .16s}.organisation:hover{border-color:#92b9ad;background:#fbfdfc}.organisation:has(input:checked){border-color:var(--green);background:var(--green-soft);box-shadow:0 0 0 3px rgba(35,109,93,.1)}
+.organisation input{width:18px;height:18px;margin:0;accent-color:var(--green);flex:0 0 auto}.organisation-copy{display:grid;gap:4px;min-width:0}.organisation strong{font-size:15px;overflow-wrap:anywhere}.current-pill{display:inline-flex;width:max-content;padding:3px 8px;border-radius:999px;background:#dbeee7;color:var(--green-dark);font-size:11px;font-weight:760}
+.form-actions{margin-top:20px}.primary{width:100%;min-height:48px;padding:0 18px;border:0;border-radius:12px;background:var(--green);color:#fff;font:inherit;font-size:14px;font-weight:760;cursor:pointer;box-shadow:0 9px 22px rgba(35,109,93,.2);transition:background .16s,transform .16s}.primary:hover{background:var(--green-dark);transform:translateY(-1px)}.primary:focus-visible,.organisation:focus-within{outline:3px solid rgba(44,130,107,.28);outline-offset:2px}
+.notice{margin:0 0 18px;padding:10px 12px;border:1px solid #efd29d;border-radius:11px;background:var(--amber-soft);color:var(--amber);font-size:12px;line-height:1.45}.scope-card{margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}.scope-list{display:flex;flex-wrap:wrap;gap:8px;margin:0;padding:0;list-style:none}.scope-list li{padding:7px 10px;border-radius:999px;background:var(--surface-soft);color:#45534e;font-size:12px;font-weight:650}.summary{display:grid;gap:4px;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--surface-soft);text-align:center}.summary-row{display:grid;gap:4px}.summary-row span{color:var(--muted);font-size:12px}.summary-row strong{font-size:17px;overflow-wrap:anywhere}.current-summary{margin:0 0 14px;color:var(--muted);font-size:13px}.current-summary strong{color:var(--ink)}.success-banner{width:max-content;margin:0 auto 16px;padding:7px 10px;border-radius:999px;background:var(--green-soft);color:var(--green);font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.footnote{width:min(100%,540px);margin:16px auto 0;text-align:center;color:#728079;font-size:11px;line-height:1.45}.footnote strong{color:#4f5e58}.inline-note{margin:14px 0 0;color:var(--muted);font-size:12px;line-height:1.5;text-align:center}.inline-note time{color:#45534e;font-weight:650}
+@media(max-width:700px){.page{padding:24px 12px 26px}.product-brand{margin-bottom:18px}.card{border-radius:20px}.intro{padding:24px 20px 20px}.provider-mark{width:110px;height:54px;margin-bottom:15px}.intro h1{font-size:25px}.description{font-size:13px}.main-content{padding:20px}.organisation{min-height:58px;padding:11px 13px}.scope-card{margin-top:18px;padding-top:16px}.footnote{margin-top:13px}}
+@media(max-width:390px){.page{padding-left:10px;padding-right:10px}.product-brand img{width:38px;height:38px}.product-brand{font-size:16px}.intro{padding-left:18px;padding-right:18px}.main-content{padding-left:18px;padding-right:18px}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+</style></head><body><div class="page">
+  <header class="product-brand"><img src="${ZCLOAK_APP_ICON_DATA_URI}" alt=""><span>zCloak AI</span></header>
+  <main class="card" data-connection-page="${escapeHtml(options.providerKey)}" data-page-status="${options.status ?? "ready"}">
+    <section class="intro">${renderProviderMark(options)}<p class="eyebrow">${escapeHtml(options.eyebrow)}</p><h1>${escapeHtml(options.title)}</h1><p class="description">${escapeHtml(options.description)}</p></section>
+    <section class="main-content">${options.content}</section>
+  </main>
+  <footer class="footnote">${options.footer ?? `<strong>Secure connection by zCloak AI</strong> · ${escapeHtml(options.providerName)} remains your system of record.`}</footer>
+</div></body></html>`;
+}
+
+function renderScopeList(scopes: readonly string[]): string {
+  const content = scopes.map((scope) => {
+    if (scope === "xero.read") {
+      return "<li>View accounting data</li>";
+    }
+    if (scope === "xero.draft.write") {
+      return "<li>Prepare drafts</li>";
+    }
+    return `<li>${escapeHtml(scope)}</li>`;
+  }).join("");
+  return `<section class="scope-card"><p class="section-label">Access requested</p><ul class="scope-list">${content}</ul></section>`;
 }
 
 function exactHttpsReturnUrl(value: string): URL {
@@ -75,17 +139,18 @@ export function renderPersonalPocHostReturnPage(options: {
   ).join("");
   const hostName = escapeHtml(options.hostName);
   const organisationName = escapeHtml(options.organisationName);
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Xero connection ready</title>
-<style>body{font-family:system-ui,sans-serif;max-width:620px;margin:64px auto;padding:0 20px;color:#17202a}main{display:grid;gap:18px}.return{display:inline-block;width:max-content;background:#0b5cff;color:#fff;text-decoration:none;border:0;border-radius:8px;padding:12px 18px;font-weight:650;cursor:pointer}.notice{color:#52606d;font-size:.92rem}</style>
-</head><body><main>
-<h1>Xero connection ready</h1>
-<p>Selected Xero organisation: <strong>${organisationName}</strong>.</p>
-<p>Return to ${hostName} to finish enabling the accounting tools. The Agent must read the connection status and confirm this same organisation before any accounting work.</p>
-<form method="get" action="${action}">${hiddenFields}<button id="return-to-host" class="return" type="submit">Return to ${hostName}</button></form>
-<p class="notice">This is a short-lived, one-time authorization response. Do not share this page.</p>
-</main></body></html>`;
+  return renderConnectionShell({
+    title: "Connection ready",
+    eyebrow: "Xero connection",
+    description: `Xero is ready for ${options.hostName}.`,
+    content: `<div class="success-banner">Connection confirmed</div>
+      <div class="summary"><div class="summary-row"><span>Selected organisation</span><strong>${organisationName}</strong></div></div>
+      <form method="get" action="${action}">${hiddenFields}<div class="form-actions"><button id="return-to-host" class="primary" type="submit">Return to ${hostName}</button></div></form>
+      <p class="inline-note">This one-time response expires soon. Do not share this page.</p>`,
+    providerKey: "xero",
+    providerName: "Xero",
+    providerLogoDataUri: XERO_LOGO_DATA_URI,
+  });
 }
 
 export function renderXeroOrganisationSelectionPage(options: {
@@ -100,28 +165,26 @@ export function renderXeroOrganisationSelectionPage(options: {
   const choices = options.organisations.map((organisation) => `
     <label class="organisation">
       <input type="radio" name="connection_id" value="${escapeHtml(organisation.connectionId)}" required>
-      <span><strong>${escapeHtml(organisation.tenantName)}</strong><small>${escapeHtml(organisationHint(organisation))}</small></span>
+      <span class="organisation-copy"><strong>${escapeHtml(organisation.tenantName)}</strong></span>
     </label>`).join("");
   const pocNotice = options.personalPocOnly
-    ? `<p class="warning" role="status"><strong>PERSONAL POC — HOST IDENTITY UNVERIFIED</strong><br>This connection is for one test user and must not be treated as team or workspace isolation.</p>`
+    ? `<div class="notice" role="status">Test connection · Intended for one user.</div>`
     : "";
-
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Choose a Xero organisation</title>
-<style>body{font-family:system-ui,sans-serif;max-width:680px;margin:48px auto;padding:0 20px;color:#17202a}main{display:grid;gap:18px}.organisation{display:flex;gap:12px;border:1px solid #c8d2dc;border-radius:10px;padding:16px;cursor:pointer}.organisation span{display:grid;gap:4px}.organisation small{color:#52606d}.warning{background:#fff4d6;border:1px solid #e3ad35;border-radius:8px;padding:12px}button{background:#0b5cff;color:white;border:0;border-radius:8px;padding:12px 18px;font-weight:650}code{font-size:.9em}</style>
-</head><body><main>
-<h1>Choose the Xero organisation for this Agent</h1>
-<p>Select exactly one ledger for this MCP connection. This choice is never taken from chat text or an uploaded file.</p>
-<p>To work on another already-authorised organisation later, ask the Agent to switch Xero organisation and use the short-lived confirmation link it provides. Reconnect through Xero OAuth only when the organisation is not in the authorised list.</p>
-${pocNotice}
-<form method="post" action="/oauth/xero/select">
-  <input type="hidden" name="csrf_token" value="${escapeHtml(options.csrfToken)}">
-  <fieldset><legend>Xero organisations</legend>${choices}</fieldset>
-  <p>Requested Agent access: <code>${escapeHtml(options.requestedScopes.join(" "))}</code></p>
-  <button type="submit">Connect selected organisation</button>
-</form>
-</main></body></html>`;
+  return renderConnectionShell({
+    title: "Choose an organisation",
+    eyebrow: "Requested by Xero",
+    description: "Select the Xero organisation this Agent should use.",
+    content: `${pocNotice}<form method="post" action="/oauth/xero/select">
+      <input type="hidden" name="csrf_token" value="${escapeHtml(options.csrfToken)}">
+      <fieldset><legend>Available organisations</legend><div class="organisation-list">${choices}</div></fieldset>
+      ${renderScopeList(options.requestedScopes)}
+      <div class="form-actions"><button class="primary" type="submit">Continue</button></div>
+    </form><p class="inline-note">You can switch organisations later from the conversation.</p>`,
+    providerKey: "xero",
+    providerName: "Xero",
+    providerLogoDataUri: XERO_LOGO_DATA_URI,
+    status: options.personalPocOnly ? "attention" : "ready",
+  });
 }
 
 export function renderOrganisationSwitchPage(options: {
@@ -134,24 +197,25 @@ export function renderOrganisationSwitchPage(options: {
   if (options.organisations.length === 0 || !Number.isFinite(options.expiresAt.getTime())) {
     throw new Error("A valid organisation switch page requires at least one organisation and expiry.");
   }
-  const choices = options.organisations.map((organisation) => {
-    const current = organisation.current ? " <small>(Currently connected)</small>" : "";
-    return `<label><input type="radio" name="connection_id" value="${escapeHtml(organisation.connectionId)}" required> <strong>${escapeHtml(organisation.tenantName)}</strong>${current}</label>`;
-  }).join("<br>");
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Switch Xero organisation</title></head><body><main>
-<h1>Switch Xero organisation</h1>
-<p>The Agent is currently connected to <strong>${escapeHtml(options.currentOrganisation.tenantName)}</strong>.</p>
-<p>Choose exactly one organisation. This confirmation changes which ledger the Agent can access; chat text alone cannot make this change.</p>
-<form method="post" action="/xero/organisation-switch">
-  <input type="hidden" name="ticket" value="${escapeHtml(options.ticket)}">
-  <input type="hidden" name="csrf_token" value="${escapeHtml(options.csrfToken)}">
-  <fieldset><legend>Xero organisations</legend>${choices}</fieldset>
-  <p><button type="submit">Confirm organisation</button></p>
-</form>
-<p>This one-time link expires at ${escapeHtml(options.expiresAt.toISOString())}. If the organisation is not listed, reconnect Xero to refresh the authorised organisation list.</p>
-</main></body></html>`;
+  const choices = options.organisations.map((organisation) => `
+    <label class="organisation">
+      <input type="radio" name="connection_id" value="${escapeHtml(organisation.connectionId)}" required>
+      <span class="organisation-copy"><strong>${escapeHtml(organisation.tenantName)}</strong>${organisation.current ? '<span class="current-pill">Currently connected</span>' : ""}</span>
+    </label>`).join("");
+  return renderConnectionShell({
+    title: "Switch organisation",
+    eyebrow: "Xero connection",
+    description: "Choose which Xero organisation the Agent should use next.",
+    content: `<p class="current-summary">Current: <strong>${escapeHtml(options.currentOrganisation.tenantName)}</strong></p><form method="post" action="/xero/organisation-switch">
+      <input type="hidden" name="ticket" value="${escapeHtml(options.ticket)}">
+      <input type="hidden" name="csrf_token" value="${escapeHtml(options.csrfToken)}">
+      <fieldset><legend>Available organisations</legend><div class="organisation-list">${choices}</div></fieldset>
+      <div class="form-actions"><button class="primary" type="submit">Switch organisation</button></div>
+    </form><p class="inline-note">This link expires <time datetime="${escapeHtml(options.expiresAt.toISOString())}">${escapeHtml(readableExpiry(options.expiresAt))}</time>.</p>`,
+    providerKey: "xero",
+    providerName: "Xero",
+    providerLogoDataUri: XERO_LOGO_DATA_URI,
+  });
 }
 
 export function renderOrganisationSwitchResultPage(options: {
@@ -159,8 +223,15 @@ export function renderOrganisationSwitchResultPage(options: {
   tenantName: string;
 }): string {
   const lead = options.status === "SWITCHED"
-    ? "The Xero organisation has been switched"
-    : "This Xero organisation was already selected";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Xero organisation ready</title></head>
-<body><main><h1>${lead}</h1><p>Current organisation: <strong>${escapeHtml(options.tenantName)}</strong>.</p><p>You can now return to the Agent. It will re-read the connection status before continuing any accounting work.</p></main></body></html>`;
+    ? "Organisation updated"
+    : "Organisation unchanged";
+  return renderConnectionShell({
+    title: lead,
+    eyebrow: "Xero connection",
+    description: "Return to the Agent to continue.",
+    content: `<div class="success-banner">Confirmed</div><div class="summary"><div class="summary-row"><span>Current organisation</span><strong>${escapeHtml(options.tenantName)}</strong></div></div>`,
+    providerKey: "xero",
+    providerName: "Xero",
+    providerLogoDataUri: XERO_LOGO_DATA_URI,
+  });
 }

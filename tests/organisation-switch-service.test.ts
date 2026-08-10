@@ -110,6 +110,7 @@ async function harness() {
     now,
   });
   if (!resolved) throw new Error("seeded access token did not resolve");
+  expect(resolved.bindingRevision).toBe(1);
 
   const service = new OrganisationSwitchService({
     repository,
@@ -175,6 +176,7 @@ describe("conversation-driven Xero organisation switching", () => {
       installationId: "installation-switch",
       bindingId: "binding-b",
       connectionId: "connection-b",
+      bindingRevision: 2,
       tenantId: "tenant-b",
     });
     await expect(repository.resolveAgentConnectionBinding({
@@ -205,5 +207,34 @@ describe("conversation-driven Xero organisation switching", () => {
         outcome: "SUCCEEDED",
       },
     ]);
+  });
+
+  it("increments the active binding revision even when the confirmed tuple is unchanged", async () => {
+    const { repository, service, context } = await harness();
+    const started = await service.start(context);
+    const ticket = new URL(started.switchUrl).searchParams.get("ticket");
+    if (!ticket) throw new Error("organisation switch ticket was missing");
+    const page = await service.getPage(ticket);
+
+    await expect(service.confirm({
+      ticket,
+      csrfToken: page.csrfToken,
+      selectedConnectionId: "connection-a",
+    })).resolves.toMatchObject({
+      status: "UNCHANGED",
+      currentOrganisation: { tenantId: "tenant-a", tenantName: "Company A" },
+    });
+
+    await expect(repository.resolveMcpAccessToken({
+      tokenHash: "access-token-switch",
+      expectedResource: resource,
+      expectedAudience: resource,
+      now,
+    })).resolves.toMatchObject({
+      bindingId: "binding-a",
+      connectionId: "connection-a",
+      bindingRevision: 2,
+      tenantId: "tenant-a",
+    });
   });
 });

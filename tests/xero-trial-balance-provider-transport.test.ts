@@ -107,6 +107,23 @@ describe("Xero Trial Balance Provider transport boundary", () => {
     await closeServer(server);
   });
 
+  it("sends paymentsOnly=false and no invented date when the caller omits the as-of date", async () => {
+    let observedUrl = "";
+    const { baseUrl, server } = await listen((request, response) => {
+      observedUrl = request.url ?? "";
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ Reports: [{ ReportID: "TrialBalance", Rows: [] }] }));
+    });
+
+    await expect(transport(baseUrl).getTrialBalance({
+      tenantId: input.tenantId,
+      accessToken: input.accessToken,
+    })).resolves.toMatchObject({ reports: [{ reportID: "TrialBalance", rows: [] }] });
+
+    expect(observedUrl).toBe("/Reports/TrialBalance?paymentsOnly=false");
+    await closeServer(server);
+  });
+
   it("preserves an ordinary gzip-compressed Xero report within both byte budgets", async () => {
     const compressed = gzipSync(JSON.stringify({
       Reports: [{ ReportID: "TrialBalance", ReportName: "Trial Balance", Rows: [] }],

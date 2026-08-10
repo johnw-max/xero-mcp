@@ -4,7 +4,11 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "../errors.js";
 import type { AccountingService } from "../services/accountingService.js";
-import { createLegacySharedBearerRequestContext } from "../security/requestContext.js";
+import type { ResolvedMcpAccessToken } from "../domain/models.js";
+import {
+  createLegacySharedBearerRequestContext,
+  createOAuthRequestContext,
+} from "../security/requestContext.js";
 import { createAccountingMcpServer } from "./createServer.js";
 import { TOOL_ALLOWLIST } from "./toolNames.js";
 
@@ -84,7 +88,7 @@ describe("MCP tool surface", () => {
     const statusTool = tools.tools.find((tool) => tool.name === "xero_connection_status");
 
     expect(statusTool).toMatchObject({
-      description: "Returns the exact Xero organisation currently bound to this Agent. Organisation changes require a separate short-lived user confirmation page and never happen silently from chat text.",
+      description: "Returns connector control-plane health and a safe bound-connection display. It does not prove a ledger target; use xero_get_organisation for target verification. Organisation changes require a separate short-lived user confirmation page and never happen silently from chat text.",
       annotations: {
         readOnlyHint: true,
         idempotentHint: true,
@@ -95,9 +99,34 @@ describe("MCP tool surface", () => {
 
   it("routes bounded contact listing and exact contact reads through xero.read audit", async () => {
     const contactId = "22222222-2222-4222-8222-222222222222";
-    const listContacts = vi.fn().mockResolvedValue({ contacts: [], pagination: {} });
+    const tenantId = "11111111-1111-4111-8111-111111111111";
+    const listContacts = vi.fn().mockResolvedValue({
+      contacts: [],
+      pagination: {
+        page: 1,
+        pageSize: 25,
+        returned: 0,
+        hasNextPage: false,
+        hasNextPageIsEstimated: false,
+        omittedInvalid: 0,
+      },
+    });
     const getContact = vi.fn().mockResolvedValue({ contactId, name: "Exact Supplier" });
-    const withAudit = vi.fn().mockImplementation(async ({ action }: { action: () => Promise<unknown> }) => action());
+    const auditProjections: unknown[] = [];
+    const withAudit = vi.fn().mockImplementation(async ({
+      action,
+      onResolvedContext,
+      auditOutput,
+    }: {
+      action: () => Promise<unknown>;
+      onResolvedContext?: (context: { actorId: string; tenantId: string; tenantName: string }) => void;
+      auditOutput?: (result: unknown) => unknown;
+    }) => {
+      onResolvedContext?.({ actorId: "test-actor", tenantId, tenantName: "Bound Demo Company" });
+      const result = await action();
+      auditProjections.push(auditOutput?.(result));
+      return result;
+    });
     const service = { listContacts, getContact, withAudit } as unknown as AccountingService;
     const context = testContext();
     const server = createAccountingMcpServer(service, context);
@@ -115,7 +144,7 @@ describe("MCP tool surface", () => {
         destructiveHint: false,
       });
     }
-    await client.callTool({
+    const listed = await client.callTool({
       name: "xero_list_contacts",
       arguments: { is_supplier: true },
     });
@@ -131,18 +160,319 @@ describe("MCP tool surface", () => {
       limit: 25,
     });
     expect(getContact).toHaveBeenCalledWith(context, { contact_id: contactId });
-    expect(exact.structuredContent).toEqual({ result: { contactId, name: "Exact Supplier" } });
+    expect(listed.structuredContent).toMatchObject({
+      result: { contacts: [] },
+      result_class: "succeeded",
+      fact_origin: "MCP_READ",
+      capability_id: "ledger.reference.counterparty.read",
+      query_bounds: {
+        target_scope: "active_server_bound_xero_organisation",
+        requested: { status: "ACTIVE", is_supplier: true, page: 1, limit: 25 },
+      },
+      completeness: {
+        status: "bounded_query_result",
+        within_declared_query_bounds: "not_independently_verified",
+        declared_page_complete: true,
+        whole_ledger_complete: false,
+        pagination: { page: 1, pageSize: 25, returned: 0 },
+      },
+    });
+    expect(exact.structuredContent).toMatchObject({
+      result: { contactId, name: "Exact Supplier" },
+      result_class: "succeeded",
+      fact_origin: "MCP_READ",
+      source_system: "xero",
+      destination_role: "ledger_sor",
+      capability_id: "ledger.reference.counterparty.read",
+      organisation_display_name: "Bound Demo Company",
+      completeness: {
+        status: "exact_object_identity",
+        provider_field_completeness: "not_independently_verified",
+      },
+      fact_paths: ["/result/contactId", "/result/name"],
+    });
+    const exactEvidence = exact.structuredContent as Record<string, unknown>;
+    expect(exactEvidence.tool_call_or_audit_ref).toBe(withAudit.mock.calls[1]?.[0]?.callId);
+    expect(exactEvidence.bound_target_ref_safe).toMatch(/^xero-target:[a-f0-9]{32}$/);
+    expect(exactEvidence.binding_revision).toMatch(/^xero-legacy-binding:[a-f0-9]{32}$/);
+    expect(exactEvidence.output_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(JSON.stringify(exact.structuredContent)).not.toContain(tenantId);
     expect(withAudit.mock.calls.map(([call]) => call.toolName)).toEqual([
       "xero_list_contacts",
       "xero_get_contact",
     ]);
     expect(withAudit.mock.calls.every(([call]) => call.principal === context)).toBe(true);
+    expect(withAudit.mock.calls.every(([call]) => call.revalidateContextAfterAction === true)).toBe(true);
+    expect(auditProjections).toEqual([listed.structuredContent, exact.structuredContent]);
     expect(withAudit.mock.calls[1]?.[0]?.recordId?.({ contactId })).toBe(contactId);
+  });
+
+  it("returns ledger.target.resolve evidence without exposing the raw Xero tenant locator", async () => {
+    const tenantId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const organisation = {
+      organisationId: tenantId,
+      name: "Bound Demo Company",
+      baseCurrency: "USD",
+      countryCode: "US",
+    };
+    const getOrganisation = vi.fn().mockResolvedValue(organisation);
+    const withAudit = vi.fn().mockImplementation(async ({
+      action,
+      onResolvedContext,
+    }: {
+      action: () => Promise<unknown>;
+      onResolvedContext?: (context: { actorId: string; tenantId: string; tenantName: string }) => void;
+    }) => {
+      onResolvedContext?.({ actorId: "test-actor", tenantId, tenantName: organisation.name });
+      return action();
+    });
+    const context = testContext();
+    const service = { getOrganisation, withAudit } as unknown as AccountingService;
+    const server = createAccountingMcpServer(service, context);
+    const client = new Client({ name: "target-evidence-contract-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    closeables.push(client, server);
+
+    await server.connect(serverTransport as unknown as Transport);
+    await client.connect(clientTransport);
+    const response = await client.callTool({ name: "xero_get_organisation", arguments: {} });
+
+    expect(response.structuredContent).toMatchObject({
+      result: {
+        name: organisation.name,
+        baseCurrency: organisation.baseCurrency,
+        countryCode: organisation.countryCode,
+      },
+      result_class: "succeeded",
+      fact_origin: "MCP_READ",
+      source_system: "xero",
+      destination_role: "ledger_sor",
+      capability_id: "ledger.target.resolve",
+      organisation_display_name: organisation.name,
+      base_currency: organisation.baseCurrency,
+      completeness: { status: "complete" },
+      fact_paths: ["/result/name", "/result/baseCurrency"],
+    });
+    const evidence = response.structuredContent as Record<string, unknown>;
+    expect(evidence.tool_call_or_audit_ref).toBe(withAudit.mock.calls[0]?.[0]?.callId);
+    expect(evidence.bound_target_ref_safe).toMatch(/^xero-target:[a-f0-9]{32}$/);
+    expect(evidence.binding_revision).toMatch(/^xero-legacy-binding:[a-f0-9]{32}$/);
+    expect(JSON.stringify(response.structuredContent)).not.toContain(tenantId);
+    expect((response.structuredContent as { result?: Record<string, unknown> }).result)
+      .not.toHaveProperty("organisationId");
+  });
+
+  it("withholds ordinary ledger reads when the server cannot resolve a bound tenant", async () => {
+    const getContact = vi.fn().mockResolvedValue({ name: "Must Not Be Returned" });
+    const connectionStatus = vi.fn().mockResolvedValue({ connected: false, reason: "not_connected" });
+    const withAudit = vi.fn().mockImplementation(async ({
+      action,
+      onResolvedContext,
+    }: {
+      action: () => Promise<unknown>;
+      onResolvedContext?: (resolved: undefined) => void;
+    }) => {
+      onResolvedContext?.(undefined);
+      return action();
+    });
+    const service = { connectionStatus, getContact, withAudit } as unknown as AccountingService;
+    const context = testContext();
+    const server = createAccountingMcpServer(service, context);
+    const client = new Client({ name: "unbound-read-contract-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    closeables.push(client, server);
+
+    await server.connect(serverTransport as unknown as Transport);
+    await client.connect(clientTransport);
+    const ledgerRead = await client.callTool({
+      name: "xero_get_contact",
+      arguments: { contact_id: "22222222-2222-4222-8222-222222222222" },
+    });
+    const statusRead = await client.callTool({ name: "xero_connection_status", arguments: {} });
+
+    expect(ledgerRead.isError).toBe(true);
+    expect(ledgerRead.structuredContent).toMatchObject({
+      error: { code: "CONFIGURATION_ERROR", retryable: false },
+    });
+    expect(getContact).not.toHaveBeenCalled();
+    expect(statusRead.isError).not.toBe(true);
+    expect(statusRead.structuredContent).toMatchObject({
+      result: { connected: false, reason: "not_connected" },
+      capability_id: "connector.connection.status.read",
+      destination_role: "connector_control_plane",
+      bound_target_ref_safe: null,
+      organisation_display_name: null,
+      binding_revision: null,
+      connection_ref_safe: null,
+      connection_state: "disconnected",
+      query_bounds: {
+        target_scope: "connection_binding_resolution",
+        requested: {},
+      },
+      completeness: {
+        status: "connection_status_observation",
+        scope: "connection_binding_resolution",
+        ledger_data_completeness: "not_applicable",
+      },
+    });
+    expect(connectionStatus).toHaveBeenCalledWith(context);
+  });
+
+  it("keeps connected status in the connector control plane without leaking or proving a ledger target", async () => {
+    const tenantId = "tenant-status-private";
+    const bindingId = "binding-status-private";
+    const connectionId = "connection-status-private";
+    const resolvedToken: ResolvedMcpAccessToken = {
+      tokenId: "token-status-private",
+      clientId: "agent2-accounting-mcp",
+      resource: "https://xero-mcp.example.test/mcp",
+      audience: "https://xero-mcp.example.test/mcp",
+      grantedScopes: ["xero.read"],
+      issuedAt: new Date("2026-08-10T04:00:00.000Z"),
+      expiresAt: new Date("2026-08-10T05:00:00.000Z"),
+      installationId: "installation-status-private",
+      bindingId,
+      connectionId,
+      bindingRevision: 4,
+      authorizationId: "authorization-status-private",
+      workspaceId: "workspace-status-private",
+      subjectType: "USER",
+      subjectId: "subject-status-private",
+      agentId: "agent-status-private",
+      policyId: "policy-status-private",
+      tenantId,
+    };
+    const context = createOAuthRequestContext({
+      issuer: "https://xero-mcp.example.test",
+      resolvedToken,
+    });
+    const connectionStatus = vi.fn().mockResolvedValue({
+      connected: true,
+      connectionId,
+      bindingId,
+      tenant: { id: tenantId, name: "Private Bound Company" },
+    });
+    const withAudit = vi.fn().mockImplementation(async ({
+      action,
+      onResolvedContext,
+    }: {
+      action: () => Promise<unknown>;
+      onResolvedContext?: (resolved: { actorId: string; tenantId: string; tenantName: string }) => void;
+    }) => {
+      onResolvedContext?.({ actorId: context.actorId, tenantId, tenantName: "Private Bound Company" });
+      return action();
+    });
+    const service = { connectionStatus, withAudit } as unknown as AccountingService;
+    const server = createAccountingMcpServer(service, context);
+    const client = new Client({ name: "connected-status-contract-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    closeables.push(client, server);
+
+    await server.connect(serverTransport as unknown as Transport);
+    await client.connect(clientTransport);
+    const response = await client.callTool({ name: "xero_connection_status", arguments: {} });
+
+    expect(response.isError).not.toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      destination_role: "connector_control_plane",
+      capability_id: "connector.connection.status.read",
+      bound_target_ref_safe: null,
+      organisation_display_name: null,
+      binding_revision: null,
+      connection_ref_safe: expect.stringMatching(/^xero-connection:[a-f0-9]{32}$/),
+      connection_state: "connected",
+      completeness: { status: "connection_status_observation" },
+    });
+    const serialized = JSON.stringify(response.structuredContent);
+    expect(serialized).not.toContain(tenantId);
+    expect(serialized).not.toContain(bindingId);
+    expect(serialized).not.toContain(connectionId);
+  });
+
+  it("changes the opaque evidence revision when the active binding revision changes without exposing locators", async () => {
+    const tenantId = "tenant-private-same";
+    const bindingId = "binding-private-same";
+    const connectionId = "connection-private-same";
+    const installationId = "installation-private-same";
+    const callWithRevision = async (bindingRevision: number) => {
+      const resolvedToken: ResolvedMcpAccessToken = {
+        tokenId: `token-${bindingRevision}`,
+        clientId: "agent2-accounting-mcp",
+        resource: "https://xero-mcp.example.test/mcp",
+        audience: "https://xero-mcp.example.test/mcp",
+        grantedScopes: ["xero.read"],
+        issuedAt: new Date("2026-08-10T04:00:00.000Z"),
+        expiresAt: new Date("2026-08-10T05:00:00.000Z"),
+        installationId,
+        bindingId,
+        connectionId,
+        bindingRevision,
+        authorizationId: "authorization-private-same",
+        workspaceId: "workspace-private-same",
+        subjectType: "USER",
+        subjectId: "subject-private-same",
+        agentId: "agent-private-same",
+        policyId: "policy-private-same",
+        tenantId,
+      };
+      const context = createOAuthRequestContext({
+        issuer: "https://xero-mcp.example.test",
+        resolvedToken,
+      });
+      const getContact = vi.fn().mockResolvedValue({ name: "Safe Supplier" });
+      const withAudit = vi.fn().mockImplementation(async ({
+        action,
+        onResolvedContext,
+      }: {
+        action: () => Promise<unknown>;
+        onResolvedContext?: (resolved: { actorId: string; tenantId: string; tenantName: string }) => void;
+      }) => {
+        onResolvedContext?.({ actorId: context.actorId, tenantId, tenantName: "Bound Company" });
+        return action();
+      });
+      const service = { getContact, withAudit } as unknown as AccountingService;
+      const server = createAccountingMcpServer(service, context);
+      const client = new Client({ name: `binding-revision-${bindingRevision}`, version: "0.1.0" });
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      closeables.push(client, server);
+      await server.connect(serverTransport as unknown as Transport);
+      await client.connect(clientTransport);
+      return client.callTool({
+        name: "xero_get_contact",
+        arguments: { contact_id: "22222222-2222-4222-8222-222222222222" },
+      });
+    };
+
+    const first = await callWithRevision(7);
+    const second = await callWithRevision(8);
+    const firstRevision = (first.structuredContent as Record<string, unknown>).binding_revision;
+    const secondRevision = (second.structuredContent as Record<string, unknown>).binding_revision;
+
+    expect(firstRevision).toMatch(/^xero-binding-revision:[a-f0-9]{32}$/);
+    expect(secondRevision).toMatch(/^xero-binding-revision:[a-f0-9]{32}$/);
+    expect(secondRevision).not.toBe(firstRevision);
+    for (const payload of [first.structuredContent, second.structuredContent]) {
+      const serialized = JSON.stringify(payload);
+      expect(serialized).not.toContain(tenantId);
+      expect(serialized).not.toContain(bindingId);
+      expect(serialized).not.toContain(connectionId);
+      expect(serialized).not.toContain(installationId);
+      expect(serialized).not.toContain("bindingRevision");
+    }
   });
 
   it("routes supplier bill preparation through the read scope and audit without calling a write", async () => {
     const prepareSupplierBillDraft = vi.fn().mockResolvedValue({ proposal: null, evidence: {}, blockers: [] });
-    const withAudit = vi.fn().mockImplementation(async ({ action }: { action: () => Promise<unknown> }) => action());
+    const withAudit = vi.fn().mockImplementation(async ({
+      action,
+      onResolvedContext,
+    }: {
+      action: () => Promise<unknown>;
+      onResolvedContext?: (resolved: { actorId: string; tenantId: string; tenantName: string }) => void;
+    }) => {
+      onResolvedContext?.({ actorId: "test-actor", tenantId: "tenant-history", tenantName: "History Company" });
+      return action();
+    });
     const service = { prepareSupplierBillDraft, withAudit } as unknown as AccountingService;
     const context = testContext();
     const server = createAccountingMcpServer(service, context);
@@ -184,7 +514,16 @@ describe("MCP tool surface", () => {
       idempotentReplay: false,
     };
     const executePreparedSupplierBillDraft = vi.fn().mockResolvedValue(serviceResult);
-    const withAudit = vi.fn().mockImplementation(async ({ action }: { action: () => Promise<unknown> }) => action());
+    const withAudit = vi.fn().mockImplementation(async ({
+      action,
+      onResolvedContext,
+    }: {
+      action: () => Promise<unknown>;
+      onResolvedContext?: (resolved: { actorId: string; tenantId: string; tenantName: string }) => void;
+    }) => {
+      onResolvedContext?.({ actorId: "read-only-actor", tenantId: "tenant-history", tenantName: "History Company" });
+      return action();
+    });
     const service = { executePreparedSupplierBillDraft, withAudit } as unknown as AccountingService;
     const context = createLegacySharedBearerRequestContext({
       actorId: "write-actor",
@@ -294,7 +633,20 @@ describe("MCP tool surface", () => {
       invoiceId: "11111111-1111-4111-8111-111111111111",
       type: "ACCREC",
     });
-    const withAudit = vi.fn().mockImplementation(async ({ action }: { action: () => Promise<unknown> }) => action());
+    const withAudit = vi.fn().mockImplementation(async ({
+      action,
+      onResolvedContext,
+    }: {
+      action: () => Promise<unknown>;
+      onResolvedContext?: (resolved: { actorId: string; tenantId: string; tenantName: string }) => void;
+    }) => {
+      onResolvedContext?.({
+        actorId: "extended-read-actor",
+        tenantId: "tenant-extended",
+        tenantName: "Extended Read Company",
+      });
+      return action();
+    });
     const service = { listInvoices, getInvoice, withAudit } as unknown as AccountingService;
     const context = testContext();
     const server = createAccountingMcpServer(service, context);
@@ -346,7 +698,16 @@ describe("MCP tool surface", () => {
   it("routes credit-note and payment history through xero.read and audit", async () => {
     const listCreditNotes = vi.fn().mockResolvedValue({ creditNotes: [], pagination: {} });
     const listPayments = vi.fn().mockResolvedValue({ payments: [], pagination: {} });
-    const withAudit = vi.fn().mockImplementation(async ({ action }: { action: () => Promise<unknown> }) => action());
+    const withAudit = vi.fn().mockImplementation(async ({
+      action,
+      onResolvedContext,
+    }: {
+      action: () => Promise<unknown>;
+      onResolvedContext?: (resolved: { actorId: string; tenantId: string; tenantName: string }) => void;
+    }) => {
+      onResolvedContext?.({ actorId: "read-only-actor", tenantId: "tenant-history", tenantName: "History Company" });
+      return action();
+    });
     const service = { listCreditNotes, listPayments, withAudit } as unknown as AccountingService;
     const context = createLegacySharedBearerRequestContext({
       actorId: "read-only-actor",
@@ -407,7 +768,20 @@ describe("MCP tool surface", () => {
       listBankTransactions: vi.fn().mockResolvedValue({ bankTransactions: [], pagination: {} }),
       getBankTransaction: vi.fn().mockResolvedValue({ bankTransactionId: ids.bankTransaction }),
     };
-    const withAudit = vi.fn().mockImplementation(async ({ action }: { action: () => Promise<unknown> }) => action());
+    const withAudit = vi.fn().mockImplementation(async ({
+      action,
+      onResolvedContext,
+    }: {
+      action: () => Promise<unknown>;
+      onResolvedContext?: (resolved: { actorId: string; tenantId: string; tenantName: string }) => void;
+    }) => {
+      onResolvedContext?.({
+        actorId: "extended-read-actor",
+        tenantId: "tenant-extended",
+        tenantName: "Extended Read Company",
+      });
+      return action();
+    });
     const service = { ...methods, withAudit } as unknown as AccountingService;
     const context = createLegacySharedBearerRequestContext({
       actorId: "extended-read-actor",

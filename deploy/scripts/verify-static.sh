@@ -37,7 +37,7 @@ forbid_text() {
 
 require_text "${DEPLOY_DIR}/Dockerfile" "USER 10001:10001"
 require_text "${PROJECT_DIR}/.gitignore" "deploy/.env.vps"
-require_text "${EXAMPLE_ENV}" "APP_IMAGE=xero-accounting-mcp-demo:0.3.0-xero-pilot-20260810.1"
+require_text "${EXAMPLE_ENV}" "APP_IMAGE=xero-accounting-mcp-demo:0.3.1-xero-pilot-20260810.1"
 require_text "${EXAMPLE_ENV}" "QUICKBOOKS_APP_IMAGE=xero-accounting-mcp-demo:0.2.12-quickbooks-20260806"
 require_text "${EXAMPLE_ENV}" "MCP_PUBLIC_HOST=mcp.jiayuanwang.xyz"
 require_text "${EXAMPLE_ENV}" "PUBLIC_BASE_URL=https://mcp.jiayuanwang.xyz"
@@ -110,8 +110,8 @@ require_text "${COMPOSE_FILE}" "MCP_OAUTH_BROKER_ENABLED:"
 require_text "${HOST_COMPOSE_FILE}" "OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS:"
 require_text "${COMPOSE_FILE}" "OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS:"
 require_text "${RUNBOOK}" 'QUICKBOOKS_APP_IMAGE=xero-accounting-mcp-demo:0.2.12-quickbooks-20260806'
-require_text "${RUNBOOK}" 'APP_IMAGE=xero-accounting-mcp-demo:0.3.0-xero-pilot-20260810.1'
-require_text "${RUNBOOK}" '/opt/xero-accounting-mcp-demo-0.3.0-20260810.1'
+require_text "${RUNBOOK}" 'APP_IMAGE=xero-accounting-mcp-demo:0.3.1-xero-pilot-20260810.1'
+require_text "${RUNBOOK}" '/opt/xero-accounting-mcp-demo-0.3.1-20260810.1'
 require_text "${RUNBOOK}" 'compose.host-nginx.green.vps.yaml'
 require_text "${RUNBOOK}" '127.0.0.1:18004'
 require_text "${RUNBOOK}" 'switch-xero-upstream.sh green'
@@ -129,8 +129,8 @@ require_text "${ALTERNATIVE_RUNBOOK}" 'compose.host-nginx.green.vps.yaml'
 require_text "${ALTERNATIVE_RUNBOOK}" '127.0.0.1:18004'
 forbid_text "${ALTERNATIVE_RUNBOOK}" '只把新 App 绑定到 `127.0.0.1:18002`'
 require_text "${PROJECT_DIR}/package.json" '"test:http:required": "TEST_HTTP_LOOPBACK=true vitest run tests/http-oauth-edge.test.ts"'
-require_text "${PROJECT_DIR}/package.json" '"version": "0.3.0"'
-require_text "${PROJECT_DIR}/src/xeroRelease.ts" 'export const XERO_RELEASE_VERSION = "0.3.0";'
+require_text "${PROJECT_DIR}/package.json" '"version": "0.3.1"'
+require_text "${PROJECT_DIR}/src/xeroRelease.ts" 'export const XERO_RELEASE_VERSION = "0.3.1";'
 command -v node >/dev/null 2>&1 || {
   echo "node is required to verify the Xero release tool contract" >&2
   exit 1
@@ -143,7 +143,7 @@ TOOL_CONTRACT=$(node -e '
   process.stdout.write(`${tools.length} ${digest}`);
 ' "${PROJECT_DIR}/tests/contract/expected-tools.json")
 test "${TOOL_CONTRACT}" = "44 d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224" || {
-  echo "unexpected Xero 0.3.0 tool contract: ${TOOL_CONTRACT}" >&2
+  echo "unexpected Xero 0.3.1 tool contract: ${TOOL_CONTRACT}" >&2
   exit 1
 }
 test -f "${GREEN_COMPOSE_FILE}" || {
@@ -254,17 +254,17 @@ forbid_text "${HOST_NGINX_SITE}" "/oauth/xero/start"
 forbid_text "${DEPLOY_DIR}/nginx/default.conf.template" "/operator/session"
 forbid_text "${DEPLOY_DIR}/nginx/default.conf.template" "/oauth/xero/start"
 
-require_text "${UAT_WRITE_GATE}" 'readonly RELEASE_DIR="/opt/xero-accounting-mcp-demo-0.3.0-20260810.1"'
-require_text "${UAT_WRITE_GATE}" 'readonly EXPECTED_IMAGE_REF="xero-accounting-mcp-demo:0.3.0-xero-pilot-20260810.1"'
-require_text "${UAT_WRITE_GATE}" 'readonly EXPECTED_VERSION="0.3.0"'
+require_text "${UAT_WRITE_GATE}" 'readonly RELEASE_DIR="/opt/xero-accounting-mcp-demo-0.3.1-20260810.1"'
+require_text "${UAT_WRITE_GATE}" 'readonly EXPECTED_IMAGE_REF="xero-accounting-mcp-demo:0.3.1-xero-pilot-20260810.1"'
+require_text "${UAT_WRITE_GATE}" 'readonly EXPECTED_VERSION="0.3.1"'
 require_text "${UAT_WRITE_GATE}" 'readonly EXPECTED_TOOL_COUNT="44"'
 require_text "${UAT_WRITE_GATE}" 'readonly EXPECTED_TOOLSET_HASH="d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"'
 require_text "${UAT_WRITE_GATE}" 'readonly EXPECTED_LOOPBACK_BASE_URL="http://127.0.0.1:18004"'
 require_text "${UAT_WRITE_GATE}" 'readonly GREEN_PROJECT_NAME="xero-accounting-mcp-green-030"'
 require_text "${UAT_WRITE_GATE}" 'readonly GREEN_COMPOSE_FILE="deploy/docker-compose/compose.host-nginx.green.vps.yaml"'
-require_text "${UAT_WRITE_GATE}" 'readonly AUTOCLOSE_UNIT="xero-write-gate-autoclose-030-20260810-1"'
-require_text "${UAT_WRITE_GATE}" 'readonly BOOT_FAILSAFE_UNIT="xero-write-gate-boot-close-030-20260810-1.service"'
-require_text "${UAT_WRITE_GATE}" 'readonly BOOT_FAILSAFE_SCRIPT="/usr/local/sbin/xero-agent2-uat-write-gate-030-20260810-1"'
+require_text "${UAT_WRITE_GATE}" 'readonly AUTOCLOSE_UNIT="xero-write-gate-autoclose-031-20260810-1"'
+require_text "${UAT_WRITE_GATE}" 'readonly BOOT_FAILSAFE_UNIT="xero-write-gate-boot-close-031-20260810-1.service"'
+require_text "${UAT_WRITE_GATE}" 'readonly BOOT_FAILSAFE_SCRIPT="/usr/local/sbin/xero-agent2-uat-write-gate-031-20260810-1"'
 require_text "${UAT_WRITE_GATE}" 'readonly BOOT_FAILSAFE_WANTS_LINK="/etc/systemd/system/nginx.service.wants/${BOOT_FAILSAFE_UNIT}"'
 require_text "${UAT_WRITE_GATE}" 'readonly LEGACY_BOOT_FAILSAFE_REQUIRES_LINK="/etc/systemd/system/nginx.service.requires/${BOOT_FAILSAFE_UNIT}"'
 require_text "${UAT_WRITE_GATE}" 'readonly AUTOCLOSE_DELAY="15m"'
@@ -385,9 +385,9 @@ case "$url" in
   */quickbooks/healthz) printf '%s' '{"status":"ok","provider":"quickbooks-online"}' ;;
   */quickbooks/readyz) printf '%s' '{"status":"ready"}' ;;
   *:18004/healthz|*/healthz)
-    printf '%s' '{"status":"ok","version":"0.3.0","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
+    printf '%s' '{"status":"ok","version":"0.3.1","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
     ;;
-  *:18004/readyz|*/readyz) printf '%s' '{"status":"ready","version":"0.3.0"}' ;;
+  *:18004/readyz|*/readyz) printf '%s' '{"status":"ready","version":"0.3.1"}' ;;
   *) exit 65 ;;
 esac
 EOF
@@ -556,11 +556,11 @@ case "$url" in
     ;;
   *:18004/healthz)
     status=200
-    body='{"status":"ok","version":"0.3.0","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
+    body='{"status":"ok","version":"0.3.1","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
     ;;
   *:18004/readyz)
     status=${SWITCH_GREEN_READY_STATUS:-200}
-    body=${SWITCH_GREEN_READY_BODY:-'{"status":"ready","version":"0.3.0"}'}
+    body=${SWITCH_GREEN_READY_BODY:-'{"status":"ready","version":"0.3.1"}'}
     ;;
   *:18002/healthz|*/healthz)
     status=${SWITCH_BLUE_HEALTH_STATUS:-200}
@@ -984,7 +984,7 @@ if env \
   PATH="${SWITCH_BLUE_COMPAT_TEST_BIN}:/usr/bin:/bin:/usr/sbin:/sbin" \
   SWITCH_TEST_STATE_DIR="${SWITCH_BLUE_COMPAT_TEST_DIR}" \
   SWITCH_GREEN_READY_STATUS=503 \
-  SWITCH_GREEN_READY_BODY='{"status":"not_ready","version":"0.3.0"}' \
+  SWITCH_GREEN_READY_BODY='{"status":"not_ready","version":"0.3.1"}' \
   XERO_NGINX_SITE_FILE="${SWITCH_BLUE_COMPAT_TEST_SITE}" \
   "${SWITCH_BLUE_COMPAT_TEST_SCRIPT}" green >/dev/null 2>&1; then
   echo "green switch accepted a 503 readiness response" >&2
@@ -1039,7 +1039,7 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
 
   require_text "${RENDERED_HOST_COMPOSE}" "context: ${PROJECT_DIR}"
   require_text "${RENDERED_HOST_COMPOSE}" "host_ip: 127.0.0.1"
-  require_text "${RENDERED_HOST_COMPOSE}" "image: xero-accounting-mcp-demo:0.3.0-xero-pilot-20260810.1"
+  require_text "${RENDERED_HOST_COMPOSE}" "image: xero-accounting-mcp-demo:0.3.1-xero-pilot-20260810.1"
   require_text "${RENDERED_HOST_COMPOSE}" "image: xero-accounting-mcp-demo:0.2.12-quickbooks-20260806"
   require_text "${RENDERED_HOST_COMPOSE}" 'published: "18002"'
   require_text "${RENDERED_HOST_COMPOSE}" 'published: "18003"'
@@ -1151,7 +1151,7 @@ EOF
 
   require_text "${RENDERED_GREEN_COMPOSE}" "name: xero-accounting-mcp-green-030"
   require_text "${RENDERED_GREEN_COMPOSE}" "accounting-mcp-green:"
-  require_text "${RENDERED_GREEN_COMPOSE}" "image: xero-accounting-mcp-demo:0.3.0-xero-pilot-20260810.1"
+  require_text "${RENDERED_GREEN_COMPOSE}" "image: xero-accounting-mcp-demo:0.3.1-xero-pilot-20260810.1"
   require_text "${RENDERED_GREEN_COMPOSE}" 'host_ip: 127.0.0.1'
   require_text "${RENDERED_GREEN_COMPOSE}" 'published: "18004"'
   require_text "${RENDERED_GREEN_COMPOSE}" 'MCP_OAUTH_BROKER_ENABLED: "true"'

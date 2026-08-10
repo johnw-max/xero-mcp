@@ -4,7 +4,7 @@ import { lstat, readdir } from "node:fs/promises";
 import { basename, posix, resolve } from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 
-export const RELEASE_VERSION = "0.3.0";
+export const RELEASE_VERSION = "0.3.1";
 export const RELEASE_BASENAME = `xero-accounting-mcp-${RELEASE_VERSION}-source`;
 export const RELEASE_ROOT = `xero-accounting-mcp-${RELEASE_VERSION}`;
 export const DEFAULT_SOURCE_DATE_EPOCH = 0;
@@ -27,6 +27,7 @@ const EXACT_RELEASE_FILES = [
   "deploy/HETZNER_RUNBOOK.md",
   "deploy/env.vps.example",
   "scripts/agent2_uat_write_gate_vps.sh",
+  "scripts/copy-oauth-assets.mjs",
   "scripts/preflight_xero_duplicate_guards.sql",
   "tests/contract/expected-tools.json",
 ];
@@ -45,6 +46,8 @@ const REQUIRED_RELEASE_FILES = [
   "package-lock.json",
   "tsconfig.build.json",
   "config/.env.example",
+  "src/oauth/assets/xero-logo.png",
+  "src/oauth/assets/zcloak-app-icon.png",
   "src/server.ts",
   "src/xeroRelease.ts",
   "migrations/001_init.sql",
@@ -55,9 +58,17 @@ const REQUIRED_RELEASE_FILES = [
   "deploy/docker-compose/compose.host-nginx.green.vps.yaml",
   "deploy/scripts/verify-static.sh",
   "scripts/agent2_uat_write_gate_vps.sh",
+  "scripts/copy-oauth-assets.mjs",
   "scripts/preflight_xero_duplicate_guards.sql",
   "tests/contract/expected-tools.json",
 ];
+
+const ALLOWED_PNG_RELEASE_FILES = new Set([
+  "src/oauth/assets/xero-logo.png",
+  "src/oauth/assets/zcloak-app-icon.png",
+]);
+
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 const FORBIDDEN_DIRECTORY_SEGMENTS = new Set([
   ".git",
@@ -189,6 +200,9 @@ export function scanReleaseContent(relativePath, content) {
   const findings = [];
   if (!Buffer.isBuffer(content)) throw new TypeError("Release content must be a Buffer.");
   if (!isUtf8(content)) {
+    if (ALLOWED_PNG_RELEASE_FILES.has(relativePath) && content.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+      return findings;
+    }
     findings.push({ path: relativePath, rule: "NON_UTF8_OR_BINARY_FILE" });
     return findings;
   }

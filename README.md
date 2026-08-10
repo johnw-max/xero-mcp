@@ -8,16 +8,18 @@
 
 | 层级 | 准确状态 |
 |---|---|
-| 当前线上受控 Demo | `xero-accounting-mcp-demo:0.3.0-xero-pilot-20260809.4`；线上仍为 43 个固定工具；本地候选新增 1 个受控组织切换入口，共 44 个工具 |
-| 正式 Host | `https://work.zcloak.ai` 的 `Xero 会计助理`；当前绑定 `Demo Company (Global)`，USD |
-| 线上只读验收 | 5 次真实 Xero 读取，5/5 成功；access token 到期后自动续期成功 |
+| 当前线上受控 Demo | `xero-accounting-mcp-demo:0.3.1-xero-pilot-20260810.1`；44 个固定工具，工具集指纹 `d2ac8c01…0224` |
+| 已配置 Host | `Agent2` 的 `Xero 会计助理（UAT）` 与 `Work` 的 `Xero 会计助理`；最终均回读 `Demo Company (Global)`，USD |
+| 线上验收 | Agent2 完成 Demo/USD → zcloak/HKD → Demo/USD 的受控切换闭环；Work 完成 Organisation、应收应付、Trial Balance、银行流水与对话发起切换链接 |
 | 零写入证据 | 0 preparation、0 mutation request、0 Xero 会计写入 |
-| 本地验证 | typecheck/build 通过；当前完整默认回归 798 PASS、50 条条件跳过；HTTP/OAuth 强制测试 3/3、fresh PostgreSQL 17 强制测试 47/47 |
-| 当前写闸 | 正式 Demo 默认关闭；当前 Work 账套尚未完成生产写入验收 |
+| 本地验证 | typecheck/build 通过；当前完整默认回归 819 PASS、52 条条件跳过；HTTP/OAuth 强制测试 3/3、fresh PostgreSQL 17 强制测试 49/49 |
+| 当前写闸 | `XERO_WRITE_ENABLED=false`；开机安全门已启用并验证；本轮线上验收没有调用任何写工具 |
 
-因此当前结论是：`正式 Work 只读核心流程已通过 / 本地 44 工具候选已过发布门槛 / 新增切换与治理审计尚未部署 / 多人生产写入未批准`。
+因此当前结论是：`44 工具已部署 / Agent2 与 Work 的只读核心流程和受控公司切换入口已通过 / Demo 最终绑定 Demo Company / 多人生产写入未批准`。
 
 面向非技术读者的说明见 [Xero MCP 当前能力与边界（通俗版）](./docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md)。
+
+与 MCP 配套的 11 个会计工作流 Skill、部署 ZIP、能力映射和 Agent instructions 见 [accounting-double-entry-skills-2026-08-10](./agent-skills/accounting-double-entry-skills-2026-08-10/README.md)。Skill 负责会计判断与业务步骤，MCP 负责授权、Xero 数据/action 能力与可验证回执。
 
 ## 产品架构
 
@@ -227,8 +229,10 @@ OAuth 成功、工具出现在列表或 Xero 返回 2xx，都不能单独称为�
 - [OAuth Broker Contract](./docs/MCP-OAUTH-BROKER-CONTRACT-V1.md)
 - [连接生命周期说明](./docs/XERO-MCP-CONNECTION-LIFECYCLE-ZH.md)
 - [Organisation 切换与治理审计设计](./docs/XERO-ORGANISATION-SWITCH-AND-GOVERNANCE-AUDIT-ZH.md)
+- [开发接手说明](./handoff/2026-08-10/02-Xero-MCP-开发接手指南.md)
+- [会计同事体验指南与材料](./handoff/2026-08-10/01-Xero会计助理-会计同事体验指南.md)
 - [Agent2 会计用户 UAT](./docs/AGENT2-XERO-ACCOUNTANT-UAT-V1.md)
 - [Threat Model](./docs/THREAT-MODEL.md)
 - [Hetzner 部署 Runbook](./deploy/HETZNER-HOST-NGINX-RUNBOOK.md)
 
-旧线上记录、旧 15 工具验收和旧单张 Bill Demo 只可作为历史基线，不能证明本地 44 工具候选已经上线。
+2026-08-10 的部署与线上证据见 [0.3.1 发布与线上 UAT](./docs/XERO-0.3.1-DEPLOYMENT-AND-ONLINE-UAT-2026-08-10.md)。旧 15/43 工具验收和旧单张 Bill Demo 只可作为历史基线，不能替代本次 44 工具发布证据。

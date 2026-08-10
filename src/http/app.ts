@@ -12,7 +12,11 @@ import { createAccountingMcpServer } from "../mcp/createServer.js";
 import { TOOL_ALLOWLIST } from "../mcp/toolNames.js";
 import type { XeroOAuthService } from "../oauth/xeroOAuthService.js";
 import { createMcpOAuthRouter } from "../oauth/mcpOAuthRouter.js";
-import type { McpOAuthBrokerProvider } from "../oauth/mcpOAuthBrokerProvider.js";
+import {
+  classifyBrokerBrowserOrigin,
+  classifyBrokerFetchMetadata,
+  type McpOAuthBrokerProvider,
+} from "../oauth/mcpOAuthBrokerProvider.js";
 import {
   renderOrganisationSwitchPage,
   renderOrganisationSwitchResultPage,
@@ -249,13 +253,55 @@ export function requireLegacySharedBearer(config: AppConfig) {
 }
 
 export function isReviewOriginAllowed(config: Pick<AppConfig, "publicBaseUrl">, origin: string | undefined): boolean {
-  return origin === config.publicBaseUrl;
+  const status = classifyBrokerBrowserOrigin(origin, config.publicBaseUrl);
+  return status === "EXACT" || status === "CANONICAL_EQUIVALENT";
 }
 
 function requireReviewOrigin(config: AppConfig) {
   return (request: Request, response: Response, next: NextFunction) => {
     if (!isReviewOriginAllowed(config, request.headers.origin)) {
       response.status(403).json({ error: { code: "FORBIDDEN", message: "Review POST must be same-origin." } });
+      return;
+    }
+    next();
+  };
+}
+
+export function isOrganisationSwitchOriginAllowed(
+  config: { publicBaseUrl: string; personalPocOnly: boolean },
+  origin: string | undefined,
+  fetchMetadata: {
+    site?: string | string[] | undefined;
+    mode?: string | string[] | undefined;
+    destination?: string | string[] | undefined;
+    user?: string | string[] | undefined;
+  },
+): boolean {
+  const originStatus = classifyBrokerBrowserOrigin(origin, config.publicBaseUrl);
+  if (originStatus === "EXACT" || originStatus === "CANONICAL_EQUIVALENT") return true;
+  if (originStatus !== "NULL" || !config.personalPocOnly) return false;
+  return classifyBrokerFetchMetadata(fetchMetadata) !== "MISMATCH";
+}
+
+function requireOrganisationSwitchOrigin(config: AppConfig) {
+  return (request: Request, response: Response, next: NextFunction) => {
+    const allowed = isOrganisationSwitchOriginAllowed(
+      {
+        publicBaseUrl: config.publicBaseUrl,
+        personalPocOnly: config.mcpOAuthBroker?.enabled === true && config.mcpOAuthBroker.personalPocOnly,
+      },
+      request.headers.origin,
+      {
+        site: request.headers["sec-fetch-site"],
+        mode: request.headers["sec-fetch-mode"],
+        destination: request.headers["sec-fetch-dest"],
+        user: request.headers["sec-fetch-user"],
+      },
+    );
+    if (!allowed) {
+      response.status(403).json({
+        error: { code: "FORBIDDEN", message: "Organisation switch POST must be same-origin." },
+      });
       return;
     }
     next();
@@ -435,7 +481,7 @@ function renderConnectionPage(tenantName: string): string {
 
 function setPrivateHtmlHeaders(response: Response): void {
   response.setHeader("Cache-Control", "no-store");
-  response.setHeader("Content-Security-Policy", "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+  response.setHeader("Content-Security-Policy", "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
 }
 
 export async function beginTicketBoundXeroOAuth(options: {
@@ -527,6 +573,7 @@ export function createHttpApp(options: {
   });
 
   const reviewOrigin = requireReviewOrigin(config);
+  const organisationSwitchOrigin = requireOrganisationSwitchOrigin(config);
 
   if (brokerConfig?.enabled && mcpOAuthProvider) {
     app.all(
@@ -662,7 +709,7 @@ export function createHttpApp(options: {
       }));
     });
 
-    app.post("/xero/organisation-switch", reviewOrigin, async (request, response) => {
+    app.post("/xero/organisation-switch", organisationSwitchOrigin, async (request, response) => {
       const ticket = typeof request.body?.ticket === "string" ? request.body.ticket : undefined;
       const csrfToken = typeof request.body?.csrf_token === "string" ? request.body.csrf_token : undefined;
       const selectedConnectionId = typeof request.body?.connection_id === "string"

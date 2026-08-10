@@ -167,7 +167,7 @@ export class XeroClientManager {
       agentId: context.agentId,
       connectionId: context.connectionId,
     });
-    if (!binding) {
+    if (!binding || binding.bindingRevision !== context.bindingRevision) {
       throw new AppError("FORBIDDEN", "The OAuth token is not bound to an active Xero organisation.", {
         httpStatus: 403,
       });

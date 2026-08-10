@@ -15,6 +15,7 @@ import {
   createExactOriginCors,
   createHttpApp,
   isReviewOriginAllowed,
+  isOrganisationSwitchOriginAllowed,
   rejectReviewWithAudit,
   renderResultPage,
   renderReviewPage,
@@ -104,8 +105,36 @@ describe("browser review boundary", () => {
   it("requires review mutations to come from the MCP public origin", () => {
     const config = { publicBaseUrl: "https://mcp.jiayuanwang.xyz" };
     expect(isReviewOriginAllowed(config, "https://mcp.jiayuanwang.xyz")).toBe(true);
+    expect(isReviewOriginAllowed(config, "https://mcp.jiayuanwang.xyz/")).toBe(true);
+    expect(isReviewOriginAllowed(config, "https://mcp.jiayuanwang.xyz:443")).toBe(true);
     expect(isReviewOriginAllowed(config, "https://work.zcloak.ai")).toBe(false);
     expect(isReviewOriginAllowed(config, undefined)).toBe(false);
+  });
+
+  it("allows the Personal POC switch form's opaque browser origin only when Fetch Metadata is not cross-site", () => {
+    const config = { publicBaseUrl: "https://mcp.jiayuanwang.xyz", personalPocOnly: true };
+    expect(isOrganisationSwitchOriginAllowed(config, "https://mcp.jiayuanwang.xyz:443", {})).toBe(true);
+    expect(isOrganisationSwitchOriginAllowed(config, "null", {
+      site: "same-origin",
+      mode: "navigate",
+      destination: "document",
+      user: "?1",
+    })).toBe(true);
+    expect(isOrganisationSwitchOriginAllowed(config, "null", {
+      site: "cross-site",
+      mode: "navigate",
+      destination: "document",
+      user: "?1",
+    })).toBe(false);
+    expect(isOrganisationSwitchOriginAllowed(config, "null", {})).toBe(true);
+    expect(isOrganisationSwitchOriginAllowed({ ...config, personalPocOnly: false }, "null", {})).toBe(false);
+    expect(isOrganisationSwitchOriginAllowed(config, undefined, {})).toBe(false);
+    expect(isOrganisationSwitchOriginAllowed(config, "https://evil.invalid", {
+      site: "same-origin",
+      mode: "navigate",
+      destination: "document",
+      user: "?1",
+    })).toBe(false);
   });
 
   it("never includes a one-time connect ticket in the application log path", () => {

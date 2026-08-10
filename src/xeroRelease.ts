@@ -5,4 +5,4 @@
  * package is bumped without updating this value, so initialize, health and
  * readiness cannot silently identify different builds.
  */
-export const XERO_RELEASE_VERSION = "0.3.0";
+export const XERO_RELEASE_VERSION = "0.3.1";

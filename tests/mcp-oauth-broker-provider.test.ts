@@ -325,8 +325,8 @@ describe("MCP OAuth Broker provider", () => {
       originalUrl: `/oauth/xero/callback?state=${xeroState}&code=xero-code`,
       cookie: `${flowCookie?.name}=${flowCookie?.value}`,
     }), callback.response);
-    expect(callback.body).toContain("Choose the Xero organisation");
-    expect(callback.body).toContain("PERSONAL POC — HOST IDENTITY UNVERIFIED");
+    expect(callback.body).toContain("Choose an organisation");
+    expect(callback.body).toContain("Test connection · Intended for one user.");
     expect(callback.body).toContain("Demo Books Ltd");
     const csrfToken = callback.body?.match(/name="csrf_token" value="([^"]+)"/u)?.[1];
     expect(csrfToken).toBe("c".repeat(43));
@@ -383,7 +383,7 @@ describe("MCP OAuth Broker provider", () => {
     expect(selection.headers.get("x-content-type-options")).toBe("nosniff");
     expect(selection.headers.get("x-frame-options")).toBe("DENY");
     expect(selection.headers.get("content-security-policy")).toBe(
-      "default-src 'none'; style-src 'unsafe-inline'; form-action https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callback; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callback; base-uri 'none'; frame-ancestors 'none'",
     );
     expect(selection.body).toContain("Return to Agent2");
     expect(selection.body).toContain(`name="code" value="${"o".repeat(43)}"`);

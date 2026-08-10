@@ -135,6 +135,7 @@ async function seedOAuthPrincipal(options: {
     installationId: installation.installationId,
     bindingId: binding.bindingId,
     connectionId: connection.connectionId,
+    bindingRevision: 1,
     authorizationId,
     workspaceId,
     subjectType: installation.subjectType,
@@ -197,10 +198,50 @@ describe("trusted OAuth accounting principals", () => {
       "oauthInstallationId",
       "bindingId",
       "connectionId",
+      "bindingRevision",
     ]) {
       const invalid = { ...seeded.context, [field]: undefined } as unknown as RequestContext;
       await expect(clientManager.resolveConnection(invalid)).rejects.toMatchObject({ code: "FORBIDDEN" });
     }
+  });
+
+  it("rejects a stale request epoch after the same binding tuple is re-confirmed", async () => {
+    const repository = new InMemoryAccountingRepository();
+    const cipher = new Aes256GcmTokenCipher(Buffer.alloc(32, 14));
+    const seeded = await seedOAuthPrincipal({ repository, cipher, suffix: "revision-epoch" });
+    const clientManager = manager(repository, cipher);
+    const changedAt = new Date();
+    const sessionHash = "a".repeat(64);
+    await repository.saveOrganisationSwitchSession({
+      sessionHash,
+      installationId: seeded.installation.installationId,
+      workspaceId: seeded.installation.workspaceId,
+      subjectType: seeded.installation.subjectType,
+      subjectId: seeded.installation.subjectId,
+      agentId: seeded.installation.agentId,
+      authorizationId: seeded.authorization.authorizationId,
+      sourceBindingId: seeded.binding.bindingId,
+      sourceConnectionId: seeded.connection.connectionId,
+      createdAt: changedAt,
+      expiresAt: new Date(changedAt.getTime() + 10 * 60_000),
+    });
+    await expect(repository.completeOrganisationSwitch({
+      sessionHash,
+      selectedConnectionId: seeded.connection.connectionId,
+      newBindingId: "unused-binding-revision-epoch",
+      now: new Date(changedAt.getTime() + 1_000),
+    })).resolves.toMatchObject({
+      changed: false,
+      currentBinding: { bindingRevision: 2 },
+    });
+
+    await expect(clientManager.resolveConnection(seeded.context)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(clientManager.resolveConnection({
+      ...seeded.context,
+      bindingRevision: 2,
+    })).resolves.toMatchObject({
+      connection: { connectionId: seeded.connection.connectionId },
+    });
   });
 
   it("resolves the exact binding and never crosses to another tenant", async () => {

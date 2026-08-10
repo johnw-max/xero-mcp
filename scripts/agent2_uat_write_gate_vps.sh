@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly RELEASE_DIR="/opt/xero-accounting-mcp-demo-0.3.0-20260810.1"
-readonly EXPECTED_IMAGE_REF="xero-accounting-mcp-demo:0.3.0-xero-pilot-20260810.1"
-readonly EXPECTED_VERSION="0.3.0"
+readonly RELEASE_DIR="/opt/xero-accounting-mcp-demo-0.3.1-20260810.1"
+readonly EXPECTED_IMAGE_REF="xero-accounting-mcp-demo:0.3.1-xero-pilot-20260810.1"
+readonly EXPECTED_VERSION="0.3.1"
 readonly EXPECTED_TOOL_COUNT="44"
 readonly EXPECTED_TOOLSET_HASH="d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"
 readonly EXPECTED_PUBLIC_BASE_URL="https://mcp.jiayuanwang.xyz"
@@ -11,15 +11,15 @@ readonly EXPECTED_RESOURCE="${EXPECTED_PUBLIC_BASE_URL}/mcp"
 readonly EXPECTED_LOOPBACK_BASE_URL="http://127.0.0.1:18004"
 readonly TEST_TENANT_ID="7c3cc738-eef0-4d4e-83f8-d528390e1e61"
 readonly EXPECTED_CLIENT_ID="agent2-xero-bd0796db041ee01e"
-readonly BASELINE_FILE="/tmp/xero-agent2-uat-write-gate-0.3.0-20260810.1.baseline"
-readonly LOCK_FILE="/run/lock/xero-agent2-uat-write-gate-0.3.0-20260810.1.lock"
-readonly AUTOCLOSE_UNIT="xero-write-gate-autoclose-030-20260810-1"
+readonly BASELINE_FILE="/tmp/xero-agent2-uat-write-gate-0.3.1-20260810.1.baseline"
+readonly LOCK_FILE="/run/lock/xero-agent2-uat-write-gate-0.3.1-20260810.1.lock"
+readonly AUTOCLOSE_UNIT="xero-write-gate-autoclose-031-20260810-1"
 readonly AUTOCLOSE_DELAY="15m"
 readonly RETRY_DELAY="15s"
 readonly RETRY_WINDOW="15min"
 readonly RETRY_START_LIMIT_BURST="4"
-readonly BOOT_FAILSAFE_UNIT="xero-write-gate-boot-close-030-20260810-1.service"
-readonly BOOT_FAILSAFE_SCRIPT="/usr/local/sbin/xero-agent2-uat-write-gate-030-20260810-1"
+readonly BOOT_FAILSAFE_UNIT="xero-write-gate-boot-close-031-20260810-1.service"
+readonly BOOT_FAILSAFE_SCRIPT="/usr/local/sbin/xero-agent2-uat-write-gate-031-20260810-1"
 readonly BOOT_FAILSAFE_UNIT_PATH="/etc/systemd/system/${BOOT_FAILSAFE_UNIT}"
 readonly BOOT_FAILSAFE_WANTS_LINK="/etc/systemd/system/nginx.service.wants/${BOOT_FAILSAFE_UNIT}"
 readonly LEGACY_BOOT_FAILSAFE_REQUIRES_LINK="/etc/systemd/system/nginx.service.requires/${BOOT_FAILSAFE_UNIT}"
@@ -527,7 +527,7 @@ schedule_autoclose() {
   systemctl reset-failed "${AUTOCLOSE_UNIT}.timer" "${AUTOCLOSE_UNIT}.service" >/dev/null 2>&1 || true
   systemd-run \
     --unit="$AUTOCLOSE_UNIT" \
-    --description="Close the Xero 0.3.0 Agent2 UAT write gate" \
+    --description="Close the Xero 0.3.1 Agent2 UAT write gate" \
     --on-active="$AUTOCLOSE_DELAY" \
     --timer-property=AccuracySec=1s \
     --property=Type=oneshot \
@@ -654,7 +654,7 @@ open_gate() {
   audit "WRITE_GATE" "OPEN"
   audit "BINDING" "PASS"
   audit "AUTOCLOSE" "ACTIVE"
-  audit "RELEASE" "0.3.0-20260810.1"
+  audit "RELEASE" "0.3.1-20260810.1"
   audit "RESOURCE" "$EXPECTED_RESOURCE"
   audit "XERO_IMAGE" "PINNED"
   audit "QUICKBOOKS_CONTINUITY" "PASS"
@@ -678,7 +678,7 @@ boot_close_gate() {
   verify_boot_dependency_continuity
   loopback_health_check
   audit "BOOT_WRITE_GATE" "CLOSED"
-  audit "RELEASE" "0.3.0-20260810.1"
+  audit "RELEASE" "0.3.1-20260810.1"
   audit "RESOURCE" "$EXPECTED_RESOURCE"
   audit "XERO_IMAGE" "PINNED"
   audit "QUICKBOOKS_CONTINUITY" "PASS"
@@ -700,11 +700,10 @@ close_gate() {
   deployment_check
   verify_xero_restart_policy "unless-stopped"
   verify_continuity
-  binding_check
   health_check
   audit "WRITE_GATE" "CLOSED"
-  audit "BINDING" "PASS"
-  audit "RELEASE" "0.3.0-20260810.1"
+  audit "BINDING" "NOT_REQUIRED_WRITE_CLOSED"
+  audit "RELEASE" "0.3.1-20260810.1"
   audit "RESOURCE" "$EXPECTED_RESOURCE"
   audit "XERO_IMAGE" "PINNED"
   audit "QUICKBOOKS_CONTINUITY" "PASS"
@@ -716,20 +715,21 @@ status_gate() {
   verify_boot_failsafe
   verify_boot_failsafe_activation
   deployment_check
-  binding_check
   health_check
   if green_compose exec -T accounting-mcp-green sh -eu -c 'test "$XERO_WRITE_ENABLED" = "true"'; then
+    binding_check
     verify_autoclose_schedule
     verify_xero_restart_policy "no"
     audit "WRITE_GATE" "OPEN"
+    audit "BINDING" "PASS"
     audit "AUTOCLOSE" "ACTIVE"
   else
     green_compose exec -T accounting-mcp-green sh -eu -c 'test "$XERO_WRITE_ENABLED" = "false"' || fail "WRITE_GATE_VALUE_INVALID"
     verify_xero_restart_policy "unless-stopped"
     audit "WRITE_GATE" "CLOSED"
+    audit "BINDING" "NOT_REQUIRED_WRITE_CLOSED"
   fi
-  audit "BINDING" "PASS"
-  audit "RELEASE" "0.3.0-20260810.1"
+  audit "RELEASE" "0.3.1-20260810.1"
   audit "RESOURCE" "$EXPECTED_RESOURCE"
   audit "XERO_IMAGE" "PINNED"
   audit "HEALTH" "PASS"

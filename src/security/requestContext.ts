@@ -30,6 +30,7 @@ export interface RequestContext {
   readonly oauthInstallationId?: string;
   readonly bindingId?: string;
   readonly connectionId?: string;
+  readonly bindingRevision?: number;
   readonly scopes: readonly string[];
   readonly roles: readonly string[];
   readonly authn: RequestAuthentication;
@@ -44,6 +45,7 @@ export interface OAuthBoundRequestContext extends RequestContext {
   readonly oauthInstallationId: string;
   readonly bindingId: string;
   readonly connectionId: string;
+  readonly bindingRevision: number;
   readonly legacyDemo: false;
 }
 
@@ -63,7 +65,9 @@ export function requireOAuthBoundRequestContext(context: RequestContext): OAuthB
     !nonEmpty(context.agentId) ||
     !nonEmpty(context.oauthInstallationId) ||
     !nonEmpty(context.bindingId) ||
-    !nonEmpty(context.connectionId)
+    !nonEmpty(context.connectionId) ||
+    !Number.isSafeInteger(context.bindingRevision) ||
+    (context.bindingRevision ?? 0) < 1
   ) {
     throw new AppError("FORBIDDEN", "The OAuth request is missing its trusted connection binding.", {
       httpStatus: 403,
@@ -145,6 +149,11 @@ export function createOAuthRequestContext(options: {
   resolvedToken: ResolvedMcpAccessToken;
 }): RequestContext {
   const token = options.resolvedToken;
+  if (!Number.isSafeInteger(token.bindingRevision) || token.bindingRevision < 1) {
+    throw new AppError("AUTH_REQUIRED", "The resolved OAuth token has no valid binding revision.", {
+      httpStatus: 401,
+    });
+  }
   const scopes = Object.freeze([...token.grantedScopes]);
   const roles = Object.freeze([] as string[]);
   const authn = Object.freeze({
@@ -165,6 +174,7 @@ export function createOAuthRequestContext(options: {
     oauthInstallationId: token.installationId,
     bindingId: token.bindingId,
     connectionId: token.connectionId,
+    bindingRevision: token.bindingRevision,
     scopes,
     roles,
     authn,
@@ -174,6 +184,15 @@ export function createOAuthRequestContext(options: {
 
 function requiredAuthInfoString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0 || value !== value.trim()) {
+    throw new AppError("AUTH_REQUIRED", `The verified OAuth token is missing ${field}.`, {
+      httpStatus: 401,
+    });
+  }
+  return value;
+}
+
+function requiredAuthInfoPositiveSafeInteger(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
     throw new AppError("AUTH_REQUIRED", `The verified OAuth token is missing ${field}.`, {
       httpStatus: 401,
     });
@@ -215,6 +234,7 @@ export function createOAuthRequestContextFromAuthInfo(options: {
     installationId: requiredAuthInfoString(extra.installationId, "installation ID"),
     bindingId: requiredAuthInfoString(extra.bindingId, "binding ID"),
     connectionId: requiredAuthInfoString(extra.connectionId, "connection ID"),
+    bindingRevision: requiredAuthInfoPositiveSafeInteger(extra.bindingRevision, "binding revision"),
     authorizationId: requiredAuthInfoString(extra.authorizationId, "authorization ID"),
     workspaceId: requiredAuthInfoString(extra.workspaceId, "workspace ID"),
     subjectType,

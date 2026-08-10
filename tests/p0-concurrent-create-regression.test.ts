@@ -34,6 +34,7 @@ function token(tenantId: string): ResolvedMcpAccessToken {
     installationId: "installation_concurrency_regression",
     bindingId: "binding_concurrency_regression",
     connectionId: "connection_xero_harness_001",
+    bindingRevision: 1,
     authorizationId: "authorization_concurrency_regression",
     workspaceId: "workspace_concurrency_regression",
     subjectType: "USER",

@@ -35,8 +35,13 @@ describe("Xero organisation switch browser pages", () => {
     expect(html).toContain('name="connection_id" value="connection-b"');
     expect(html).toContain("Company &lt;A&gt;");
     expect(html).toContain("Currently connected");
+    expect(html).toContain('data-connection-page="xero"');
+    expect(html).toContain('name="color-scheme" content="light"');
+    expect(html).toContain("@media(max-width:700px)");
     expect(html).not.toContain("<script");
     expect(html).not.toContain("tenant-b</code>");
+    expect(html).not.toContain("tenant-a");
+    expect(html).not.toContain("tenant-b");
   });
 
   it("renders the confirmed organisation and instructs the user to return to the Agent", () => {
@@ -45,6 +50,6 @@ describe("Xero organisation switch browser pages", () => {
       tenantName: "Company B",
     });
     expect(html).toContain("Company B");
-    expect(html).toContain("return to the Agent");
+    expect(html).toContain("Return to the Agent");
   });
 });

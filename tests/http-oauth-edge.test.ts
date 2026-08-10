@@ -570,6 +570,7 @@ describe("HTTP OAuth edge", () => {
           installationId: "installation-write-only",
           bindingId: "binding-write-only",
           connectionId: "connection-write-only",
+          bindingRevision: 1,
           authorizationId: "authorization-write-only",
           workspaceId: "workspace-write-only",
           subjectType: "USER",
