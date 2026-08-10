@@ -2063,23 +2063,25 @@ export class PostgresAccountingRepository implements AccountingRepository {
         const otherActiveInstallations = await client.query(
           `SELECT installation_id, workspace_id, subject_type, subject_id, agent_id, oauth_client_id
            FROM oauth_installations
-           WHERE installation_status = 'ACTIVE' AND installation_id <> $1
+           WHERE installation_status = 'ACTIVE'
+             AND installation_id <> $1
+             AND workspace_id = $2
+             AND subject_type = $3
+             AND subject_id = $4
+             AND agent_id = $5
+             AND oauth_client_id = $6
            ORDER BY installation_id`,
-          [row.oauth_installation_id],
+          [
+            row.oauth_installation_id,
+            row.workspace_id,
+            row.subject_type,
+            row.subject_id,
+            row.agent_id,
+            row.oauth_client_id,
+          ],
         );
-        let cleanedStaleInstallation = false;
+        let replacedInstallation = false;
         for (const candidate of otherActiveInstallations.rows as Row[]) {
-          const samePrincipalAndClient =
-            candidate.workspace_id === row.workspace_id &&
-            candidate.subject_type === row.subject_type &&
-            candidate.subject_id === row.subject_id &&
-            candidate.agent_id === row.agent_id &&
-            candidate.oauth_client_id === row.oauth_client_id;
-          if (!samePrincipalAndClient) {
-            await client.query(cleanedStaleInstallation ? "ROLLBACK" : "COMMIT");
-            return undefined;
-          }
-
           const candidateInstallationId = String(candidate.installation_id);
           const familyIds = await client.query<{ family_id: string }>(
             `SELECT family_id
@@ -2091,7 +2093,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
           // A just-selected installation can still be exchanging its first token.
           // Never revoke it merely because no family has been created yet.
           if (familyIds.rowCount === 0) {
-            await client.query(cleanedStaleInstallation ? "ROLLBACK" : "COMMIT");
+            await client.query(replacedInstallation ? "ROLLBACK" : "COMMIT");
             return undefined;
           }
           for (const family of familyIds.rows) {
@@ -2115,44 +2117,11 @@ export class PostgresAccountingRepository implements AccountingRepository {
             lockedRow.agent_id !== row.agent_id ||
             lockedRow.oauth_client_id !== row.oauth_client_id
           ) {
-            await client.query(cleanedStaleInstallation ? "ROLLBACK" : "COMMIT");
+            await client.query("ROLLBACK");
             return undefined;
           }
-
-          const usableRefreshToken = await client.query(
-            `SELECT 1
-             FROM mcp_refresh_token_families family
-             JOIN mcp_refresh_tokens refresh_token ON refresh_token.family_id = family.family_id
-             JOIN agent_connection_bindings binding
-               ON binding.binding_id = family.binding_id
-              AND binding.oauth_installation_id = family.oauth_installation_id
-              AND binding.connection_id = family.connection_id
-             JOIN oauth_installations installation
-               ON installation.installation_id = family.oauth_installation_id
-             JOIN provider_connections connection ON connection.connection_id = family.connection_id
-             JOIN provider_authorizations provider_auth
-               ON provider_auth.authorization_id = connection.authorization_id
-             WHERE family.oauth_installation_id = $1
-               AND family.family_status = 'ACTIVE'
-               AND refresh_token.revoked_at IS NULL
-               AND refresh_token.consumed_at IS NULL
-               AND refresh_token.issued_at <= $2
-               AND refresh_token.expires_at > $2
-               AND binding.binding_status = 'ACTIVE'
-               AND installation.installation_status = 'ACTIVE'
-               AND connection.connection_status = 'ACTIVE'
-               AND provider_auth.authorization_status = 'ACTIVE'
-               AND provider_auth.workspace_id = binding.workspace_id
-             LIMIT 1`,
-            [candidateInstallationId, input.now],
-          );
-          if (usableRefreshToken.rowCount !== 0) {
-            await client.query(cleanedStaleInstallation ? "ROLLBACK" : "COMMIT");
-            return undefined;
-          }
-
           await this.#revokeMcpInstallationGrant(client, candidateInstallationId, input.now);
-          cleanedStaleInstallation = true;
+          replacedInstallation = true;
         }
       }
 

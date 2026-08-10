@@ -860,31 +860,27 @@ export class InMemoryAccountingRepository implements AccountingRepository {
 
     if (flow.personalPoc) {
       const otherActiveInstallations = [...this.#oauthInstallations.values()].filter((candidate) =>
-        candidate.installationId !== flow.installationId && candidate.status === "ACTIVE"
+        candidate.installationId !== flow.installationId &&
+        candidate.status === "ACTIVE" &&
+        candidate.workspaceId === flow.workspaceId &&
+        candidate.subjectType === flow.subjectType &&
+        candidate.subjectId === flow.subjectId &&
+        candidate.agentId === flow.agentId &&
+        candidate.clientId === flow.clientId
       );
-      const staleInstallations: Array<{ installationId: string; familyId: string }> = [];
+      const replacedInstallations: OAuthInstallation[] = [];
       for (const candidate of otherActiveInstallations) {
-        const samePrincipalAndClient =
-          candidate.workspaceId === flow.workspaceId &&
-          candidate.subjectType === flow.subjectType &&
-          candidate.subjectId === flow.subjectId &&
-          candidate.agentId === flow.agentId &&
-          candidate.clientId === flow.clientId;
         const families = [...this.#mcpRefreshTokenFamilies.values()].filter((family) =>
           family.installationId === candidate.installationId
         );
-        if (
-          !samePrincipalAndClient ||
-          families.length === 0 ||
-          this.#hasUsableMcpRefreshToken(candidate.installationId, input.now)
-        ) return undefined;
-        staleInstallations.push({
-          installationId: candidate.installationId,
-          familyId: families[0]!.familyId,
-        });
+        // A just-selected grant without a refresh family may still be exchanging
+        // its first token. Reject the racing browser flow instead of issuing a
+        // code whose installation would immediately be revoked.
+        if (families.length === 0) return undefined;
+        replacedInstallations.push(candidate);
       }
-      for (const stale of staleInstallations) {
-        this.#revokeRefreshGrant(stale.familyId, input.now);
+      for (const replaced of replacedInstallations) {
+        await this.revokeOAuthInstallation(replaced.installationId, replaced.workspaceId, input.now);
       }
     }
 
@@ -2767,24 +2763,6 @@ export class InMemoryAccountingRepository implements AccountingRepository {
         });
       }
     }
-  }
-
-  #hasUsableMcpRefreshToken(installationId: string, now: Date): boolean {
-    for (const family of this.#mcpRefreshTokenFamilies.values()) {
-      if (
-        family.installationId !== installationId ||
-        family.status !== "ACTIVE" ||
-        !this.#resolveActiveBindingByTuple(family.installationId, family.bindingId, family.connectionId)
-      ) continue;
-      if ([...this.#mcpRefreshTokens.values()].some((token) =>
-        token.familyId === family.familyId &&
-        !token.revokedAt &&
-        !token.consumedAt &&
-        token.issuedAt <= now &&
-        token.expiresAt > now
-      )) return true;
-    }
-    return false;
   }
 
   #revokePendingBrokerGrant(flow: OAuthBrokerAuthorizationFlow, revokedAt: Date): void {
