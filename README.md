@@ -1,53 +1,55 @@
 # Xero Accounting MCP
 
-这是一个已完成核心可行性验证的远程 Xero MCP。它让 Work 中的 Agent 通过用户 OAuth 授权连接其 Xero Organisation，读取存量会计数据、结合用户材料进行分析，并在人工确认后执行受控会计操作。
+本仓库包含 Work 平台接入 Xero 的远程 MCP 服务。项目以 Xero 作为正式会计账本，使会计用户能够在 Work 中授权自己的 Xero Organisation，由 Agent 读取历史账务、结合用户材料进行分析，并在人工确认后执行受控会计操作。
 
-当前版本部署在个人测试基础设施，用于验证产品形态与主要流程；它不是公司正式生产环境。本次交接的目标是由开发团队接手源码和 Xero Developer App，并迁移到公司控制的域名、云资源、数据库和密钥体系。
+当前版本是已完成核心可行性验证的代码基线，运行在个人测试基础设施，不应直接作为公司生产部署。开发团队接手后需要迁移到公司控制的域名、云资源、数据库和密钥体系，并完成多用户、多 Organisation 隔离及生产环境验收。
 
-## 系统形态
+## Architecture
 
 ```text
-会计用户 / Work Agent
-        ↓
-远程 MCP（OAuth、工具边界、确认、审计）
-        ↓
-Xero OAuth + Accounting API
-        ↓
-用户授权的 Xero Organisation
+Accountant
+   ↓
+Work Agent
+   ↓
+Remote Xero MCP
+   ↓
+Xero OAuth 2.0 and Accounting API
+   ↓
+User-authorized Xero Organisation
 ```
 
-- Xero 官方提供 OAuth、Accounting API、会计数据和 `xero-node` SDK。
-- 本项目实现远程 MCP、多用户连接、Organisation 绑定、受控工具、写入确认、幂等、回执回读和审计。
-- Xero 始终是正式账本。PostgreSQL 只保存授权、连接、幂等和审计等控制状态，不复制一套总账。
-- 当前交接范围只包含 Xero。仓库中少量 QuickBooks 共享模块用于保持既有运行连续性，后续可由开发团队拆分。
-
-## 源码结构
-
-| 位置 | 用途 |
+| Component | Responsibility |
 |---|---|
-| `src/mcp/` | MCP Server 与工具注册 |
-| `src/oauth/` | Work OAuth、Xero OAuth、刷新与撤销 |
-| `src/providers/` | Xero API/SDK 适配与数据映射 |
-| `src/services/` | 读取、准备、执行、回读和审计编排 |
-| `src/policy/` | 能力及风险边界 |
-| `src/db/`、`migrations/` | PostgreSQL 控制状态与迁移 |
-| `deploy/` | 部署配置与运行说明 |
-| `tests/`、`harness/` | 自动化测试与业务验收工具 |
+| Work and Agent | User conversation, source materials, business analysis and tool orchestration |
+| Xero MCP | OAuth broker, Organisation binding, accounting tools, confirmation, idempotency, read-back and audit |
+| Xero | Official ledger, accounting data, OAuth 2.0, Accounting API and SDK |
+| PostgreSQL | Authorization, connection, idempotency and audit control state; it is not a second ledger |
 
-## 开发接手
+Xero provides the official OAuth and Accounting API. This project adds the remote MCP interface, per-user connections, explicit Organisation selection, bounded accounting tools, and the controlled write flow: prepare → user confirmation → execute → provider receipt → exact record read-back.
 
-1. 使用公司环境部署本仓库，配置 Node.js 22+、PostgreSQL、HTTPS 域名和 Secret Manager。
-2. 在 Xero Developer Portal 接手 `zCloak Accounting Connector`，配置公司回调地址和最小 OAuth scopes。
-3. 先保持写入关闭，验证登录、Organisation 选择、读取、自动续期和主动断开。
-4. 再用测试 Organisation 验证受控写入：准备提案 → 用户确认 → 写入 → Xero 回执 → 同 ID 回读。
-5. 在 Work 公司空间重新配置 MCP，并复制或重建正式 Agent。
-6. 稳定运行后，再移除个人测试域名、服务器、数据库和密钥依赖。
+## Repository structure
 
-> 迁移时应先新增公司回调并完成验证，最后再删除当前测试回调，避免中途影响现有演示。
+| Path | Purpose |
+|---|---|
+| `src/mcp/` | MCP server and tool registration |
+| `src/oauth/` | Work OAuth, Xero OAuth, refresh and revoke |
+| `src/providers/` | Xero API/SDK adapter and data mapping |
+| `src/services/` | Read, prepare, execute, read-back and audit orchestration |
+| `src/policy/` | Capability and risk boundaries |
+| `src/db/`, `migrations/` | PostgreSQL control state and migrations |
+| `deploy/` | Deployment configuration and runbooks |
+| `tests/`, `harness/` | Automated tests and business acceptance tools |
 
-Xero 正在推进更细粒度的 OAuth scopes。开发接手后应按 Developer Portal 的最新要求完成迁移，不应长期依赖旧的 broad scopes。
+## Developer takeover
 
-## 本地验证
+1. Deploy the repository in a company-controlled environment with Node.js 22+, PostgreSQL, HTTPS, Secret Manager, logging, monitoring, backups and rollback.
+2. Bring the Xero Developer App under company management, configure the company callback and adopt Xero's current granular OAuth scopes.
+3. Configure the MCP in the company Work environment and ensure every user connects and selects their own Xero Organisation.
+4. Keep accounting writes disabled while validating OAuth, Organisation selection, reads, token refresh, revoke and multi-user isolation.
+5. Validate controlled writes in an isolated test Organisation, requiring user confirmation, Xero record ID, provider receipt and exact record read-back.
+6. Remove personal infrastructure dependencies only after the company deployment is stable.
+
+Configuration templates are available in [`config/.env.example`](./config/.env.example) and [`deploy/env.vps.example`](./deploy/env.vps.example). Secrets, OAuth tokens, database backups and `.env` files must never be committed to Git.
 
 ```sh
 npm install
@@ -56,18 +58,6 @@ npm test
 npm run build
 ```
 
-需要 PostgreSQL/HTTP 环境的发布门槛必须在隔离测试环境单独执行；条件跳过不等于通过。配置模板见 [`config/.env.example`](./config/.env.example) 和 [`deploy/env.vps.example`](./deploy/env.vps.example)。
+Tests that require isolated PostgreSQL or HTTP environments must be run separately as release gates; a conditional skip is not a passing release result.
 
-任何 Client Secret、OAuth Token、加密密钥、数据库备份或 `.env` 都不得提交到 Git。
-
-## 正式接手完成标准
-
-- 公司账号拥有 Xero App、域名、云资源、数据库、密钥和账单管理权；
-- 能从干净环境构建、迁移并部署；
-- 多用户与多 Organisation 连接相互隔离；
-- OAuth 登录、Organisation 选择、读取、续期和撤销均通过；
-- 写入默认受控，且每次成功都有 Xero object ID、Provider receipt 和同 ID 回读；
-- 监控、备份、恢复、回滚和安全责任人明确；
-- 正式环境不再依赖个人基础设施。
-
-详细设计、测试和部署资料保留在 [`docs/`](./docs)、[`deploy/`](./deploy) 与 [`artifacts/`](./artifacts) 中，供开发按需查阅。
+The current handover scope is Xero only. A small number of shared QuickBooks modules remain to preserve existing runtime continuity and may be separated by the development team later.
