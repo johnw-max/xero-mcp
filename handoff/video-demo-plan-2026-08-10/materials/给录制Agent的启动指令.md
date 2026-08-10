@@ -13,9 +13,14 @@
 3. 本次要录的视频脚本：`01-首次连接并选择公司.md`、`02-会计接手客户并快速体检.md` 或 `03-从对话切换客户公司.md`
 4. `/Users/jiayuanwang/Documents/Workflow - accounting/xero-boss-demo-video-plan-2026-08-10/04-成片验收与重录门槛.md`
 
+首次执行时，还必须先阅读并执行：
+
+`/Users/jiayuanwang/Documents/Workflow - accounting/xero-boss-demo-video-plan-2026-08-10/00A-样片录制与审批.md`
+
 执行要求：
 
 - 一次只录一条视频；先无录屏彩排，再恢复起始状态，再正式录制。
+- 在任何正式视频之前，只录一条 30–45 秒样片。交付样片后停止，等待产品负责人明确回复“样片通过”；未通过前不得录视频 01、02、03。
 - 接管 Chrome 和录屏工具完成操作；录屏画面只能包含 Work/Xero 浏览器业务页面和普通箭头光标。
 - 首选 OBS 单窗口捕获；没有 OBS 时使用 macOS `Shift–Command–5` 录制所选部分。
 - 不显示 Agent 控制界面、AI 接管提示、自动化高亮、点击光圈、终端、通知或其他标签页。
@@ -31,6 +36,10 @@
 
 `预检完成；当前 Organisation：___；写入关闭；录屏范围测试通过；准备录制视频 __。`
 
+样片阶段改为报告：
+
+`样片预检完成；当前 Organisation：Demo Company (Global)；写入关闭；只录 30–45 秒样片，交付后停止等待审批。`
+
 录制完成后：
 
 1. 按 `materials/Agent录制日志模板.md` 填写日志；
@@ -39,4 +48,3 @@
 4. 返回视频文件路径、Work 对话链接、起止 Organisation、是否零写入，以及视频 03 的 Demo Company / USD 恢复结果。
 
 不要自行增加第四条视频，不要演示正式写入，不要改变 Xero Developer App、MCP 配置或服务器设置。
-
