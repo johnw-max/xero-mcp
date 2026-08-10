@@ -1,22 +1,24 @@
 # Xero MCP 0.3.1 发布与线上 UAT
 
 核对日期：2026-08-10  
-结论：`DEPLOYED / 44 TOOLS / AGENT2 SWITCH PASS / WORK CORE PASS / ZERO WRITES`
+结论：`DEPLOYED / 44 TOOLS / AGENT2 SWITCH PASS / WORK CORE PASS / OFFICIAL LOGO PASS / ZERO WRITES`
 
 ## 固定版本
 
 | 项目 | 固定值 |
 |---|---|
 | 应用版本 | `0.3.1` |
-| 构建 | `20260810.1` |
-| 镜像 | `xero-accounting-mcp-demo:0.3.1-xero-pilot-20260810.1` |
-| 镜像 ID | `sha256:73a11a2bab320d4ebb21f3838f3a7ad46b9e878b5198785d33b8afc0008aaf64` |
+| 构建 | `20260810.2` |
+| 镜像 | `xero-accounting-mcp-demo:0.3.1-xero-pilot-20260810.2` |
+| 镜像 ID | `sha256:2bc0ba493415a3e7e8b5c801d9466ce0b906eb992fd349d725434fd82058c7e9` |
 | 工具数 | 44 |
 | 工具集 SHA-256 | `d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224` |
-| Release 目录 | `/opt/xero-accounting-mcp-demo-0.3.1-20260810.1` |
+| Release 目录 | `/opt/xero-accounting-mcp-demo-0.3.1-20260810.2` |
 | MCP 地址 | `https://mcp.jiayuanwang.xyz/mcp` |
 
 Secret、旧个人域名、禁止路径扫描均为 0。公网 `/healthz` 返回 `status=ok`、`version=0.3.1`、`toolCount=44` 和上述工具集指纹。
+
+`20260810.2` 仅替换授权页 Xero 品牌资产和显示容器：使用 Xero 官方 1000×1000 透明 PNG；业务工具、OAuth 协议、Organisation 绑定和数据模型均未变化。样式修订通过完整回归 819/819、类型检查、17/17 OAuth 页面聚焦回归、构建和线上桌面/390px 移动端验证。详见 [Xero 官方 Logo 上线记录](XERO-0.3.1-OFFICIAL-LOGO-RELEASE-2026-08-10.md)。
 
 ## 发布前验证
 
@@ -56,7 +58,7 @@ Secret、旧个人域名、禁止路径扫描均为 0。公网 `/healthz` 返回
 ## 运行与安全状态
 
 - `XERO_WRITE_ENABLED=false`；本轮没有调用 prepare、execute、create、update、approve、authorise、pay、post、reconcile、delete 或 void。
-- build `20260810.1` 的开机 write-gate failsafe 已启用，状态为 active/success；上一 build 的冲突 unit 已停用，写入开关保持 false。
+- build `20260810.2` 的开机 write-gate failsafe 已启用，状态为 active/success；上一 build 的冲突 unit 已停用，写入开关保持 false。
 - QuickBooks、共享 PostgreSQL 和 Stock MCP 在本次部署中未重启，RestartCount 均为 0。
 - Agent2 与 Work 使用独立 OAuth client / installation；一个 Host 的重新授权或 Organisation 切换不会覆盖另一个 Host 的 current binding。
 - 治理事件保存版本化身份、范围、行为、处置、结果和 hash 链证据；不保存 Token、原始 Prompt、Chain of Thought 或完整用户材料。

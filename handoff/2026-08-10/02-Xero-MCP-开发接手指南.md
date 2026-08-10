@@ -59,7 +59,7 @@ MCP 直接调用 Xero 官方 Accounting API，不在中间复制或维护另一�
 
 现有版本用于产品和技术可行性验证，部署在个人测试基础设施。当前代码已经完成 Xero OAuth、Organisation 选择、对话发起的受控 Organisation 切换、账务读取、Token 自动续期和主动断开等核心链路，并实现了受控写入所需的准备、确认、幂等、Provider 回执和精确回读机制。新增治理审计 envelope 记录授权、切换和工具调用的身份、范围、处置、结果及 hash 证据，但当前只可表述为 SAFR-oriented readiness，不是完整 SAFR 合规实现。
 
-该版本可以作为开发接手的代码基线和行为参考，但不能直接视为公司生产环境。2026 年 8 月 10 日固定版本为 0.3.1 build `20260810.1`，线上共有 44 个工具；Agent2 已在新版移动端授权页完成 Demo Company 与 zcloak 的往返切换，Work 已完成真实账套读取和切换入口验收，最终均保留 Demo Company / USD，且全程零写入。正式上线前仍需迁移到公司控制的基础设施，并完成多用户、多 Organisation 隔离、生产监控、备份恢复、安全管理和目标环境验收。
+该版本可以作为开发接手的代码基线和行为参考，但不能直接视为公司生产环境。2026 年 8 月 10 日固定版本为 0.3.1；当前线上样式修订 build 为 `20260810.2`，共有 44 个工具，业务行为与 `20260810.1` 一致。Agent2 已在新版移动端授权页完成 Demo Company 与 zcloak 的往返切换，Work 已完成真实账套读取和切换入口验收，最终均保留 Demo Company / USD，且全程零写入。正式上线前仍需迁移到公司控制的基础设施，并完成多用户、多 Organisation 隔离、生产监控、备份恢复、安全管理和目标环境验收。
 
 ## 交接资料
 
@@ -71,6 +71,8 @@ MCP 直接调用 Xero 官方 Accounting API，不在中间复制或维护另一�
 | Work MCP 配置 | 可直接照填的字段、Secret 交接和多人配置边界 | [Work 配置 Xero MCP](../../docs/WORK-XERO-MCP-CONFIGURATION-ZH.md) |
 | Xero Developer App | OAuth 配置与回调迁移 | `zCloak Accounting Connector` |
 | 发布与线上验收 | 固定版本、测试结果与证据边界 | [Xero 0.3.1 发布与线上 UAT](../../docs/XERO-0.3.1-DEPLOYMENT-AND-ONLINE-UAT-2026-08-10.md) |
+| 官方 Logo 样式修订 | 官方资产来源、桌面与移动端验证 | [Xero 官方 Logo 上线记录](../../docs/XERO-0.3.1-OFFICIAL-LOGO-RELEASE-2026-08-10.md) |
+| 老板演示录屏包 | 三条短片脚本、自然话术、重置和重录门槛 | [Xero MCP 老板演示录屏方案](../video-demo-plan-2026-08-10/README.md) |
 
 源码仓库包含 MCP 服务、Xero OAuth、Provider 适配、业务服务、数据库迁移、部署配置和测试工具。当前地址仅供验证和迁移对照，不作为公司正式生产地址。Client Secret、OAuth Token、数据库凭证及加密密钥不通过 Git 或文档交接。
 
