@@ -1,0 +1,392 @@
+# Install as /etc/nginx/sites-available/mcp.jiayuanwang.xyz and enable only
+# after the certificate exists. This file does not alter stock-mcp or trade.
+
+log_format xero_mcp_redacted '$remote_addr [$time_local] '
+                               '"$request_method $uri $server_protocol" '
+                               '$status $body_bytes_sent '
+                               'user_agent="$http_user_agent" request_id=$request_id';
+
+# Agent2 currently sends a PKCE challenge but may omit the method. Keep this
+# compatibility shim bound to the one pre-registered non-secret client ID.
+# Map only the suffix: mapping a value that itself reads $args and then assigning
+# it back to $args is lazily evaluated by Nginx and does not reliably append it.
+map "$arg_client_id:$arg_code_challenge_method" $xero_authorize_pkce_suffix {
+    default "";
+    "agent2-xero-bd0796db041ee01e:" "&code_challenge_method=S256";
+}
+
+limit_req_zone $binary_remote_addr zone=xero_mcp_general_per_ip:10m rate=20r/s;
+limit_req_zone $binary_remote_addr zone=xero_mcp_tool_per_ip:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=xero_mcp_auth_per_ip:10m rate=2r/s;
+limit_conn_zone $binary_remote_addr zone=xero_mcp_connections_per_ip:10m;
+
+upstream xero_accounting_mcp_demo {
+    server 127.0.0.1:18002;
+    keepalive 32;
+}
+
+upstream quickbooks_accounting_mcp_demo {
+    server 127.0.0.1:18003;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name mcp.jiayuanwang.xyz;
+    server_tokens off;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/xero-mcp-certbot;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 308 https://mcp.jiayuanwang.xyz$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name mcp.jiayuanwang.xyz;
+    server_tokens off;
+
+    ssl_certificate /etc/letsencrypt/live/mcp.jiayuanwang.xyz/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mcp.jiayuanwang.xyz/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:xero_mcp_tls:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    access_log /var/log/nginx/mcp.jiayuanwang.xyz.access.log xero_mcp_redacted;
+    error_log /var/log/nginx/mcp.jiayuanwang.xyz.error.log warn;
+
+    client_max_body_size 1m;
+    client_body_timeout 15s;
+    client_header_timeout 15s;
+    keepalive_timeout 30s;
+    send_timeout 30s;
+    limit_conn xero_mcp_connections_per_ip 30;
+    limit_conn_status 429;
+    limit_req_status 429;
+
+    add_header Strict-Transport-Security "max-age=86400" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+    add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callback; object-src 'none'; style-src 'self' 'unsafe-inline'" always;
+
+    proxy_hide_header X-Powered-By;
+    proxy_cookie_flags ~ secure httponly samesite=lax;
+
+    location = /healthz {
+        limit_req zone=xero_mcp_general_per_ip burst=20 nodelay;
+        proxy_pass http://xero_accounting_mcp_demo;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /readyz {
+        limit_req zone=xero_mcp_general_per_ip burst=20 nodelay;
+        proxy_pass http://xero_accounting_mcp_demo;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /mcp {
+        limit_req zone=xero_mcp_tool_per_ip burst=30 nodelay;
+        proxy_pass http://xero_accounting_mcp_demo;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /.well-known/oauth-authorization-server {
+        limit_req zone=xero_mcp_general_per_ip burst=20 nodelay;
+        proxy_pass http://xero_accounting_mcp_demo;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /.well-known/oauth-protected-resource {
+        limit_req zone=xero_mcp_general_per_ip burst=20 nodelay;
+        proxy_pass http://xero_accounting_mcp_demo;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /.well-known/oauth-protected-resource/mcp {
+        limit_req zone=xero_mcp_general_per_ip burst=20 nodelay;
+        proxy_pass http://xero_accounting_mcp_demo;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /authorize {
+        # The inherited access log records only $uri. Suppress edge errors so
+        # Host state and PKCE values in the query string cannot leak.
+        error_log /dev/null crit;
+        limit_req zone=xero_mcp_auth_per_ip burst=10 nodelay;
+        set $xero_authorize_upstream_args "$args$xero_authorize_pkce_suffix";
+        proxy_pass http://xero_accounting_mcp_demo/authorize?$xero_authorize_upstream_args;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /token {
+        limit_req zone=xero_mcp_auth_per_ip burst=10 nodelay;
+        proxy_pass http://xero_accounting_mcp_demo;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /revoke {
+        limit_req zone=xero_mcp_auth_per_ip burst=10 nodelay;
+        proxy_pass http://xero_accounting_mcp_demo;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /oauth/xero/callback {
+        # Some Nginx error paths include the full request target. The App emits
+        # sanitized OAuth audit events, so suppress edge errors for this path.
+        error_log /dev/null crit;
+        limit_req zone=xero_mcp_auth_per_ip burst=10 nodelay;
+        proxy_pass http://xero_accounting_mcp_demo;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /oauth/xero/select {
+        error_log /dev/null crit;
+        limit_req zone=xero_mcp_auth_per_ip burst=10 nodelay;
+        proxy_pass http://xero_accounting_mcp_demo;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /quickbooks/healthz {
+        limit_req zone=xero_mcp_general_per_ip burst=20 nodelay;
+        proxy_pass http://quickbooks_accounting_mcp_demo/healthz;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /quickbooks/readyz {
+        limit_req zone=xero_mcp_general_per_ip burst=20 nodelay;
+        proxy_pass http://quickbooks_accounting_mcp_demo/readyz;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /quickbooks/mcp {
+        limit_req zone=xero_mcp_tool_per_ip burst=30 nodelay;
+        proxy_pass http://quickbooks_accounting_mcp_demo;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /.well-known/oauth-protected-resource/quickbooks/mcp {
+        limit_req zone=xero_mcp_general_per_ip burst=20 nodelay;
+        proxy_pass http://quickbooks_accounting_mcp_demo;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /.well-known/oauth-authorization-server/quickbooks {
+        limit_req zone=xero_mcp_general_per_ip burst=20 nodelay;
+        proxy_pass http://quickbooks_accounting_mcp_demo;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /.well-known/oauth-authorization-server/quickbooks/oauth {
+        limit_req zone=xero_mcp_general_per_ip burst=20 nodelay;
+        proxy_pass http://quickbooks_accounting_mcp_demo;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /quickbooks/oauth/authorize {
+        error_log /dev/null crit;
+        limit_req zone=xero_mcp_auth_per_ip burst=10 nodelay;
+        proxy_pass http://quickbooks_accounting_mcp_demo;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /quickbooks/oauth/token {
+        limit_req zone=xero_mcp_auth_per_ip burst=10 nodelay;
+        proxy_pass http://quickbooks_accounting_mcp_demo;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /quickbooks/oauth/revoke {
+        limit_req zone=xero_mcp_auth_per_ip burst=10 nodelay;
+        proxy_pass http://quickbooks_accounting_mcp_demo;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /connect/quickbooks {
+        error_log /dev/null crit;
+        limit_req zone=xero_mcp_auth_per_ip burst=10 nodelay;
+        proxy_pass http://quickbooks_accounting_mcp_demo;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /oauth/quickbooks/callback {
+        error_log /dev/null crit;
+        limit_req zone=xero_mcp_auth_per_ip burst=10 nodelay;
+        proxy_pass http://quickbooks_accounting_mcp_demo;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location ^~ /quickbooks/review/ {
+        limit_req zone=xero_mcp_general_per_ip burst=20 nodelay;
+        proxy_pass http://quickbooks_accounting_mcp_demo;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location ^~ /review/ {
+        limit_req zone=xero_mcp_general_per_ip burst=20 nodelay;
+        proxy_pass http://xero_accounting_mcp_demo;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location / {
+        return 404;
+    }
+}

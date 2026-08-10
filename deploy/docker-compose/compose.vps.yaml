@@ -1,0 +1,171 @@
+name: ${COMPOSE_PROJECT_NAME:-xero-accounting-mcp-demo}
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17.10-alpine3.23}
+    user: "70:70"
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in deploy/.env.vps}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in deploy/.env.vps}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env.vps}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - type: bind
+        source: ${POSTGRES_DATA_DIR:?Set POSTGRES_DATA_DIR in deploy/.env.vps}
+        target: /var/lib/postgresql/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+      - /var/run/postgresql:rw,noexec,nosuid,nodev,size=8m,uid=70,gid=70,mode=0770
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - data
+    pids_limit: 256
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-512m}
+    cpus: ${POSTGRES_CPU_LIMIT:-1.0}
+    shm_size: ${POSTGRES_SHM_SIZE:-128m}
+    stop_grace_period: 60s
+    logging: &bounded-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  accounting-mcp:
+    image: ${APP_IMAGE:-xero-accounting-mcp-demo:local}
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    init: true
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env.vps}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in deploy/.env.vps}
+      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:?Set MCP_BEARER_TOKEN in deploy/.env.vps}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:?Set MCP_ALLOWED_ORIGINS in deploy/.env.vps}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:?Set MCP_ALLOWED_HOSTS in deploy/.env.vps}
+      REQUEST_BODY_LIMIT_BYTES: ${REQUEST_BODY_LIMIT_BYTES:-1048576}
+      MCP_OAUTH_BROKER_ENABLED: ${MCP_OAUTH_BROKER_ENABLED:-false}
+      PERSONAL_POC_ONLY: ${PERSONAL_POC_ONLY:-false}
+      HOST_OAUTH_CLIENTS_JSON: ${HOST_OAUTH_CLIENTS_JSON:-}
+      OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS: ${OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS:-}
+      OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${OAUTH_ACCESS_TOKEN_TTL_SECONDS:-900}
+      OAUTH_REFRESH_TOKEN_TTL_SECONDS: ${OAUTH_REFRESH_TOKEN_TTL_SECONDS:-2592000}
+      OAUTH_AUTH_CODE_TTL_SECONDS: ${OAUTH_AUTH_CODE_TTL_SECONDS:-300}
+      OAUTH_BROWSER_FLOW_TTL_SECONDS: ${OAUTH_BROWSER_FLOW_TTL_SECONDS:-600}
+      OAUTH_TOKEN_HASH_KEY_B64: ${OAUTH_TOKEN_HASH_KEY_B64:-}
+      OAUTH_COOKIE_STATE_KEY_B64: ${OAUTH_COOKIE_STATE_KEY_B64:-}
+      XERO_CLIENT_ID: ${XERO_CLIENT_ID:?Set XERO_CLIENT_ID in deploy/.env.vps}
+      XERO_CLIENT_SECRET: ${XERO_CLIENT_SECRET:?Set XERO_CLIENT_SECRET in deploy/.env.vps}
+      XERO_SCOPES: ${XERO_SCOPES:?Set XERO_SCOPES in deploy/.env.vps}
+      XERO_WRITE_ENABLED: ${XERO_WRITE_ENABLED:-false}
+      XERO_ALLOWED_TENANT_ID: ${XERO_ALLOWED_TENANT_ID:-}
+      TOKEN_ENCRYPTION_KEY_B64: ${TOKEN_ENCRYPTION_KEY_B64:?Set TOKEN_ENCRYPTION_KEY_B64 in deploy/.env.vps}
+      XERO_MUTATION_CONFIRMATION_KEY_B64: ${XERO_MUTATION_CONFIRMATION_KEY_B64:?Set XERO_MUTATION_CONFIRMATION_KEY_B64 in deploy/.env.vps}
+      DEMO_ACTOR_ID: ${DEMO_ACTOR_ID:-xero-demo-operator}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    expose:
+      - "3000"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777,uid=10001,gid=10001
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    networks:
+      - edge
+      - data
+    pids_limit: 256
+    mem_limit: ${APP_MEMORY_LIMIT:-768m}
+    cpus: ${APP_CPU_LIMIT:-1.0}
+    stop_grace_period: 30s
+    logging: *bounded-logging
+
+  nginx:
+    image: ${NGINX_IMAGE:-nginxinc/nginx-unprivileged:1.29.4-alpine}
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      MCP_PUBLIC_HOST: ${MCP_PUBLIC_HOST:?Set MCP_PUBLIC_HOST in deploy/.env.vps}
+      NGINX_ENVSUBST_TEMPLATE_DIR: /opt/xero-nginx
+      NGINX_ENVSUBST_OUTPUT_DIR: /tmp/nginx/conf.d
+      NGINX_ENVSUBST_TEMPLATE_SUFFIX: .template
+    command: ["nginx", "-c", "/opt/xero-nginx/nginx.conf", "-g", "daemon off;"]
+    ports:
+      - target: 8080
+        published: "80"
+        protocol: tcp
+      - target: 8443
+        published: "443"
+        protocol: tcp
+    volumes:
+      - type: bind
+        source: ./deploy/nginx
+        target: /opt/xero-nginx
+        read_only: true
+      - type: bind
+        source: ${TLS_CERT_DIR:?Set TLS_CERT_DIR in deploy/.env.vps}
+        target: /etc/nginx/tls
+        read_only: true
+      - type: bind
+        source: ${CERTBOT_WEBROOT_DIR:?Set CERTBOT_WEBROOT_DIR in deploy/.env.vps}
+        target: /var/www/certbot
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+      - /var/cache/nginx:rw,noexec,nosuid,nodev,size=32m,uid=101,gid=101,mode=0750
+      - /var/run:rw,noexec,nosuid,nodev,size=8m,uid=101,gid=101,mode=0750
+    depends_on:
+      accounting-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/nginx-healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
+    networks:
+      - edge
+    pids_limit: 128
+    mem_limit: ${NGINX_MEMORY_LIMIT:-128m}
+    cpus: ${NGINX_CPU_LIMIT:-0.5}
+    stop_grace_period: 20s
+    logging: *bounded-logging
+
+networks:
+  edge:
+    driver: bridge
+  data:
+    driver: bridge
+    internal: true

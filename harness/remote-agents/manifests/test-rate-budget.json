@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "name": "offline-live-transport-rate-budget-regression",
+  "settings": {
+    "concurrency": 1,
+    "repeats": 1,
+    "timeoutMs": 5000,
+    "readMaxAttempts": 2,
+    "readRetryBaseMs": 0,
+    "maxRetryAfterMs": 1000,
+    "retryJitterRatio": 0,
+    "xeroCallsPerMinuteBudget": 3,
+    "temperature": 0,
+    "maxOutputTokens": 256
+  },
+  "agents": [
+    {
+      "alias": "rate_test",
+      "id": "agent-rate-test",
+      "persona": "Read-only rate-budget regression persona."
+    }
+  ],
+  "cases": [
+    {
+      "id": "compound-read-after-retry",
+      "title": "A retried Remote Agent request reserves the compound Provider-call cost again",
+      "operation": "read",
+      "estimatedXeroCalls": 3,
+      "fixture": "../fixtures/synthetic-supplier-history.txt",
+      "agents": ["rate_test"],
+      "transcript": [
+        {
+          "role": "user",
+          "content": "Use the synthetic material only for this offline regression.\n\n{{fixture}}"
+        }
+      ],
+      "expect": {
+        "requiredTools": ["*xero_prepare_supplier_bill_draft"],
+        "requiredToolCalls": [
+          {
+            "tool": "*xero_prepare_supplier_bill_draft",
+            "arguments": ["Brown Office Supplies"],
+            "output": ["ok"]
+          }
+        ],
+        "minToolCalls": 1,
+        "maxToolCalls": 1,
+        "allCallsHaveOutput": true
+      }
+    }
+  ]
+}

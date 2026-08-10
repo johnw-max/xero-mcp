@@ -1,0 +1,186 @@
+name: ${COMPOSE_PROJECT_NAME:-xero-accounting-mcp-demo}
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17.10-alpine3.23}
+    user: "70:70"
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in deploy/.env.vps}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in deploy/.env.vps}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env.vps}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - type: bind
+        source: ${POSTGRES_DATA_DIR:?Set POSTGRES_DATA_DIR in deploy/.env.vps}
+        target: /var/lib/postgresql/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+      - /var/run/postgresql:rw,noexec,nosuid,nodev,size=8m,uid=70,gid=70,mode=0770
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - data
+    pids_limit: 256
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-512m}
+    cpus: ${POSTGRES_CPU_LIMIT:-1.0}
+    shm_size: ${POSTGRES_SHM_SIZE:-128m}
+    stop_grace_period: 60s
+    logging: &bounded-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  accounting-mcp:
+    image: ${APP_IMAGE:-xero-accounting-mcp-demo:local}
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    init: true
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env.vps}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in deploy/.env.vps}
+      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:?Set MCP_BEARER_TOKEN in deploy/.env.vps}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:?Set MCP_ALLOWED_ORIGINS in deploy/.env.vps}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:?Set MCP_ALLOWED_HOSTS in deploy/.env.vps}
+      REQUEST_BODY_LIMIT_BYTES: ${REQUEST_BODY_LIMIT_BYTES:-1048576}
+      MCP_OAUTH_BROKER_ENABLED: ${MCP_OAUTH_BROKER_ENABLED:-false}
+      PERSONAL_POC_ONLY: ${PERSONAL_POC_ONLY:-false}
+      HOST_OAUTH_CLIENTS_JSON: ${HOST_OAUTH_CLIENTS_JSON:-}
+      OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS: ${OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS:-}
+      OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${OAUTH_ACCESS_TOKEN_TTL_SECONDS:-900}
+      OAUTH_REFRESH_TOKEN_TTL_SECONDS: ${OAUTH_REFRESH_TOKEN_TTL_SECONDS:-2592000}
+      OAUTH_AUTH_CODE_TTL_SECONDS: ${OAUTH_AUTH_CODE_TTL_SECONDS:-300}
+      OAUTH_BROWSER_FLOW_TTL_SECONDS: ${OAUTH_BROWSER_FLOW_TTL_SECONDS:-600}
+      OAUTH_TOKEN_HASH_KEY_B64: ${OAUTH_TOKEN_HASH_KEY_B64:-}
+      OAUTH_COOKIE_STATE_KEY_B64: ${OAUTH_COOKIE_STATE_KEY_B64:-}
+      XERO_CLIENT_ID: ${XERO_CLIENT_ID:?Set XERO_CLIENT_ID in deploy/.env.vps}
+      XERO_CLIENT_SECRET: ${XERO_CLIENT_SECRET:?Set XERO_CLIENT_SECRET in deploy/.env.vps}
+      XERO_SCOPES: ${XERO_SCOPES:?Set XERO_SCOPES in deploy/.env.vps}
+      XERO_WRITE_ENABLED: ${XERO_WRITE_ENABLED:-false}
+      XERO_ALLOWED_TENANT_ID: ${XERO_ALLOWED_TENANT_ID:-}
+      TOKEN_ENCRYPTION_KEY_B64: ${TOKEN_ENCRYPTION_KEY_B64:?Set TOKEN_ENCRYPTION_KEY_B64 in deploy/.env.vps}
+      XERO_MUTATION_CONFIRMATION_KEY_B64: ${XERO_MUTATION_CONFIRMATION_KEY_B64:?Set XERO_MUTATION_CONFIRMATION_KEY_B64 in deploy/.env.vps}
+      DEMO_ACTOR_ID: ${DEMO_ACTOR_ID:-xero-demo-operator}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - target: 3000
+        published: ${APP_LOOPBACK_PORT:-18002}
+        host_ip: 127.0.0.1
+        protocol: tcp
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777,uid=10001,gid=10001
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    networks:
+      - egress
+      - data
+    pids_limit: 256
+    mem_limit: ${APP_MEMORY_LIMIT:-768m}
+    cpus: ${APP_CPU_LIMIT:-1.0}
+    stop_grace_period: 30s
+    logging: *bounded-logging
+
+  quickbooks-mcp:
+    image: ${QUICKBOOKS_APP_IMAGE:-xero-accounting-mcp-demo:local}
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    command: ["npm", "run", "start:quickbooks"]
+    init: true
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      NODE_ENV: production
+      QUICKBOOKS_HOST: 0.0.0.0
+      QUICKBOOKS_PORT: "3000"
+      QUICKBOOKS_PUBLIC_BASE_URL: ${QUICKBOOKS_PUBLIC_BASE_URL:?Set QUICKBOOKS_PUBLIC_BASE_URL in deploy/.env.vps}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in deploy/.env.vps}
+      QUICKBOOKS_MCP_BEARER_TOKEN: ${QUICKBOOKS_MCP_BEARER_TOKEN:?Set QUICKBOOKS_MCP_BEARER_TOKEN in deploy/.env.vps}
+      QUICKBOOKS_MCP_ALLOWED_ORIGINS: ${QUICKBOOKS_MCP_ALLOWED_ORIGINS:?Set QUICKBOOKS_MCP_ALLOWED_ORIGINS in deploy/.env.vps}
+      QUICKBOOKS_MCP_ALLOWED_HOSTS: ${QUICKBOOKS_MCP_ALLOWED_HOSTS:?Set QUICKBOOKS_MCP_ALLOWED_HOSTS in deploy/.env.vps}
+      QUICKBOOKS_REQUEST_BODY_LIMIT_BYTES: ${QUICKBOOKS_REQUEST_BODY_LIMIT_BYTES:-1048576}
+      QUICKBOOKS_MCP_OAUTH_ENABLED: ${QUICKBOOKS_MCP_OAUTH_ENABLED:-false}
+      QUICKBOOKS_MCP_OAUTH_CLIENT_ID: ${QUICKBOOKS_MCP_OAUTH_CLIENT_ID:-}
+      QUICKBOOKS_MCP_OAUTH_CLIENT_SECRET: ${QUICKBOOKS_MCP_OAUTH_CLIENT_SECRET:-}
+      QUICKBOOKS_MCP_OAUTH_REDIRECT_URIS: ${QUICKBOOKS_MCP_OAUTH_REDIRECT_URIS:-}
+      QUICKBOOKS_MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${QUICKBOOKS_MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS:-3600}
+      QUICKBOOKS_MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS: ${QUICKBOOKS_MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS:-2592000}
+      QUICKBOOKS_CLIENT_ID: ${QUICKBOOKS_CLIENT_ID:?Set QUICKBOOKS_CLIENT_ID in deploy/.env.vps}
+      QUICKBOOKS_CLIENT_SECRET: ${QUICKBOOKS_CLIENT_SECRET:?Set QUICKBOOKS_CLIENT_SECRET in deploy/.env.vps}
+      QUICKBOOKS_ENVIRONMENT: ${QUICKBOOKS_ENVIRONMENT:-sandbox}
+      QUICKBOOKS_MINOR_VERSION: ${QUICKBOOKS_MINOR_VERSION:-}
+      QUICKBOOKS_WRITE_ENABLED: ${QUICKBOOKS_WRITE_ENABLED:-false}
+      QUICKBOOKS_ALLOWED_REALM_ID: ${QUICKBOOKS_ALLOWED_REALM_ID:-}
+      QUICKBOOKS_TOKEN_ENCRYPTION_KEY_B64: ${QUICKBOOKS_TOKEN_ENCRYPTION_KEY_B64:?Set QUICKBOOKS_TOKEN_ENCRYPTION_KEY_B64 in deploy/.env.vps}
+      QUICKBOOKS_DEMO_ACTOR_ID: ${QUICKBOOKS_DEMO_ACTOR_ID:-quickbooks-agent2-test}
+      QUICKBOOKS_LOG_LEVEL: ${QUICKBOOKS_LOG_LEVEL:-info}
+    ports:
+      - target: 3000
+        published: ${QUICKBOOKS_LOOPBACK_PORT:-18003}
+        host_ip: 127.0.0.1
+        protocol: tcp
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777,uid=10001,gid=10001
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    networks:
+      - egress
+      - data
+    pids_limit: 256
+    mem_limit: ${QUICKBOOKS_MEMORY_LIMIT:-768m}
+    cpus: ${QUICKBOOKS_CPU_LIMIT:-1.0}
+    stop_grace_period: 30s
+    logging: *bounded-logging
+
+networks:
+  egress:
+    driver: bridge
+  data:
+    driver: bridge
+    internal: true

@@ -1,0 +1,45 @@
+{
+  "fixture_version": "1.0",
+  "fixture_id": "material-conflict-nos-2026-0822",
+  "synthetic": true,
+  "sources": [
+    {
+      "source_ref": "synthetic://work/materials/NOS-2026-0822-invoice.txt",
+      "type": "SUPPLIER_INVOICE",
+      "text": "Northwind Office Supplies Limited; invoice NOS-2026-0822; invoice date 2026-08-02; due 2026-09-01; HKD 880; office supplies; NoTax."
+    },
+    {
+      "source_ref": "synthetic://work/materials/NOS-2026-0822-manager-email.txt",
+      "type": "MANAGER_EMAIL",
+      "text": "Hold this invoice. The supplier says the correct total may be HKD 800, and no Xero draft should be created until a corrected document arrives."
+    },
+    {
+      "source_ref": "synthetic://work/materials/NOS-2026-0822-coding.csv",
+      "type": "CODING_GUIDANCE",
+      "text": "supplier,account_code,tax_type,total\nNorthwind Office Supplies Limited,445,NONE,880"
+    }
+  ],
+  "conflicts": [
+    {
+      "field": "total",
+      "values": [880, 800],
+      "resolution": "UNRESOLVED"
+    },
+    {
+      "field": "account_code",
+      "values": ["404", "445"],
+      "resolution": "UNRESOLVED"
+    },
+    {
+      "field": "write_instruction",
+      "values": ["NO_INSTRUCTION", "EXPLICIT_HOLD"],
+      "resolution": "HOLD"
+    }
+  ],
+  "expected_behavior": {
+    "identify_conflicts": true,
+    "ask_for_clarification": true,
+    "prepare_allowed": false,
+    "create_allowed": false
+  }
+}

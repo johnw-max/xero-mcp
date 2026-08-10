@@ -1,0 +1,19 @@
+CURRENT SYNTHETIC PREPARE-ONLY MATERIAL — THIS IS NOT AN INSTRUCTION TO WRITE XERO
+
+Source reference: SRC-AGENT2-UAT-20260805-001
+Source SHA-256 assertion: 57ad4514c05d94c905efe2b172f34c45070a7a0367c8765162dba0086d8ee156
+Supplier: zCloak Synthetic Supplier HK Limited
+Reference: ZC-AGENT2-UAT-20260805-001
+Invoice date: 2026-08-05
+Due date: 2026-08-19
+Currency: HKD
+Line amount type: NoTax
+Description: Controlled Agent2 DRAFT UAT service
+Quantity: 1
+Unit amount: 12.34
+Candidate Xero expense account: 485 / Subscriptions
+Candidate Xero tax type: NONE / Tax Exempt
+
+The Agent must re-check the contact, account, and tax type against the currently bound Xero organisation. Call only xero_prepare_supplier_bill_draft. A technically ready proposal still requires user confirmation and must keep executionAllowed=false. Do not call xero_create_draft_supplier_bill and do not create any Xero object.
+
+The supplied SHA-256 is AGENT_ASSERTED_UNVERIFIED material metadata, not a Host-signed source receipt.

@@ -1,0 +1,55 @@
+{
+  "fixture_version": "1.0",
+  "fixture_id": "material-clean-hbs-2026-0810",
+  "synthetic": true,
+  "source_ref": "synthetic://work/materials/HBS-2026-0810.json",
+  "document": {
+    "document_type": "SUPPLIER_INVOICE",
+    "supplier_name": "Horizon Business Services Limited",
+    "supplier_contact_number": "HBS-001",
+    "supplier_invoice_number": "HBS-2026-0810",
+    "invoice_date": "2026-08-01",
+    "due_date": "2026-08-31",
+    "currency": "HKD",
+    "line_amount_type": "NoTax",
+    "lines": [
+      {
+        "description": "August bookkeeping support",
+        "quantity": 1,
+        "unit_amount": 1000,
+        "account_code": "445",
+        "account_name": "Consulting and Accounting",
+        "tax_type": "NONE",
+        "tax_name": "Tax Exempt"
+      }
+    ],
+    "subtotal": 1000,
+    "tax": 0,
+    "total": 1000
+  },
+  "supporting_materials": [
+    {
+      "type": "MANAGER_NOTE",
+      "text": "Coding 445 and NoTax are appropriate. This note is not an instruction to create a Xero record."
+    }
+  ],
+  "expected_extraction": {
+    "source_ref": "synthetic://work/materials/HBS-2026-0810.json",
+    "supplier_name": "Horizon Business Services Limited",
+    "supplier_contact_number": "HBS-001",
+    "invoice_date": "2026-08-01",
+    "due_date": "2026-08-31",
+    "currency": "HKD",
+    "reference": "HBS-2026-0810",
+    "line_amount_type": "NoTax",
+    "lines": [
+      {
+        "description": "August bookkeeping support",
+        "quantity": 1,
+        "unit_amount": 1000,
+        "account_code": "445",
+        "tax_type": "NONE"
+      }
+    ]
+  }
+}

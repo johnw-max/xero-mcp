@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0",
+  "manifest_id": "xero-p0-expected-reds",
+  "semantics": "EXPECTED_RED is a baseline expectation, never a passing status. If reproduced, actual_status remains FAIL and expected_red_observed=true. If fixed, actual_status is PASS and expected_red_observed=false.",
+  "items": [
+    {
+      "id": "XR-001",
+      "title": "Cross-request supplier bill duplicate guard is not proven",
+      "baseline_evidence": "The controlled Xero draft path keys local idempotency by tenant, request_id, and payload hash. A separate request_id with the same source, supplier, and supplier invoice reference requires an independent business-duplicate guard.",
+      "case_ids": ["DC-DUPLICATE-013"],
+      "risk": "Two DRAFT bills can be created for one business document if the caller changes request_id.",
+      "clear_when": "A deterministic test proves that different request IDs for the same tenant, source evidence, supplier, and supplier document cannot produce more than one provider record.",
+      "prohibited_claim": "Do not claim duplicate-safe supplier bill intake from same-request replay alone."
+    },
+    {
+      "id": "XR-002",
+      "title": "Conversation confirmation is Agent-asserted, not Host-signed",
+      "baseline_evidence": "The create tool accepts the literal CONFIRMED_FOR_DRAFT supplied by the Agent; the MCP cannot independently verify the user turn or proposal version.",
+      "case_ids": ["AB-CONFIRMATION-010", "AB-DRAFT-011"],
+      "risk": "A compromised or mistaken Agent can assert confirmation that the Host did not attest.",
+      "clear_when": "The Host issues a short-lived signed confirmation receipt bound to workspace, user, conversation turn, proposal hash, and intended DRAFT action, and the MCP verifies it.",
+      "prohibited_claim": "Do not call the current confirmation path production-grade approval."
+    },
+    {
+      "id": "XR-003",
+      "title": "Material source hash is not a trusted Host receipt",
+      "baseline_evidence": "An Agent-supplied hash is unverified and a server fingerprint covers extracted fields, not the original Work file.",
+      "case_ids": ["AB-MATERIAL-INJECTION-008", "AB-PREPARE-009"],
+      "risk": "The audit trail cannot prove which immutable user file produced the extraction.",
+      "clear_when": "The Host signs a receipt over workspace, user, file ID, version, server-computed digest, MIME, and expiry, and the MCP verifies it before prepare and create.",
+      "prohibited_claim": "Do not call source_sha256 end-to-end file provenance."
+    },
+    {
+      "id": "XR-004",
+      "title": "Shared Personal POC OAuth does not prove multi-user isolation",
+      "baseline_evidence": "Several logical Agents may reuse one saved Personal POC connection and the same Xero organisation.",
+      "case_ids": ["DC-CONNECTION-001"],
+      "risk": "A multi-Agent pass can be mistaken for workspace, user, customer, or tenant isolation.",
+      "clear_when": "Two independent users with separately attested identities and Xero connections prove deny-by-default cross-binding access and independent revoke/reconnect behavior.",
+      "prohibited_claim": "Do not infer multi-user or multi-customer isolation from multiple Agents sharing one OAuth binding."
+    },
+    {
+      "id": "XR-005",
+      "title": "Trial Balance response has no harness-proven transport, source-inspection, or visited-node bound",
+      "baseline_evidence": "The Trial Balance tool returns provider report data and needs a pressure test that independently measures model text and the complete CallToolResult, bounds source inspection and returned visited JSON nodes, and proves explicit truncation semantics.",
+      "case_ids": ["DC-LEDGER-002"],
+      "risk": "Large reports can overflow the Agent context or make completeness ambiguous.",
+      "clear_when": "A deterministic pressure test independently proves the content-only model-text and complete CallToolResult limits, source-inspection and returned visited JSON-node limits, plus explicit truncation and Provider-completeness metadata.",
+      "prohibited_claim": "Do not call a returned Trial Balance complete unless its bound and completeness evidence are explicit."
+    },
+    {
+      "id": "XR-006",
+      "title": "Draft result lacks a guaranteed Xero deep link and MCP audit call identifier",
+      "baseline_evidence": "The controlled create result exposes the record ID and local review URL; a provider deep link and immutable tool-call audit ID are not required by the current result contract.",
+      "case_ids": ["AB-DRAFT-011"],
+      "risk": "Human follow-up and audit correlation require extra lookup.",
+      "clear_when": "The result contract returns a verified provider deep link and immutable audit event ID without exposing secrets.",
+      "prohibited_claim": "Do not describe the local review URL as a Xero record link."
+    },
+    {
+      "id": "XR-007",
+      "title": "Supplier bill Tracking categories are not preserved by the current tool contract",
+      "baseline_evidence": "The prepare and create schemas model line description, quantity, unit amount, account code, and tax type but no Xero Tracking category or option.",
+      "case_ids": ["DC-TRACKING-007"],
+      "risk": "An accountant cannot preserve department, region, project, or other Xero tracking dimensions when preparing the DRAFT.",
+      "clear_when": "Prepare, create, provider write, idempotency hash, and exact readback all validate and preserve supported Xero Tracking category and option identifiers.",
+      "prohibited_claim": "Do not claim full supplier-bill coding coverage while Tracking is absent."
+    },
+    {
+      "id": "XR-008",
+      "title": "Package, MCP serverInfo, health, and readiness versions are inconsistent",
+      "baseline_evidence": "The package version and hard-coded MCP/HTTP response versions must be compared at runtime rather than reported independently.",
+      "case_ids": ["DC-VERSION-008"],
+      "risk": "Deployment and test evidence can be attributed to the wrong build.",
+      "clear_when": "One version source produces identical package, MCP initialize, health, and readiness values, verified by a deterministic test.",
+      "prohibited_claim": "Do not identify a tested or deployed build from only one of the inconsistent version fields."
+    }
+  ]
+}

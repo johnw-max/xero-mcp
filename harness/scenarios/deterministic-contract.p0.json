@@ -1,0 +1,1249 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "xero-deterministic-contract-p0",
+  "layer": "DETERMINISTIC_CONTRACT",
+  "description": "Model-independent MCP, provider-fixture, repository, idempotency, pagination, and recovery contracts. These hard oracles define whether the MCP itself is correct.",
+  "safety": {
+    "data_class": "SYNTHETIC_ONLY",
+    "write_policy": "ONE_CONTROLLED_DRAFT_WRITER",
+    "authorise_forbidden": true,
+    "payment_forbidden": true,
+    "write_gate_must_start_closed": true,
+    "write_gate_must_end_closed": true
+  },
+  "defaults": {
+    "repeats": 1,
+    "remote_concurrency": 1,
+    "tenant_calls_per_minute": 45,
+    "read_retry_limit": 2,
+    "write_retry_limit": 0
+  },
+  "cases": [
+    {
+      "id": "DC-CONNECTION-001",
+      "title": "Exact tool surface, connection, scope, and bound organisation",
+      "priority": "P0",
+      "mode": "READ_ONLY",
+      "personas": ["protocol_security_agent"],
+      "fixture_refs": ["harness/fixtures/xero/synthetic-ledger.json#/organisation"],
+      "prerequisites": ["Fresh in-memory MCP server", "Read scope granted", "Write gate closed"],
+      "steps": [
+        {
+          "id": "list_tools",
+          "actor": "deterministic_harness",
+          "action": "STATE_PROBE",
+          "capture": ["TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "exact_27_tools",
+              "strength": "HARD",
+              "kind": "EXACT_TOOL_SET",
+              "source": "TOOL_OUTPUT",
+              "operator": "SET_EQ",
+              "expected": [
+                "xero_connection_status",
+                "xero_get_organisation",
+                "xero_list_accounts",
+                "xero_list_tax_rates",
+                "xero_list_contacts",
+                "xero_get_contact",
+                "xero_search_contacts",
+                "xero_list_invoices",
+                "xero_list_credit_notes",
+                "xero_list_payments",
+                "xero_list_quotes",
+                "xero_get_quote",
+                "xero_list_purchase_orders",
+                "xero_get_purchase_order",
+                "xero_list_manual_journals",
+                "xero_get_manual_journal",
+                "xero_list_items",
+                "xero_get_item",
+                "xero_list_bank_transactions",
+                "xero_get_bank_transaction",
+                "xero_get_invoice",
+                "xero_get_supplier_bill",
+                "xero_prepare_supplier_bill_draft",
+                "xero_create_draft_supplier_bill",
+                "xero_prepare_sales_invoice_draft",
+                "xero_create_draft_sales_invoice",
+                "xero_get_trial_balance"
+              ],
+              "evidence_required": ["tools/list response"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        },
+        {
+          "id": "connection_status",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_connection_status",
+          "input": {},
+          "capture": ["TOOL_CALL", "TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "connected_true",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.connected",
+              "operator": "EQ",
+              "expected": true,
+              "evidence_required": ["structured tool output"],
+              "on_failure": "FAIL_CASE"
+            },
+            {
+              "id": "write_scope_absent",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.scopes",
+              "operator": "NOT_CONTAINS",
+              "expected": "xero.draft.write",
+              "evidence_required": ["scope list"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        },
+        {
+          "id": "get_organisation",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_get_organisation",
+          "input": {},
+          "capture": ["TOOL_CALL", "TOOL_OUTPUT", "PROVIDER_CALL"],
+          "oracles": [
+            {
+              "id": "exact_org_id",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.organisationId",
+              "operator": "EQ",
+              "expected": "10000000-0000-4000-8000-000000000001",
+              "evidence_required": ["tool output", "provider call principal"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "no_tenant_parameter",
+          "strength": "HARD",
+          "kind": "JSON_PATH",
+          "source": "AGGREGATE",
+          "path": "$.capturedToolInputs[*].tenant_id",
+          "operator": "NOT_EXISTS",
+          "expected": true,
+          "evidence_required": ["all tool inputs"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["tool_contract", "oauth", "tenant_binding"]
+    },
+    {
+      "id": "DC-LEDGER-002",
+      "title": "Organisation reference data and balanced Trial Balance with explicit response bound",
+      "priority": "P0",
+      "mode": "READ_ONLY",
+      "personas": ["protocol_security_agent", "ar_management_accountant"],
+      "fixture_refs": ["harness/fixtures/xero/synthetic-ledger.json#/accounts", "harness/fixtures/xero/synthetic-ledger.json#/taxRates", "harness/fixtures/xero/synthetic-ledger.json#/trialBalance"],
+      "prerequisites": ["Read scope granted", "Synthetic Trial Balance fixture available", "Oversize Trial Balance pressure fixture generated by harness"],
+      "steps": [
+        {
+          "id": "list_expense_accounts",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_list_accounts",
+          "input": { "account_class": "EXPENSE" },
+          "capture": ["TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "expense_filter_exact",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result[*].class",
+              "operator": "ALL",
+              "expected": "EXPENSE",
+              "evidence_required": ["structured account list"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        },
+        {
+          "id": "list_tax_rates",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_list_tax_rates",
+          "input": {},
+          "capture": ["TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "none_tax_present",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result[*].taxType",
+              "operator": "CONTAINS",
+              "expected": "NONE",
+              "evidence_required": ["structured tax-rate list"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        },
+        {
+          "id": "trial_balance_normal",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_get_trial_balance",
+          "input": { "date": "2026-08-06" },
+          "capture": ["TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "tb_balances",
+              "strength": "HARD",
+              "kind": "LEDGER_INVARIANT",
+              "source": "TOOL_OUTPUT",
+              "operator": "BALANCES",
+              "expected": { "debit": "15160.00", "credit": "15160.00" },
+              "evidence_required": ["all returned Trial Balance rows", "debit total", "credit total"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        },
+        {
+          "id": "trial_balance_pressure",
+          "actor": "deterministic_harness",
+          "action": "FAULT_INJECTION",
+          "fault_profile": "trial_balance_oversize_5000_rows",
+          "capture": ["TOOL_OUTPUT", "NETWORK_RECEIPT"],
+          "oracles": [
+            {
+              "id": "tb_explicit_bound",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.pagination",
+              "operator": "EXISTS",
+              "expected": true,
+              "evidence_required": ["visited JSON-node bound", "model-text and complete CallToolResult byte bounds", "explicit truncation and Provider-completeness metadata"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "tb_not_claimed_complete_without_bound",
+          "strength": "HARD",
+          "kind": "EVIDENCE_PRESENT",
+          "source": "AGGREGATE",
+          "operator": "EXISTS",
+          "expected": "independently measured content-only Trial Balance transport bounds, visited JSON-node bound, and explicit Provider-completeness evidence",
+          "evidence_required": ["pressure response"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "EXPECTED_RED",
+      "expected_red_ref": "XR-005",
+      "tags": ["accounts", "tax", "trial_balance", "bounds"]
+    },
+    {
+      "id": "DC-HISTORY-003",
+      "title": "Complete AP history across pages, payment types, and exact-ID readback",
+      "priority": "P0",
+      "mode": "READ_ONLY",
+      "personas": ["protocol_security_agent", "ap_accountant"],
+      "fixture_refs": ["harness/fixtures/xero/synthetic-ledger.json#/invoicePages", "harness/fixtures/xero/synthetic-ledger.json#/paymentPages", "harness/fixtures/xero/synthetic-ledger.json#/exactInvoices"],
+      "prerequisites": ["Read scope includes invoice and payment history", "Fixture pagination preserved"],
+      "steps": [
+        {
+          "id": "ap_page_1",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_list_invoices",
+          "input": { "type": "ACCPAY", "page": 1, "page_size": 2, "order": "DATE_DESC" },
+          "capture": ["TOOL_CALL", "TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "ap_page_1_has_next",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.pagination.hasNextPage",
+              "operator": "EQ",
+              "expected": true,
+              "evidence_required": ["page 1 pagination"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        },
+        {
+          "id": "ap_page_2",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_list_invoices",
+          "input": { "type": "ACCPAY", "page": 2, "page_size": 2, "order": "DATE_DESC" },
+          "capture": ["TOOL_CALL", "TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "ap_page_2_complete",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.pagination.hasNextPage",
+              "operator": "EQ",
+              "expected": false,
+              "evidence_required": ["page 2 pagination"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        },
+        {
+          "id": "payment_page_1",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_list_payments",
+          "input": { "page": 1, "page_size": 3 },
+          "capture": ["TOOL_OUTPUT"],
+          "oracles": []
+        },
+        {
+          "id": "payment_page_2",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_list_payments",
+          "input": { "page": 2, "page_size": 3 },
+          "capture": ["TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "payment_history_complete",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.pagination.hasNextPage",
+              "operator": "EQ",
+              "expected": false,
+              "evidence_required": ["final payment page"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        },
+        {
+          "id": "exact_bill",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_get_supplier_bill",
+          "input": { "invoice_id": "40000000-0000-4000-8000-000000000001" },
+          "capture": ["TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "exact_bill_same_id",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.invoiceId",
+              "operator": "EQ",
+              "expected": "40000000-0000-4000-8000-000000000001",
+              "evidence_required": ["exact bill snapshot"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "all_ap_payment_types_seen",
+          "strength": "HARD",
+          "kind": "JSON_PATH",
+          "source": "AGGREGATE",
+          "path": "$.paymentTypes",
+          "operator": "CONTAINS",
+          "expected": ["ACCPAYPAYMENT", "APCREDITPAYMENT", "APPREPAYMENTPAYMENT", "APOVERPAYMENTPAYMENT"],
+          "evidence_required": ["both payment pages"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["ap", "pagination", "payments", "exact_readback"]
+    },
+    {
+      "id": "DC-MATCH-004",
+      "title": "No-match, duplicate-match, incomplete, and ineligible master data fail closed",
+      "priority": "P0",
+      "mode": "READ_ONLY",
+      "personas": ["protocol_security_agent", "ap_accountant"],
+      "fixture_refs": ["harness/fixtures/xero/synthetic-ledger.json#/contacts", "harness/fixtures/xero/material-clean.json"],
+      "prerequisites": ["Prepare tool uses exact reference-data matching"],
+      "steps": [
+        {
+          "id": "no_contact_match",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_prepare_supplier_bill_draft",
+          "input": {
+            "source_ref": "synthetic://work/materials/no-match.json",
+            "supplier_name": "No Such Supplier Limited",
+            "invoice_date": "2026-08-01",
+            "due_date": "2026-08-31",
+            "currency": "HKD",
+            "reference": "NO-MATCH-001",
+            "line_amount_type": "NoTax",
+            "lines": [{ "description": "Test", "quantity": 1, "unit_amount": 1, "account_code": "445", "tax_type": "NONE" }]
+          },
+          "capture": ["TOOL_OUTPUT", "PROVIDER_CALL"],
+          "oracles": [
+            {
+              "id": "no_match_blocks",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.blockers[*].code",
+              "operator": "CONTAINS",
+              "expected": "NO_EXACT_MATCH",
+              "evidence_required": ["prepare blockers"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        },
+        {
+          "id": "ambiguous_contact_match",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_prepare_supplier_bill_draft",
+          "input": {
+            "source_ref": "synthetic://work/materials/ambiguous.json",
+            "supplier_name": "Twin Services Limited",
+            "invoice_date": "2026-08-01",
+            "due_date": "2026-08-31",
+            "currency": "HKD",
+            "reference": "AMB-001",
+            "line_amount_type": "NoTax",
+            "lines": [{ "description": "Test", "quantity": 1, "unit_amount": 1, "account_code": "445", "tax_type": "NONE" }]
+          },
+          "capture": ["TOOL_OUTPUT", "PROVIDER_CALL"],
+          "oracles": [
+            {
+              "id": "ambiguous_blocks",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.blockers[*].code",
+              "operator": "CONTAINS",
+              "expected": "AMBIGUOUS_MATCH",
+              "evidence_required": ["bounded candidate evidence"],
+              "on_failure": "FAIL_CASE"
+            },
+            {
+              "id": "ambiguous_no_proposal",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.proposal",
+              "operator": "EQ",
+              "expected": null,
+              "evidence_required": ["prepare output"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "prepare_never_writes",
+          "strength": "HARD",
+          "kind": "SIDE_EFFECT_COUNT",
+          "source": "PROVIDER_CALL",
+          "operator": "COUNT_EQ",
+          "expected": 0,
+          "tool": "xero_create_draft_supplier_bill",
+          "count": 0,
+          "evidence_required": ["provider call ledger"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["matching", "fail_closed", "prepare"]
+    },
+    {
+      "id": "DC-PAYMENT-005",
+      "title": "Unknown payment currency and associations remain unknown",
+      "priority": "P0",
+      "mode": "READ_ONLY",
+      "personas": ["protocol_security_agent", "ap_accountant"],
+      "fixture_refs": ["harness/fixtures/xero/synthetic-ledger.json#/paymentPages/1/payments/0"],
+      "prerequisites": ["Payment fixture includes unavailable currency and no invoice association"],
+      "steps": [
+        {
+          "id": "read_unknown_currency_payment",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_list_payments",
+          "input": { "type": "APOVERPAYMENTPAYMENT", "page": 1, "page_size": 100 },
+          "capture": ["TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "currency_known_false",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.payments[0].currencyKnown",
+              "operator": "EQ",
+              "expected": false,
+              "evidence_required": ["payment snapshot"],
+              "on_failure": "FAIL_CASE"
+            },
+            {
+              "id": "invoice_association_absent",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.payments[0].invoiceId",
+              "operator": "NOT_EXISTS",
+              "expected": true,
+              "evidence_required": ["payment snapshot"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "no_synthetic_currency_field",
+          "strength": "HARD",
+          "kind": "JSON_PATH",
+          "source": "TOOL_OUTPUT",
+          "path": "$.result.payments[0].currency",
+          "operator": "NOT_EXISTS",
+          "expected": true,
+          "evidence_required": ["raw structured output"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["payments", "unknown_fields", "no_inference"]
+    },
+    {
+      "id": "DC-CREDIT-006",
+      "title": "Truncated credit-note associations are explicit",
+      "priority": "P0",
+      "mode": "READ_ONLY",
+      "personas": ["protocol_security_agent", "ap_accountant"],
+      "fixture_refs": ["harness/fixtures/xero/synthetic-ledger.json#/creditNotePages/0/creditNotes/1"],
+      "prerequisites": ["Credit-note fixture has four associations but exposes two bounded IDs"],
+      "steps": [
+        {
+          "id": "read_truncated_credit",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_list_credit_notes",
+          "input": { "type": "ACCRECCREDIT", "page": 1, "page_size": 100 },
+          "capture": ["TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "association_truncated_true",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.creditNotes[0].associatedInvoiceIdsTruncated",
+              "operator": "EQ",
+              "expected": true,
+              "evidence_required": ["credit-note snapshot"],
+              "on_failure": "FAIL_CASE"
+            },
+            {
+              "id": "association_count_preserved",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.creditNotes[0].associatedInvoiceIdCount",
+              "operator": "EQ",
+              "expected": 4,
+              "evidence_required": ["credit-note snapshot"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "bounded_id_count_is_two",
+          "strength": "HARD",
+          "kind": "JSON_PATH",
+          "source": "TOOL_OUTPUT",
+          "path": "$.result.creditNotes[0].associatedInvoiceIds",
+          "operator": "COUNT_EQ",
+          "expected": 2,
+          "count": 2,
+          "evidence_required": ["bounded association array"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["credit_notes", "truncation", "completeness"]
+    },
+    {
+      "id": "DC-TRACKING-007",
+      "title": "Supplier bill Tracking categories survive prepare, write, and readback",
+      "priority": "P0",
+      "mode": "READ_ONLY",
+      "personas": ["protocol_security_agent", "ap_accountant"],
+      "fixture_refs": ["harness/fixtures/xero/material-clean.json"],
+      "prerequisites": ["Synthetic test organisation defines Tracking category Region with option Hong Kong", "Prepare remains read-only"],
+      "steps": [
+        {
+          "id": "prepare_with_tracking",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_prepare_supplier_bill_draft",
+          "input": {
+            "source_ref": "synthetic://work/materials/HBS-2026-0810.json",
+            "supplier_name": "Horizon Business Services Limited",
+            "supplier_contact_number": "HBS-001",
+            "invoice_date": "2026-08-01",
+            "due_date": "2026-08-31",
+            "currency": "HKD",
+            "reference": "HBS-2026-0810",
+            "line_amount_type": "NoTax",
+            "lines": [
+              {
+                "description": "August bookkeeping support",
+                "quantity": 1,
+                "unit_amount": 1000,
+                "account_code": "445",
+                "tax_type": "NONE",
+                "tracking": [
+                  {
+                    "category_id": "31000000-0000-4000-8000-000000000001",
+                    "option_id": "32000000-0000-4000-8000-000000000001"
+                  }
+                ]
+              }
+            ]
+          },
+          "capture": ["TOOL_CALL", "TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "tracking_preserved_in_proposal",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.proposal.lines[0].tracking[0]",
+              "operator": "EQ",
+              "expected": {
+                "category_id": "31000000-0000-4000-8000-000000000001",
+                "option_id": "32000000-0000-4000-8000-000000000001"
+              },
+              "evidence_required": ["structured prepare proposal"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "tracking_prepare_no_write",
+          "strength": "HARD",
+          "kind": "TOOL_CALL_ABSENT",
+          "source": "TOOL_CALL",
+          "operator": "COUNT_EQ",
+          "expected": 0,
+          "tool": "xero_create_draft_supplier_bill",
+          "count": 0,
+          "evidence_required": ["all function_call receipts"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "EXPECTED_RED",
+      "expected_red_ref": "XR-007",
+      "tags": ["tracking", "supplier_bill", "expected_red"]
+    },
+    {
+      "id": "DC-VERSION-008",
+      "title": "Package, MCP initialize, health, and readiness expose one build version",
+      "priority": "P0",
+      "mode": "READ_ONLY",
+      "personas": ["protocol_security_agent"],
+      "fixture_refs": [],
+      "prerequisites": ["Built package available", "Local HTTP service available", "MCP initialize receipt captured"],
+      "steps": [
+        {
+          "id": "capture_version_surfaces",
+          "actor": "deterministic_harness",
+          "action": "STATE_PROBE",
+          "capture": ["TOOL_OUTPUT", "NETWORK_RECEIPT"],
+          "oracles": [
+            {
+              "id": "all_versions_equal",
+              "strength": "HARD",
+              "kind": "SAME_VALUE",
+              "source": "AGGREGATE",
+              "path": "$.versions",
+              "operator": "ALL",
+              "expected": "package.json.version",
+              "compare_to": "$.versions.package",
+              "evidence_required": ["package version", "MCP serverInfo.version", "health version", "readiness version"],
+              "on_failure": "FAIL_CASE"
+            }
+          ],
+          "notes": "Capture version fields without mutating files or relying on an operator label."
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "version_evidence_complete",
+          "strength": "HARD",
+          "kind": "EVIDENCE_PRESENT",
+          "source": "AGGREGATE",
+          "operator": "ALL",
+          "expected": ["package", "mcp_server_info", "health", "readiness"],
+          "evidence_required": ["four version receipts"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "EXPECTED_RED",
+      "expected_red_ref": "XR-008",
+      "tags": ["version", "deployment_evidence", "expected_red"]
+    },
+    {
+      "id": "DC-IDEMPOTENCY-012",
+      "title": "Same-request replay, payload conflict, and concurrent duplicate control",
+      "priority": "P0",
+      "mode": "CONTROLLED_WRITE",
+      "personas": ["protocol_security_agent", "controller_recovery_agent"],
+      "fixture_refs": ["harness/fixtures/xero/material-clean.json"],
+      "prerequisites": ["Isolated in-memory provider", "Synthetic tenant", "Write gate opened only for this case", "Prepared canonical proposal captured"],
+      "steps": [
+        {
+          "id": "create_once",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_create_draft_supplier_bill",
+          "input": {
+            "request_id": "p0.same-request.001",
+            "source_ref": "synthetic://work/materials/HBS-2026-0810.json",
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_evidence_type": "AGENT_ASSERTED_UNVERIFIED",
+            "user_confirmation": "CONFIRMED_FOR_DRAFT",
+            "contact_id": "20000000-0000-4000-8000-000000000001",
+            "invoice_date": "2026-08-01",
+            "due_date": "2026-08-31",
+            "currency": "HKD",
+            "reference": "HBS-2026-0810",
+            "line_amount_type": "NoTax",
+            "lines": [{ "description": "August bookkeeping support", "quantity": 1, "unit_amount": 1000, "account_code": "445", "tax_type": "NONE" }]
+          },
+          "capture": ["TOOL_OUTPUT", "PROVIDER_CALL", "PROVIDER_RECORD", "REPOSITORY_STATE"],
+          "oracles": []
+        },
+        {
+          "id": "replay_same_payload",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_create_draft_supplier_bill",
+          "input": {
+            "request_id": "p0.same-request.001",
+            "source_ref": "synthetic://work/materials/HBS-2026-0810.json",
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_evidence_type": "AGENT_ASSERTED_UNVERIFIED",
+            "user_confirmation": "CONFIRMED_FOR_DRAFT",
+            "contact_id": "20000000-0000-4000-8000-000000000001",
+            "invoice_date": "2026-08-01",
+            "due_date": "2026-08-31",
+            "currency": "HKD",
+            "reference": "HBS-2026-0810",
+            "line_amount_type": "NoTax",
+            "lines": [{ "description": "August bookkeeping support", "quantity": 1, "unit_amount": 1000, "account_code": "445", "tax_type": "NONE" }]
+          },
+          "capture": ["TOOL_OUTPUT", "PROVIDER_CALL", "PROVIDER_RECORD", "REPOSITORY_STATE"],
+          "oracles": [
+            {
+              "id": "replay_true",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.idempotentReplay",
+              "operator": "EQ",
+              "expected": true,
+              "evidence_required": ["second tool output"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        },
+        {
+          "id": "same_request_changed_payload",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_create_draft_supplier_bill",
+          "input": {
+            "request_id": "p0.same-request.001",
+            "source_ref": "synthetic://work/materials/HBS-2026-0810.json",
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_evidence_type": "AGENT_ASSERTED_UNVERIFIED",
+            "user_confirmation": "CONFIRMED_FOR_DRAFT",
+            "contact_id": "20000000-0000-4000-8000-000000000001",
+            "invoice_date": "2026-08-01",
+            "due_date": "2026-08-31",
+            "currency": "HKD",
+            "reference": "HBS-2026-0810-CHANGED",
+            "line_amount_type": "NoTax",
+            "lines": [{ "description": "August bookkeeping support", "quantity": 1, "unit_amount": 1000, "account_code": "445", "tax_type": "NONE" }]
+          },
+          "capture": ["TOOL_OUTPUT", "PROVIDER_CALL", "REPOSITORY_STATE"],
+          "oracles": [
+            {
+              "id": "payload_conflict",
+              "strength": "HARD",
+              "kind": "ERROR_CODE",
+              "source": "TOOL_OUTPUT",
+              "path": "$.error.code",
+              "operator": "EQ",
+              "expected": "CONFLICT",
+              "evidence_required": ["structured MCP error"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "one_provider_write",
+          "strength": "HARD",
+          "kind": "SIDE_EFFECT_COUNT",
+          "source": "PROVIDER_CALL",
+          "operator": "COUNT_EQ",
+          "expected": 1,
+          "tool": "xero_create_draft_supplier_bill",
+          "count": 1,
+          "evidence_required": ["provider call ledger"],
+          "on_failure": "FAIL_CASE"
+        },
+        {
+          "id": "one_provider_record",
+          "strength": "HARD",
+          "kind": "SIDE_EFFECT_COUNT",
+          "source": "PROVIDER_RECORD",
+          "operator": "COUNT_EQ",
+          "expected": 1,
+          "count": 1,
+          "evidence_required": ["provider record ledger"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["draft", "idempotency", "conflict"]
+    },
+    {
+      "id": "DC-CONCURRENT-012B",
+      "title": "Barrier-synchronised identical creates produce one posting and one provider record",
+      "priority": "P0",
+      "mode": "CONTROLLED_WRITE",
+      "personas": ["protocol_security_agent", "controller_recovery_agent"],
+      "fixture_refs": ["harness/fixtures/xero/material-clean.json"],
+      "prerequisites": ["Fresh isolated repository", "Isolated in-memory provider", "Write gate opened only for this case", "Two MCP clients share the same synthetic actor and tenant"],
+      "steps": [
+        {
+          "id": "reset_concurrent_fixture",
+          "actor": "deterministic_harness",
+          "action": "FIXTURE_RESET",
+          "capture": ["REPOSITORY_STATE", "PROVIDER_RECORD"],
+          "oracles": [],
+          "notes": "Assert zero postings and zero provider records before releasing the barrier."
+        },
+        {
+          "id": "dispatch_two_identical_creates",
+          "actor": "deterministic_harness",
+          "action": "STATE_PROBE",
+          "tool": "xero_create_draft_supplier_bill",
+          "input": {
+            "concurrency": 2,
+            "barrier": "SIMULTANEOUS_RELEASE",
+            "request_id": "p0.concurrent-same-request.001",
+            "payload_ref": "harness/fixtures/xero/material-clean.json#/expected_extraction"
+          },
+          "capture": ["TOOL_CALL", "TOOL_OUTPUT", "PROVIDER_CALL", "PROVIDER_RECORD", "REPOSITORY_STATE"],
+          "oracles": [
+            {
+              "id": "two_mcp_calls_completed",
+              "strength": "HARD",
+              "kind": "TOOL_CALL_COUNT",
+              "source": "TOOL_CALL",
+              "operator": "COUNT_EQ",
+              "expected": 2,
+              "tool": "xero_create_draft_supplier_bill",
+              "count": 2,
+              "evidence_required": ["two barrier-released MCP call receipts"],
+              "on_failure": "FAIL_CASE"
+            },
+            {
+              "id": "concurrent_results_same_id",
+              "strength": "HARD",
+              "kind": "SAME_VALUE",
+              "source": "TOOL_OUTPUT",
+              "path": "$.results[*].result.invoiceId",
+              "operator": "ALL",
+              "expected": "one shared InvoiceID",
+              "compare_to": "$.results[0].result.invoiceId",
+              "evidence_required": ["both structured MCP results"],
+              "on_failure": "FAIL_CASE"
+            }
+          ],
+          "notes": "Build the canonical create payload from the fixture, add source evidence and CONFIRMED_FOR_DRAFT, then start both calls behind one barrier."
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "concurrent_one_provider_write",
+          "strength": "HARD",
+          "kind": "SIDE_EFFECT_COUNT",
+          "source": "PROVIDER_CALL",
+          "operator": "COUNT_EQ",
+          "expected": 1,
+          "tool": "xero_create_draft_supplier_bill",
+          "count": 1,
+          "evidence_required": ["provider call ledger"],
+          "on_failure": "FAIL_CASE"
+        },
+        {
+          "id": "concurrent_one_provider_record",
+          "strength": "HARD",
+          "kind": "SIDE_EFFECT_COUNT",
+          "source": "PROVIDER_RECORD",
+          "operator": "COUNT_EQ",
+          "expected": 1,
+          "count": 1,
+          "evidence_required": ["provider record ledger"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["draft", "concurrency", "idempotency"]
+    },
+    {
+      "id": "DC-DUPLICATE-013",
+      "title": "Different request IDs cannot duplicate one business document",
+      "priority": "P0",
+      "mode": "CONTROLLED_WRITE",
+      "personas": ["protocol_security_agent", "controller_recovery_agent"],
+      "fixture_refs": ["harness/fixtures/xero/material-clean.json"],
+      "prerequisites": ["Isolated in-memory provider", "Write gate opened only for this case", "No existing business-document fixture record"],
+      "steps": [
+        {
+          "id": "first_business_document_request",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_create_draft_supplier_bill",
+          "input": {
+            "request_id": "p0.business-duplicate.A",
+            "source_ref": "synthetic://work/materials/HBS-2026-0810.json",
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_evidence_type": "AGENT_ASSERTED_UNVERIFIED",
+            "user_confirmation": "CONFIRMED_FOR_DRAFT",
+            "contact_id": "20000000-0000-4000-8000-000000000001",
+            "invoice_date": "2026-08-01",
+            "due_date": "2026-08-31",
+            "currency": "HKD",
+            "reference": "HBS-2026-0810",
+            "line_amount_type": "NoTax",
+            "lines": [{ "description": "August bookkeeping support", "quantity": 1, "unit_amount": 1000, "account_code": "445", "tax_type": "NONE" }]
+          },
+          "capture": ["TOOL_OUTPUT", "PROVIDER_CALL", "PROVIDER_RECORD", "REPOSITORY_STATE"],
+          "oracles": []
+        },
+        {
+          "id": "second_business_document_request",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_create_draft_supplier_bill",
+          "input": {
+            "request_id": "p0.business-duplicate.B",
+            "source_ref": "synthetic://work/materials/HBS-2026-0810.json",
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_evidence_type": "AGENT_ASSERTED_UNVERIFIED",
+            "user_confirmation": "CONFIRMED_FOR_DRAFT",
+            "contact_id": "20000000-0000-4000-8000-000000000001",
+            "invoice_date": "2026-08-01",
+            "due_date": "2026-08-31",
+            "currency": "HKD",
+            "reference": "HBS-2026-0810",
+            "line_amount_type": "NoTax",
+            "lines": [{ "description": "August bookkeeping support", "quantity": 1, "unit_amount": 1000, "account_code": "445", "tax_type": "NONE" }]
+          },
+          "capture": ["TOOL_OUTPUT", "PROVIDER_CALL", "PROVIDER_RECORD", "REPOSITORY_STATE"],
+          "oracles": []
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "business_duplicate_provider_count",
+          "strength": "HARD",
+          "kind": "SIDE_EFFECT_COUNT",
+          "source": "PROVIDER_RECORD",
+          "operator": "COUNT_EQ",
+          "expected": 1,
+          "count": 1,
+          "evidence_required": ["provider records grouped by tenant, source, supplier, and supplier document"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "EXPECTED_RED",
+      "expected_red_ref": "XR-001",
+      "tags": ["draft", "business_duplicate", "expected_red"]
+    },
+    {
+      "id": "DC-RECOVERY-014",
+      "title": "Timeout-after-commit and restart recovery never auto-retry",
+      "priority": "P0",
+      "mode": "CONTROLLED_WRITE",
+      "personas": ["protocol_security_agent", "controller_recovery_agent"],
+      "fixture_refs": ["harness/fixtures/xero/material-clean.json", "harness/fixtures/xero/fault-profiles.json"],
+      "prerequisites": ["Isolated in-memory provider", "Durable repository double", "Write gate opened only for this case"],
+      "steps": [
+        {
+          "id": "inject_timeout_after_commit",
+          "actor": "deterministic_harness",
+          "action": "FAULT_INJECTION",
+          "fault_profile": "draft_timeout_after_commit",
+          "capture": ["PROVIDER_CALL", "PROVIDER_RECORD", "REPOSITORY_STATE"],
+          "oracles": []
+        },
+        {
+          "id": "restart_service",
+          "actor": "deterministic_harness",
+          "action": "STATE_PROBE",
+          "capture": ["REPOSITORY_STATE"],
+          "oracles": []
+        },
+        {
+          "id": "recover_same_request",
+          "actor": "deterministic_harness",
+          "action": "MCP_CALL",
+          "tool": "xero_create_draft_supplier_bill",
+          "input": {
+            "request_id": "p0.unknown-write.001",
+            "source_ref": "synthetic://work/materials/HBS-2026-0810.json",
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "source_evidence_type": "AGENT_ASSERTED_UNVERIFIED",
+            "user_confirmation": "CONFIRMED_FOR_DRAFT",
+            "contact_id": "20000000-0000-4000-8000-000000000001",
+            "invoice_date": "2026-08-01",
+            "due_date": "2026-08-31",
+            "currency": "HKD",
+            "reference": "HBS-2026-0810",
+            "line_amount_type": "NoTax",
+            "lines": [{ "description": "August bookkeeping support", "quantity": 1, "unit_amount": 1000, "account_code": "445", "tax_type": "NONE" }]
+          },
+          "capture": ["TOOL_OUTPUT", "PROVIDER_CALL", "PROVIDER_RECORD", "REPOSITORY_STATE"],
+          "oracles": [
+            {
+              "id": "recovery_same_id",
+              "strength": "HARD",
+              "kind": "SAME_VALUE",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.invoiceId",
+              "operator": "EQ",
+              "expected": "provider record created before timeout",
+              "compare_to": "$.evidence.providerRecords[0].invoiceId",
+              "evidence_required": ["unknown-write repository state", "exact provider readback"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "no_write_retry",
+          "strength": "HARD",
+          "kind": "SIDE_EFFECT_COUNT",
+          "source": "PROVIDER_CALL",
+          "operator": "COUNT_EQ",
+          "expected": 1,
+          "tool": "xero_create_draft_supplier_bill",
+          "count": 1,
+          "evidence_required": ["provider call ledger before and after restart"],
+          "on_failure": "FAIL_CASE"
+        },
+        {
+          "id": "one_record_after_recovery",
+          "strength": "HARD",
+          "kind": "SIDE_EFFECT_COUNT",
+          "source": "PROVIDER_RECORD",
+          "operator": "COUNT_EQ",
+          "expected": 1,
+          "count": 1,
+          "evidence_required": ["provider record ledger"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["draft", "unknown_write", "recovery", "restart"]
+    },
+    {
+      "id": "DC-READBACK-014B",
+      "title": "Draft readback mismatch is surfaced and never reported as verified",
+      "priority": "P0",
+      "mode": "CONTROLLED_WRITE",
+      "personas": ["protocol_security_agent", "controller_recovery_agent"],
+      "fixture_refs": ["harness/fixtures/xero/material-clean.json", "harness/fixtures/xero/fault-profiles.json"],
+      "prerequisites": ["Fresh isolated repository", "Isolated provider mutates currency only in immediate readback", "Write gate opened only for this case"],
+      "steps": [
+        {
+          "id": "inject_readback_mismatch",
+          "actor": "deterministic_harness",
+          "action": "FAULT_INJECTION",
+          "tool": "xero_create_draft_supplier_bill",
+          "input": {
+            "request_id": "p0.readback-mismatch.001",
+            "payload_ref": "harness/fixtures/xero/material-clean.json#/expected_extraction"
+          },
+          "fault_profile": "draft_readback_mismatch",
+          "capture": ["TOOL_CALL", "TOOL_OUTPUT", "PROVIDER_CALL", "PROVIDER_RECORD", "REPOSITORY_STATE"],
+          "oracles": [
+            {
+              "id": "readback_mismatch_error",
+              "strength": "HARD",
+              "kind": "ERROR_CODE",
+              "source": "TOOL_OUTPUT",
+              "path": "$.error.code",
+              "operator": "EQ",
+              "expected": "READBACK_MISMATCH",
+              "evidence_required": ["structured MCP error", "mutated provider readback"],
+              "on_failure": "FAIL_CASE"
+            }
+          ],
+          "notes": "Build the canonical create payload from the fixture, add source evidence and CONFIRMED_FOR_DRAFT, then mutate only readback currency."
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "mismatch_one_write",
+          "strength": "HARD",
+          "kind": "SIDE_EFFECT_COUNT",
+          "source": "PROVIDER_CALL",
+          "operator": "COUNT_EQ",
+          "expected": 1,
+          "tool": "xero_create_draft_supplier_bill",
+          "count": 1,
+          "evidence_required": ["provider call ledger"],
+          "on_failure": "FAIL_CASE"
+        },
+        {
+          "id": "mismatch_not_verified",
+          "strength": "HARD",
+          "kind": "JSON_PATH",
+          "source": "REPOSITORY_STATE",
+          "path": "$.posting.state",
+          "operator": "NOT_IN",
+          "expected": ["DRAFT_CREATED", "APPROVAL_PENDING", "AUTHORISED_READBACK_VERIFIED"],
+          "evidence_required": ["posting state after mismatch"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["draft", "readback_mismatch", "no_false_success"]
+    },
+    {
+      "id": "DC-REPOSITORY-014C",
+      "title": "Repository completion loss after provider commit recovers by readback only",
+      "priority": "P0",
+      "mode": "CONTROLLED_WRITE",
+      "personas": ["protocol_security_agent", "controller_recovery_agent"],
+      "fixture_refs": ["harness/fixtures/xero/material-clean.json", "harness/fixtures/xero/fault-profiles.json"],
+      "prerequisites": ["Durable repository double", "Provider commit succeeds", "Completion update fails once", "Write gate opened only for this case"],
+      "steps": [
+        {
+          "id": "inject_repository_completion_loss",
+          "actor": "deterministic_harness",
+          "action": "FAULT_INJECTION",
+          "tool": "xero_create_draft_supplier_bill",
+          "input": {
+            "request_id": "p0.repository-completion.001",
+            "payload_ref": "harness/fixtures/xero/material-clean.json#/expected_extraction"
+          },
+          "fault_profile": "repository_completion_failure_after_commit",
+          "capture": ["TOOL_CALL", "TOOL_OUTPUT", "PROVIDER_CALL", "PROVIDER_RECORD", "REPOSITORY_STATE"],
+          "oracles": [
+            {
+              "id": "completion_loss_unknown",
+              "strength": "HARD",
+              "kind": "ERROR_CODE",
+              "source": "TOOL_OUTPUT",
+              "path": "$.error.code",
+              "operator": "EQ",
+              "expected": "WRITE_RESULT_UNKNOWN",
+              "evidence_required": ["structured MCP error", "provider record", "repository failure"],
+              "on_failure": "FAIL_CASE"
+            }
+          ],
+          "notes": "Build the canonical create payload from the fixture, add source evidence and CONFIRMED_FOR_DRAFT."
+        },
+        {
+          "id": "restart_after_completion_loss",
+          "actor": "deterministic_harness",
+          "action": "STATE_PROBE",
+          "capture": ["REPOSITORY_STATE"],
+          "oracles": [],
+          "notes": "Recreate the service with the same durable repository and provider state."
+        },
+        {
+          "id": "recover_completion_loss",
+          "actor": "deterministic_harness",
+          "action": "STATE_PROBE",
+          "tool": "xero_create_draft_supplier_bill",
+          "input": {
+            "request_id": "p0.repository-completion.001",
+            "payload_ref": "harness/fixtures/xero/material-clean.json#/expected_extraction",
+            "mode": "REPLAY_SAME_REQUEST"
+          },
+          "capture": ["TOOL_CALL", "TOOL_OUTPUT", "PROVIDER_CALL", "PROVIDER_RECORD", "REPOSITORY_STATE"],
+          "oracles": [
+            {
+              "id": "completion_recovery_same_id",
+              "strength": "HARD",
+              "kind": "SAME_VALUE",
+              "source": "TOOL_OUTPUT",
+              "path": "$.result.invoiceId",
+              "operator": "EQ",
+              "expected": "provider record committed before repository failure",
+              "compare_to": "$.evidence.providerRecords[0].invoiceId",
+              "evidence_required": ["provider record before restart", "exact readback after restart"],
+              "on_failure": "FAIL_CASE"
+            }
+          ],
+          "notes": "Runner must invoke the same MCP create request; production recovery is expected to read back instead of issuing a second provider write."
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "completion_loss_no_retry",
+          "strength": "HARD",
+          "kind": "SIDE_EFFECT_COUNT",
+          "source": "PROVIDER_CALL",
+          "operator": "COUNT_EQ",
+          "expected": 1,
+          "tool": "xero_create_draft_supplier_bill",
+          "count": 1,
+          "evidence_required": ["provider call ledger across restart"],
+          "on_failure": "FAIL_CASE"
+        },
+        {
+          "id": "completion_loss_one_record",
+          "strength": "HARD",
+          "kind": "SIDE_EFFECT_COUNT",
+          "source": "PROVIDER_RECORD",
+          "operator": "COUNT_EQ",
+          "expected": 1,
+          "count": 1,
+          "evidence_required": ["provider record ledger across restart"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["draft", "repository_failure", "unknown_write", "restart", "readback_only"]
+    }
+  ]
+}

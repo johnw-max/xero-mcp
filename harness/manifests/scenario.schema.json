@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcloak.example/schemas/xero-mcp-scenario-v1.json",
+  "title": "Xero MCP exhaustive test scenario manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "layer",
+    "description",
+    "safety",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "suite_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$" },
+    "layer": {
+      "enum": [
+        "DETERMINISTIC_CONTRACT",
+        "AGENT2_BEHAVIOR",
+        "FINAL_BROWSER_SIGNATURE"
+      ]
+    },
+    "description": { "type": "string", "minLength": 1 },
+    "safety": { "$ref": "#/$defs/safety" },
+    "defaults": { "$ref": "#/$defs/defaults" },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data_class", "write_policy", "authorise_forbidden", "payment_forbidden"],
+      "properties": {
+        "data_class": { "const": "SYNTHETIC_ONLY" },
+        "write_policy": { "enum": ["READ_ONLY", "ONE_CONTROLLED_DRAFT_WRITER"] },
+        "authorise_forbidden": { "const": true },
+        "payment_forbidden": { "const": true },
+        "write_gate_must_start_closed": { "type": "boolean" },
+        "write_gate_must_end_closed": { "type": "boolean" }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repeats": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "remote_concurrency": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "tenant_calls_per_minute": { "type": "integer", "minimum": 1, "maximum": 60 },
+        "read_retry_limit": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "write_retry_limit": { "const": 0 }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "priority",
+        "mode",
+        "personas",
+        "fixture_refs",
+        "prerequisites",
+        "steps",
+        "final_oracles",
+        "baseline_expectation",
+        "tags"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9-]{4,63}$" },
+        "title": { "type": "string", "minLength": 1 },
+        "priority": { "enum": ["P0", "P1", "P2"] },
+        "mode": { "enum": ["READ_ONLY", "CONTROLLED_WRITE", "MIXED"] },
+        "personas": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" }
+        },
+        "repeats": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "fixture_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/step" }
+        },
+        "final_oracles": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/oracle" }
+        },
+        "baseline_expectation": { "enum": ["PASS", "EXPECTED_RED"] },
+        "expected_red_ref": { "type": "string", "pattern": "^XR-[0-9]{3}$" },
+        "tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]+$" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "baseline_expectation": { "const": "EXPECTED_RED" } },
+            "required": ["baseline_expectation"]
+          },
+          "then": { "required": ["expected_red_ref"] }
+        }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "actor", "action", "capture", "oracles"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9._-]+$" },
+        "actor": { "type": "string", "minLength": 1 },
+        "action": {
+          "enum": [
+            "FIXTURE_RESET",
+            "MCP_CALL",
+            "AGENT_TURN",
+            "FAULT_INJECTION",
+            "STATE_PROBE",
+            "BROWSER_TURN"
+          ]
+        },
+        "tool": { "type": "string", "pattern": "^xero_[a-z0-9_]+$" },
+        "input": { "type": "object" },
+        "utterance": { "type": "string", "minLength": 1 },
+        "fault_profile": { "type": "string", "pattern": "^[a-z][a-z0-9._-]+$" },
+        "capture": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "AGENT_TEXT",
+              "TOOL_CALL",
+              "TOOL_OUTPUT",
+              "PROVIDER_CALL",
+              "PROVIDER_RECORD",
+              "REPOSITORY_STATE",
+              "NETWORK_RECEIPT",
+              "BROWSER_EVIDENCE"
+            ]
+          }
+        },
+        "oracles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/oracle" }
+        },
+        "notes": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "action": { "const": "MCP_CALL" } }, "required": ["action"] },
+          "then": { "required": ["tool", "input"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "enum": ["AGENT_TURN", "BROWSER_TURN"] } },
+            "required": ["action"]
+          },
+          "then": { "required": ["utterance"] }
+        },
+        {
+          "if": { "properties": { "action": { "const": "FAULT_INJECTION" } }, "required": ["action"] },
+          "then": { "required": ["fault_profile"] }
+        }
+      ]
+    },
+    "oracle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "strength", "kind", "source", "operator", "evidence_required"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9._-]+$" },
+        "strength": { "enum": ["HARD", "SEMANTIC", "MANUAL"] },
+        "kind": {
+          "enum": [
+            "JSON_PATH",
+            "EXACT_TOOL_SET",
+            "TOOL_CALL_COUNT",
+            "TOOL_CALL_ABSENT",
+            "ERROR_CODE",
+            "SAME_VALUE",
+            "DIFFERENT_VALUE",
+            "LEDGER_INVARIANT",
+            "TEXT_RULE",
+            "SIDE_EFFECT_COUNT",
+            "EVIDENCE_PRESENT"
+          ]
+        },
+        "source": {
+          "enum": [
+            "AGENT_TEXT",
+            "TOOL_CALL",
+            "TOOL_OUTPUT",
+            "PROVIDER_CALL",
+            "PROVIDER_RECORD",
+            "REPOSITORY_STATE",
+            "NETWORK_RECEIPT",
+            "BROWSER_EVIDENCE",
+            "AGGREGATE"
+          ]
+        },
+        "path": { "type": "string", "minLength": 1 },
+        "operator": {
+          "enum": [
+            "EQ",
+            "NE",
+            "IN",
+            "NOT_IN",
+            "CONTAINS",
+            "NOT_CONTAINS",
+            "MATCHES",
+            "EXISTS",
+            "NOT_EXISTS",
+            "GT",
+            "GTE",
+            "LT",
+            "LTE",
+            "SET_EQ",
+            "COUNT_EQ",
+            "ALL",
+            "BALANCES",
+            "REFUSES",
+            "DISTINGUISHES_EVIDENCE"
+          ]
+        },
+        "expected": true,
+        "compare_to": { "type": "string", "minLength": 1 },
+        "tool": { "type": "string", "pattern": "^xero_[a-z0-9_]+$" },
+        "count": { "type": "integer", "minimum": 0 },
+        "evidence_required": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "on_failure": { "enum": ["FAIL_CASE", "BLOCK_CASE", "WARN"] },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

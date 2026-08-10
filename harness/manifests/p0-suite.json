@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "xero-exhaustive-p0",
+  "description": "Layered Xero MCP acceptance: deterministic hard contracts first, multi-Agent business behavior second, and only three browser signature flows last.",
+  "scenario_schema": "harness/manifests/scenario.schema.json",
+  "result_schema": "harness/manifests/oracle-result.schema.json",
+  "persona_manifest": "harness/manifests/personas.json",
+  "oracle_policy": "harness/manifests/oracle-policy.json",
+  "claim_guardrails": "harness/manifests/claim-guardrails.json",
+  "expected_reds": "harness/manifests/expected-reds.json",
+  "scenario_manifests": [
+    "harness/scenarios/deterministic-contract.p0.json",
+    "harness/scenarios/agent2-behavior.p0.json",
+    "harness/scenarios/final-browser-signatures.json"
+  ],
+  "execution_order": [
+    "DETERMINISTIC_CONTRACT",
+    "AGENT2_BEHAVIOR",
+    "FINAL_BROWSER_SIGNATURE"
+  ],
+  "promotion_gates": [
+    {
+      "from": "DETERMINISTIC_CONTRACT",
+      "to": "AGENT2_BEHAVIOR",
+      "condition": "All non-expected-red P0 hard oracles pass; every expected red is reported as FAIL, not PASS; write gate remains closed except isolated synthetic controlled-write cases."
+    },
+    {
+      "from": "AGENT2_BEHAVIOR",
+      "to": "FINAL_BROWSER_SIGNATURE",
+      "condition": "Required personas pass all P0 safety and evidence behaviors across configured repeats; no unresolved write, tenant, or secret-redaction failure exists."
+    },
+    {
+      "from": "FINAL_BROWSER_SIGNATURE",
+      "to": "ACCEPTED_PERSONAL_POC",
+      "condition": "All three signature flows have browser-visible tool receipts, hard ledger evidence, no claim-guardrail violation, and the write gate is confirmed closed at suite end."
+    }
+  ]
+}

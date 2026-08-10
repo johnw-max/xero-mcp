@@ -1,0 +1,341 @@
+#!/bin/sh
+set -eu
+
+readonly SITE_FILE="${XERO_NGINX_SITE_FILE:-/etc/nginx/sites-available/mcp.jiayuanwang.xyz}"
+readonly PUBLIC_BASE_URL="https://mcp.jiayuanwang.xyz"
+readonly PUBLIC_HOST="mcp.jiayuanwang.xyz"
+readonly BLUE_PORT="18002"
+readonly GREEN_PORT="18004"
+readonly BLUE_VERSION="0.2.13"
+readonly GREEN_VERSION="0.3.0"
+readonly GREEN_TOOL_COUNT="43"
+readonly GREEN_TOOLSET_HASH="a76bf853dc4bc71bf33e5b42f936fbcc9d6593d67d23e40dedccc4d1e2ae5d65"
+readonly PUBLIC_SETTLE_ATTEMPTS="3"
+readonly PUBLIC_SETTLE_SLEEP_SECONDS="1"
+readonly PUBLIC_SETTLE_CURL_MAX_TIME_SECONDS="1"
+readonly LOCK_FILE="/run/lock/xero-mcp-upstream-switch.lock"
+readonly BACKUP_DIR="/var/backups/xero-mcp-nginx"
+
+TEMP_FILE=""
+
+audit() {
+  printf '%s=%s\n' "$1" "$2"
+}
+
+fail() {
+  audit "ERROR" "$1" >&2
+  exit 1
+}
+
+cleanup() {
+  if test -n "$TEMP_FILE"; then
+    rm -f -- "$TEMP_FILE"
+  fi
+}
+trap cleanup EXIT HUP INT TERM
+
+command -v awk >/dev/null 2>&1 || fail "AWK_MISSING"
+command -v curl >/dev/null 2>&1 || fail "CURL_MISSING"
+command -v flock >/dev/null 2>&1 || fail "FLOCK_MISSING"
+command -v nginx >/dev/null 2>&1 || fail "NGINX_MISSING"
+command -v sleep >/dev/null 2>&1 || fail "SLEEP_MISSING"
+command -v systemctl >/dev/null 2>&1 || fail "SYSTEMCTL_MISSING"
+
+test -f "$SITE_FILE" || fail "SITE_FILE_MISSING"
+test ! -L "$SITE_FILE" || fail "SITE_FILE_MUST_NOT_BE_SYMLINK"
+
+exec 9>"$LOCK_FILE"
+flock -n 9 || fail "ANOTHER_UPSTREAM_SWITCH_IS_RUNNING"
+
+upstream_port() {
+  upstream_name=$1
+  awk -v upstream_name="$upstream_name" '
+    $0 == "upstream " upstream_name " {" { inside = 1; next }
+    inside && $0 == "}" { inside = 0 }
+    inside && $0 ~ /^[[:space:]]*server 127[.]0[.]0[.]1:[0-9]+;[[:space:]]*$/ {
+      value = $0
+      sub(/^.*:/, "", value)
+      sub(/;.*/, "", value)
+      print value
+    }
+  ' "$SITE_FILE"
+}
+
+current_xero_port() {
+  ports=$(upstream_port "xero_accounting_mcp_demo")
+  test "$(printf '%s\n' "$ports" | sed '/^$/d' | wc -l | tr -d ' ')" -eq 1 || fail "XERO_UPSTREAM_NOT_EXACTLY_ONE"
+  case "$ports" in
+    "$BLUE_PORT"|"$GREEN_PORT") printf '%s' "$ports" ;;
+    *) fail "XERO_UPSTREAM_PORT_UNEXPECTED" ;;
+  esac
+}
+
+verify_quickbooks_unchanged() {
+  qb_ports=$(upstream_port "quickbooks_accounting_mcp_demo")
+  test "$qb_ports" = "18003" || fail "QUICKBOOKS_UPSTREAM_NOT_18003"
+}
+
+verify_blue_break_glass_container_read_only() {
+  command -v docker >/dev/null 2>&1 || return 1
+  blue_container_ids=$(docker ps \
+    --filter "label=com.docker.compose.service=accounting-mcp" \
+    --filter "publish=${BLUE_PORT}" \
+    --format '{{.ID}}') || return 1
+  blue_container_count=$(printf '%s\n' "$blue_container_ids" | sed '/^$/d' | wc -l | tr -d ' ')
+  test "$blue_container_count" = "1" || return 1
+  blue_container_id=$(printf '%s\n' "$blue_container_ids" | sed '/^$/d')
+
+  blue_container_running=$(docker inspect --format '{{.State.Running}}' "$blue_container_id") || return 1
+  test "$blue_container_running" = "true" || return 1
+  blue_container_bindings=$(docker inspect --format \
+    '{{range $port, $bindings := .NetworkSettings.Ports}}{{range $bindings}}{{printf "%s|%s|%s\n" $port .HostIp .HostPort}}{{end}}{{end}}' \
+    "$blue_container_id") || return 1
+  test "$blue_container_bindings" = "3000/tcp|127.0.0.1|${BLUE_PORT}" || return 1
+  blue_container_environment=$(docker inspect --format \
+    '{{range .Config.Env}}{{println .}}{{end}}' \
+    "$blue_container_id") || return 1
+  blue_write_setting=$(printf '%s\n' "$blue_container_environment" | awk -F= '$1 == "XERO_WRITE_ENABLED" { print }')
+  test "$blue_write_setting" = "XERO_WRITE_ENABLED=false" || return 1
+
+  BLUE_BREAK_GLASS_CONTAINER_ID=$blue_container_id
+}
+
+check_blue_readiness_response() {
+  ready_status=$1
+  ready_body=$2
+  case "${ready_status}:${ready_body}" in
+    "200:{\"status\":\"ready\",\"version\":\"${BLUE_VERSION}\"}") return 0 ;;
+    "503:{\"status\":\"not_ready\",\"version\":\"${BLUE_VERSION}\"}")
+      test "${ALLOW_BLUE_FORWARD_SCHEMA_NOT_READY:-false}" = "true" || return 1
+      verify_blue_break_glass_container_read_only || return 1
+      BLUE_BREAK_GLASS_USED=true
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+fetch_blue_http_response() {
+  response_url=$1
+  response_max_time=$2
+  shift 2
+  blue_response=$(curl -sS --max-time "$response_max_time" "$@" -w '\n%{http_code}' "$response_url") || return 1
+  BLUE_HTTP_STATUS=$(printf '%s\n' "$blue_response" | tail -n 1)
+  BLUE_HTTP_BODY=$(printf '%s\n' "$blue_response" | sed '$d')
+}
+
+fetch_blue_readiness() {
+  ready_url=$1
+  response_max_time=$2
+  shift 2
+  fetch_blue_http_response "$ready_url" "$response_max_time" "$@" || return 1
+  BLUE_READY_HTTP_STATUS=$BLUE_HTTP_STATUS
+  BLUE_READY_BODY=$BLUE_HTTP_BODY
+  check_blue_readiness_response "$BLUE_READY_HTTP_STATUS" "$BLUE_READY_BODY"
+}
+
+audit_blue_rollback_warning() {
+  target_port=$1
+  if test "$target_port" = "$BLUE_PORT" \
+    && test "${BLUE_BREAK_GLASS_USED:-false}" = "true"; then
+    audit "WARNING" "BLUE_FORWARD_SCHEMA_NOT_READY_BREAK_GLASS"
+    audit "BLUE_BREAK_GLASS_READ_ONLY_VERIFIED" "true"
+    audit "BLUE_BREAK_GLASS_CONTAINER_ID" "$BLUE_BREAK_GLASS_CONTAINER_ID"
+  fi
+}
+
+check_loopback() {
+  target_port=$1
+  case "$target_port" in
+    "$GREEN_PORT")
+      health=$(curl -fsS --max-time 15 -H "Host: ${PUBLIC_HOST}" "http://127.0.0.1:${target_port}/healthz")
+      printf '%s' "$health" | grep -Fq '"status":"ok"' || fail "TARGET_HEALTH_NOT_OK"
+      ready=$(curl -fsS --max-time 15 -H "Host: ${PUBLIC_HOST}" "http://127.0.0.1:${target_port}/readyz")
+      test "$ready" = "{\"status\":\"ready\",\"version\":\"${GREEN_VERSION}\"}" || fail "TARGET_READINESS_NOT_READY"
+      printf '%s' "$health" | grep -Fq "\"version\":\"${GREEN_VERSION}\"" || fail "GREEN_VERSION_MISMATCH"
+      printf '%s' "$health" | grep -Fq "\"toolCount\":${GREEN_TOOL_COUNT}" || fail "GREEN_TOOL_COUNT_MISMATCH"
+      printf '%s' "$health" | grep -Fq "\"toolsetHash\":\"${GREEN_TOOLSET_HASH}\"" || fail "GREEN_TOOLSET_HASH_MISMATCH"
+      ;;
+    "$BLUE_PORT")
+      fetch_blue_http_response \
+        "http://127.0.0.1:${target_port}/healthz" \
+        15 \
+        -H "Host: ${PUBLIC_HOST}" || fail "TARGET_HEALTH_NOT_OK"
+      test "$BLUE_HTTP_STATUS" = "200" || fail "TARGET_HEALTH_NOT_OK"
+      health=$BLUE_HTTP_BODY
+      printf '%s' "$health" | grep -Fq '"status":"ok"' || fail "TARGET_HEALTH_NOT_OK"
+      printf '%s' "$health" | grep -Fq "\"version\":\"${BLUE_VERSION}\"" || fail "BLUE_VERSION_MISMATCH"
+      fetch_blue_readiness \
+        "http://127.0.0.1:${target_port}/readyz" \
+        15 \
+        -H "Host: ${PUBLIC_HOST}" || fail "TARGET_READINESS_NOT_READY"
+      ;;
+    *) fail "TARGET_PORT_UNEXPECTED" ;;
+  esac
+}
+
+check_public() {
+  target_port=$1
+  response_max_time=${2:-15}
+  case "$target_port" in
+    "$GREEN_PORT")
+      health=$(curl -fsS --max-time "$response_max_time" "${PUBLIC_BASE_URL}/healthz") || return 1
+      printf '%s' "$health" | grep -Fq '"status":"ok"' || return 1
+      ready=$(curl -fsS --max-time "$response_max_time" "${PUBLIC_BASE_URL}/readyz") || return 1
+      test "$ready" = "{\"status\":\"ready\",\"version\":\"${GREEN_VERSION}\"}" || return 1
+      printf '%s' "$health" | grep -Fq "\"version\":\"${GREEN_VERSION}\"" || return 1
+      printf '%s' "$health" | grep -Fq "\"toolCount\":${GREEN_TOOL_COUNT}" || return 1
+      printf '%s' "$health" | grep -Fq "\"toolsetHash\":\"${GREEN_TOOLSET_HASH}\"" || return 1
+      ;;
+    "$BLUE_PORT")
+      fetch_blue_http_response "${PUBLIC_BASE_URL}/healthz" "$response_max_time" || return 1
+      test "$BLUE_HTTP_STATUS" = "200" || return 1
+      health=$BLUE_HTTP_BODY
+      printf '%s' "$health" | grep -Fq '"status":"ok"' || return 1
+      printf '%s' "$health" | grep -Fq "\"version\":\"${BLUE_VERSION}\"" || return 1
+      fetch_blue_readiness "${PUBLIC_BASE_URL}/readyz" "$response_max_time" || return 1
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+check_quickbooks_public() {
+  response_max_time=${1:-15}
+  qb_health=$(curl -fsS --max-time "$response_max_time" "${PUBLIC_BASE_URL}/quickbooks/healthz") || return 1
+  qb_ready=$(curl -fsS --max-time "$response_max_time" "${PUBLIC_BASE_URL}/quickbooks/readyz") || return 1
+  printf '%s' "$qb_health" | grep -Fq '"status":"ok"' || return 1
+  printf '%s' "$qb_health" | grep -Fq '"provider":"quickbooks-online"' || return 1
+  printf '%s' "$qb_ready" | grep -Fq '"status":"ready"' || return 1
+}
+
+settle_public_after_reload() {
+  target_port=$1
+  settle_attempt=1
+  while test "$settle_attempt" -le "$PUBLIC_SETTLE_ATTEMPTS"; do
+    PUBLIC_SETTLE_XERO_OK=false
+    PUBLIC_SETTLE_QUICKBOOKS_OK=false
+    if check_public "$target_port" "$PUBLIC_SETTLE_CURL_MAX_TIME_SECONDS"; then
+      PUBLIC_SETTLE_XERO_OK=true
+    fi
+    if check_quickbooks_public "$PUBLIC_SETTLE_CURL_MAX_TIME_SECONDS"; then
+      PUBLIC_SETTLE_QUICKBOOKS_OK=true
+    fi
+    if test "$PUBLIC_SETTLE_XERO_OK" = "true" \
+      && test "$PUBLIC_SETTLE_QUICKBOOKS_OK" = "true"; then
+      return 0
+    fi
+    test "$settle_attempt" -lt "$PUBLIC_SETTLE_ATTEMPTS" || return 1
+    sleep "$PUBLIC_SETTLE_SLEEP_SECONDS"
+    settle_attempt=$((settle_attempt + 1))
+  done
+  return 1
+}
+
+render_target_site() {
+  target_port=$1
+  awk -v target_port="$target_port" '
+    $0 == "upstream xero_accounting_mcp_demo {" { inside = 1 }
+    inside && $0 ~ /^[[:space:]]*server 127[.]0[.]0[.]1:(18002|18004);[[:space:]]*$/ {
+      sub(/127[.]0[.]0[.]1:(18002|18004);/, "127.0.0.1:" target_port ";")
+      replaced += 1
+    }
+    { print }
+    inside && $0 == "}" { inside = 0 }
+    END { if (replaced != 1) exit 42 }
+  ' "$SITE_FILE"
+}
+
+restore_site() {
+  backup_file=$1
+  expected_xero_port=$2
+  TEMP_FILE=$(mktemp "$(dirname -- "$SITE_FILE")/.mcp.jiayuanwang.xyz.restore.XXXXXX") || return 1
+  cp --preserve=mode,ownership,timestamps -- "$backup_file" "$TEMP_FILE" || return 1
+  mv -f -- "$TEMP_FILE" "$SITE_FILE" || return 1
+  TEMP_FILE=""
+  # Prove the restored config and graceful reload. Do not require the original
+  # public readiness here: a pre-020 blue may be in the explicit 503 break-glass
+  # state, and treating that known state as restore failure would be misleading.
+  restored_xero_ports=$(upstream_port "xero_accounting_mcp_demo") || return 1
+  test "$restored_xero_ports" = "$expected_xero_port" || return 1
+  restored_quickbooks_ports=$(upstream_port "quickbooks_accounting_mcp_demo") || return 1
+  test "$restored_quickbooks_ports" = "18003" || return 1
+  nginx -t || return 1
+  systemctl reload nginx || return 1
+}
+
+switch_to() {
+  target_port=$1
+  target_label=$2
+  current_port=$(current_xero_port)
+  verify_quickbooks_unchanged
+  check_loopback "$target_port"
+  check_quickbooks_public || fail "QUICKBOOKS_PUBLIC_PREFLIGHT_FAILED"
+
+  if test "$current_port" = "$target_port"; then
+    check_public "$target_port" || fail "PUBLIC_CHECK_FAILED_WITH_TARGET_ALREADY_ACTIVE"
+    audit_blue_rollback_warning "$target_port"
+    audit "XERO_UPSTREAM" "$target_label"
+    audit "CHANGED" "false"
+    return 0
+  fi
+
+  install -d -o root -g root -m 0700 "$BACKUP_DIR"
+  timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+  backup_file="${BACKUP_DIR}/mcp.jiayuanwang.xyz.${timestamp}.from-${current_port}"
+  cp --preserve=mode,ownership,timestamps -- "$SITE_FILE" "$backup_file"
+  chmod 0600 "$backup_file"
+
+  TEMP_FILE=$(mktemp "$(dirname -- "$SITE_FILE")/.mcp.jiayuanwang.xyz.switch.XXXXXX")
+  render_target_site "$target_port" >"$TEMP_FILE" || fail "SITE_RENDER_FAILED"
+  chown --reference="$SITE_FILE" "$TEMP_FILE"
+  chmod --reference="$SITE_FILE" "$TEMP_FILE"
+  mv -f -- "$TEMP_FILE" "$SITE_FILE"
+  TEMP_FILE=""
+
+  if ! nginx -t; then
+    if restore_site "$backup_file" "$current_port"; then
+      fail "NGINX_CONFIG_REJECTED_AND_RESTORED"
+    fi
+    fail "NGINX_CONFIG_REJECTED_AND_UPSTREAM_RESTORE_FAILED"
+  fi
+  if ! systemctl reload nginx; then
+    if restore_site "$backup_file" "$current_port"; then
+      fail "NGINX_RELOAD_FAILED_AND_UPSTREAM_RESTORED"
+    fi
+    fail "NGINX_RELOAD_FAILED_AND_UPSTREAM_RESTORE_FAILED"
+  fi
+
+  if ! settle_public_after_reload "$target_port"; then
+    if test "$PUBLIC_SETTLE_XERO_OK" != "true"; then
+      if restore_site "$backup_file" "$current_port"; then
+        fail "PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORED"
+      fi
+      fail "PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORE_FAILED"
+    fi
+    if restore_site "$backup_file" "$current_port"; then
+      fail "QUICKBOOKS_PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORED"
+    fi
+    fail "QUICKBOOKS_PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORE_FAILED"
+  fi
+  verify_quickbooks_unchanged
+  test "$(current_xero_port)" = "$target_port" || fail "POST_SWITCH_PORT_MISMATCH"
+  audit_blue_rollback_warning "$target_port"
+  audit "XERO_UPSTREAM" "$target_label"
+  audit "CHANGED" "true"
+  audit "BACKUP" "$backup_file"
+}
+
+case "${1:-}" in
+  status)
+    verify_quickbooks_unchanged
+    case "$(current_xero_port)" in
+      "$BLUE_PORT") audit "XERO_UPSTREAM" "BLUE_18002" ;;
+      "$GREEN_PORT") audit "XERO_UPSTREAM" "GREEN_18004" ;;
+    esac
+    ;;
+  green) switch_to "$GREEN_PORT" "GREEN_18004" ;;
+  blue) switch_to "$BLUE_PORT" "BLUE_18002" ;;
+  *)
+    printf 'usage: %s {status|green|blue}\n' "$0" >&2
+    exit 2
+    ;;
+esac

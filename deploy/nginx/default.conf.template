@@ -1,0 +1,219 @@
+upstream accounting_mcp_upstream {
+    zone accounting_mcp_upstream 64k;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    server accounting-mcp:3000 resolve;
+    keepalive 32;
+}
+
+# Invalid Host values are never reflected into redirects.
+server {
+    listen 8080 default_server;
+    server_name _;
+
+    location = /nginx-healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 444;
+    }
+}
+
+server {
+    listen 8080;
+    server_name ${MCP_PUBLIC_HOST};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 308 https://${MCP_PUBLIC_HOST}$request_uri;
+    }
+}
+
+# TLS must still complete before we reject an invalid Host, so use the same cert.
+server {
+    listen 8443 ssl default_server;
+    http2 on;
+    server_name _;
+
+    ssl_certificate /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    return 444;
+}
+
+server {
+    listen 8443 ssl;
+    http2 on;
+    server_name ${MCP_PUBLIC_HOST};
+
+    ssl_certificate /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:TLS:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    client_max_body_size 1m;
+    client_body_timeout 15s;
+    client_header_timeout 15s;
+    keepalive_timeout 30s;
+    send_timeout 30s;
+    limit_conn connections_per_ip 30;
+
+    add_header Strict-Transport-Security "max-age=86400" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+    add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callback; object-src 'none'; style-src 'self' 'unsafe-inline'" always;
+
+    proxy_hide_header X-Powered-By;
+    proxy_cookie_flags ~ secure httponly samesite=lax;
+
+    location = /healthz {
+        limit_req zone=general_per_ip burst=20 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        include /opt/xero-nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location = /readyz {
+        limit_req zone=general_per_ip burst=20 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        include /opt/xero-nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location = /mcp {
+        limit_req zone=mcp_per_ip burst=30 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /.well-known/oauth-authorization-server {
+        limit_req zone=general_per_ip burst=20 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        include /opt/xero-nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /.well-known/oauth-protected-resource {
+        limit_req zone=general_per_ip burst=20 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        include /opt/xero-nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /.well-known/oauth-protected-resource/mcp {
+        limit_req zone=general_per_ip burst=20 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        include /opt/xero-nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /authorize {
+        # The redacted access log records only $uri; suppress edge errors so
+        # Host state and PKCE values cannot leak.
+        error_log /dev/null crit;
+        limit_req zone=auth_per_ip burst=10 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        include /opt/xero-nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /token {
+        limit_req zone=auth_per_ip burst=10 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        include /opt/xero-nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /revoke {
+        limit_req zone=auth_per_ip burst=10 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        include /opt/xero-nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /oauth/xero/callback {
+        # Nginx error logs include the full request on some upstream failures.
+        # Suppress them here so one-time OAuth code/state query values cannot leak;
+        # the application emits its own sanitized OAuth audit events.
+        error_log /dev/null crit;
+        limit_req zone=auth_per_ip burst=10 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        include /opt/xero-nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location = /oauth/xero/select {
+        error_log /dev/null crit;
+        limit_req zone=auth_per_ip burst=10 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        include /opt/xero-nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location ^~ /review/ {
+        limit_req zone=general_per_ip burst=20 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        include /opt/xero-nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
+    location / {
+        return 404;
+    }
+}

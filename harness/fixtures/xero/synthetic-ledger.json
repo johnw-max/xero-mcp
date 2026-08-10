@@ -1,0 +1,711 @@
+{
+  "fixture_version": "1.0",
+  "fixture_id": "xero-synthetic-ledger-hk-2026-08",
+  "synthetic": true,
+  "as_of": "2026-08-06",
+  "organisation": {
+    "organisationId": "10000000-0000-4000-8000-000000000001",
+    "name": "Harbour Light Advisory Limited - SYNTHETIC",
+    "legalName": "Harbour Light Advisory Limited",
+    "countryCode": "HK",
+    "baseCurrency": "HKD",
+    "organisationType": "COMPANY",
+    "version": "GLOBAL"
+  },
+  "accounts": [
+    {
+      "accountId": "30000000-0000-4000-8000-000000000001",
+      "code": "090",
+      "name": "Business Bank Account",
+      "type": "BANK",
+      "class": "ASSET",
+      "status": "ACTIVE",
+      "taxType": "NONE"
+    },
+    {
+      "accountId": "30000000-0000-4000-8000-000000000002",
+      "code": "404",
+      "name": "Office Expenses",
+      "type": "EXPENSE",
+      "class": "EXPENSE",
+      "status": "ACTIVE",
+      "taxType": "NONE"
+    },
+    {
+      "accountId": "30000000-0000-4000-8000-000000000003",
+      "code": "445",
+      "name": "Consulting and Accounting",
+      "type": "EXPENSE",
+      "class": "EXPENSE",
+      "status": "ACTIVE",
+      "taxType": "NONE"
+    },
+    {
+      "accountId": "30000000-0000-4000-8000-000000000004",
+      "code": "200",
+      "name": "Sales",
+      "type": "REVENUE",
+      "class": "REVENUE",
+      "status": "ACTIVE",
+      "taxType": "NONE"
+    },
+    {
+      "accountId": "30000000-0000-4000-8000-000000000005",
+      "code": "800",
+      "name": "Accounts Receivable",
+      "type": "CURRENT",
+      "class": "ASSET",
+      "status": "ACTIVE",
+      "systemAccount": "DEBTORS",
+      "taxType": "NONE"
+    },
+    {
+      "accountId": "30000000-0000-4000-8000-000000000006",
+      "code": "820",
+      "name": "Accounts Payable",
+      "type": "CURRLIAB",
+      "class": "LIABILITY",
+      "status": "ACTIVE",
+      "systemAccount": "CREDITORS",
+      "taxType": "NONE"
+    },
+    {
+      "accountId": "30000000-0000-4000-8000-000000000007",
+      "code": "999",
+      "name": "Archived Miscellaneous",
+      "type": "EXPENSE",
+      "class": "EXPENSE",
+      "status": "ARCHIVED",
+      "taxType": "NONE"
+    }
+  ],
+  "taxRates": [
+    {
+      "name": "Tax Exempt",
+      "taxType": "NONE",
+      "status": "ACTIVE",
+      "displayTaxRate": "0",
+      "canApplyToExpenses": true,
+      "canApplyToAssets": true,
+      "canApplyToLiabilities": true
+    },
+    {
+      "name": "Historic Inactive Tax",
+      "taxType": "OLDNONE",
+      "status": "DELETED",
+      "displayTaxRate": "0",
+      "canApplyToExpenses": true,
+      "canApplyToAssets": true,
+      "canApplyToLiabilities": true
+    }
+  ],
+  "contacts": [
+    {
+      "contactId": "20000000-0000-4000-8000-000000000001",
+      "name": "Horizon Business Services Limited",
+      "contactNumber": "HBS-001",
+      "status": "ACTIVE",
+      "isSupplier": true,
+      "defaultCurrency": "HKD",
+      "purchasesDefaultAccountCode": "445",
+      "accountsPayableTaxType": "NONE"
+    },
+    {
+      "contactId": "20000000-0000-4000-8000-000000000002",
+      "name": "Northwind Office Supplies Limited",
+      "contactNumber": "NOS-001",
+      "status": "ACTIVE",
+      "isSupplier": true,
+      "defaultCurrency": "HKD",
+      "purchasesDefaultAccountCode": "404",
+      "accountsPayableTaxType": "NONE"
+    },
+    {
+      "contactId": "20000000-0000-4000-8000-000000000003",
+      "name": "Twin Services Limited",
+      "contactNumber": "TWIN-A",
+      "status": "ACTIVE",
+      "isSupplier": true,
+      "defaultCurrency": "HKD"
+    },
+    {
+      "contactId": "20000000-0000-4000-8000-000000000004",
+      "name": "Twin Services Limited",
+      "contactNumber": "TWIN-B",
+      "status": "ACTIVE",
+      "isSupplier": true,
+      "defaultCurrency": "HKD"
+    },
+    {
+      "contactId": "20000000-0000-4000-8000-000000000005",
+      "name": "Dormant Vendor Limited",
+      "contactNumber": "DORM-001",
+      "status": "ARCHIVED",
+      "isSupplier": true,
+      "defaultCurrency": "HKD"
+    },
+    {
+      "contactId": "20000000-0000-4000-8000-000000000006",
+      "name": "Blue Harbour Customer Limited",
+      "contactNumber": "BHC-001",
+      "status": "ACTIVE",
+      "isSupplier": false,
+      "defaultCurrency": "HKD"
+    }
+  ],
+  "invoicePages": [
+    {
+      "query": { "type": "ACCPAY", "page": 1, "page_size": 2, "order": "DATE_DESC" },
+      "invoices": [
+        {
+          "invoiceId": "40000000-0000-4000-8000-000000000002",
+          "type": "ACCPAY",
+          "status": "AUTHORISED",
+          "contact": {
+            "contactId": "20000000-0000-4000-8000-000000000001",
+            "name": "Horizon Business Services Limited"
+          },
+          "invoiceNumber": "HBS-HIST-1200",
+          "invoiceDate": "2026-07-20",
+          "dueDate": "2026-08-20",
+          "currency": "HKD",
+          "reference": "Monthly advisory",
+          "subTotal": "1200.00",
+          "totalTax": "0.00",
+          "total": "1200.00",
+          "amountDue": "1200.00",
+          "amountPaid": "0.00",
+          "amountCredited": "0.00",
+          "attachmentsKnown": true,
+          "hasAttachments": false,
+          "updatedAt": "2026-07-20T08:00:00.000Z"
+        },
+        {
+          "invoiceId": "40000000-0000-4000-8000-000000000001",
+          "type": "ACCPAY",
+          "status": "PAID",
+          "contact": {
+            "contactId": "20000000-0000-4000-8000-000000000002",
+            "name": "Northwind Office Supplies Limited"
+          },
+          "invoiceNumber": "NOS-760",
+          "invoiceDate": "2026-06-05",
+          "dueDate": "2026-07-05",
+          "currency": "HKD",
+          "reference": "Office supplies settlement composition",
+          "subTotal": "760.00",
+          "totalTax": "0.00",
+          "total": "760.00",
+          "amountDue": "0.00",
+          "amountPaid": "600.00",
+          "amountCredited": "160.00",
+          "fullyPaidOnDate": "2026-07-01",
+          "attachmentsKnown": true,
+          "hasAttachments": true,
+          "updatedAt": "2026-07-01T09:00:00.000Z"
+        }
+      ],
+      "pagination": {
+        "page": 1,
+        "pageSize": 2,
+        "returned": 2,
+        "providerPageCount": 2,
+        "providerItemCount": 3,
+        "hasNextPage": true,
+        "hasNextPageIsEstimated": false,
+        "omittedInvalid": 0,
+        "omittedOverflow": 0
+      }
+    },
+    {
+      "query": { "type": "ACCPAY", "page": 2, "page_size": 2, "order": "DATE_DESC" },
+      "invoices": [
+        {
+          "invoiceId": "40000000-0000-4000-8000-000000000003",
+          "type": "ACCPAY",
+          "status": "VOIDED",
+          "contact": {
+            "contactId": "20000000-0000-4000-8000-000000000005",
+            "name": "Dormant Vendor Limited"
+          },
+          "invoiceNumber": "DORM-VOID-20",
+          "invoiceDate": "2026-05-01",
+          "dueDate": "2026-05-31",
+          "currency": "HKD",
+          "reference": "Historical void",
+          "subTotal": "20.00",
+          "totalTax": "0.00",
+          "total": "20.00",
+          "amountDue": "0.00",
+          "amountPaid": "0.00",
+          "amountCredited": "0.00",
+          "attachmentsKnown": true,
+          "hasAttachments": false,
+          "updatedAt": "2026-05-03T09:00:00.000Z"
+        }
+      ],
+      "pagination": {
+        "page": 2,
+        "pageSize": 2,
+        "returned": 1,
+        "providerPageCount": 2,
+        "providerItemCount": 3,
+        "hasNextPage": false,
+        "hasNextPageIsEstimated": false,
+        "omittedInvalid": 0,
+        "omittedOverflow": 0
+      }
+    },
+    {
+      "query": { "type": "ACCREC", "page": 1, "page_size": 100, "order": "DATE_DESC" },
+      "invoices": [
+        {
+          "invoiceId": "40000000-0000-4000-8000-000000000004",
+          "type": "ACCREC",
+          "status": "AUTHORISED",
+          "contact": {
+            "contactId": "20000000-0000-4000-8000-000000000006",
+            "name": "Blue Harbour Customer Limited"
+          },
+          "invoiceNumber": "INV-4300",
+          "invoiceDate": "2026-06-15",
+          "dueDate": "2026-07-15",
+          "currency": "HKD",
+          "reference": "Advisory project",
+          "subTotal": "4300.00",
+          "totalTax": "0.00",
+          "total": "4300.00",
+          "amountDue": "100.00",
+          "amountPaid": "4200.00",
+          "amountCredited": "0.00",
+          "attachmentsKnown": true,
+          "hasAttachments": false,
+          "updatedAt": "2026-07-15T10:00:00.000Z"
+        }
+      ],
+      "pagination": {
+        "page": 1,
+        "pageSize": 100,
+        "returned": 1,
+        "providerPageCount": 1,
+        "providerItemCount": 1,
+        "hasNextPage": false,
+        "hasNextPageIsEstimated": false,
+        "omittedInvalid": 0,
+        "omittedOverflow": 0
+      }
+    }
+  ],
+  "exactInvoices": [
+    {
+      "tenantId": "10000000-0000-4000-8000-000000000001",
+      "invoiceId": "40000000-0000-4000-8000-000000000002",
+      "type": "ACCPAY",
+      "status": "AUTHORISED",
+      "contact": {
+        "contactId": "20000000-0000-4000-8000-000000000001",
+        "name": "Horizon Business Services Limited"
+      },
+      "invoiceNumber": "HBS-HIST-1200",
+      "invoiceDate": "2026-07-20",
+      "dueDate": "2026-08-20",
+      "currency": "HKD",
+      "reference": "Monthly advisory",
+      "lineAmountType": "NoTax",
+      "subTotal": "1200.00",
+      "totalTax": "0.00",
+      "total": "1200.00",
+      "amountDue": "1200.00",
+      "amountPaid": "0.00",
+      "amountCredited": "0.00",
+      "lines": [
+        {
+          "lineItemId": "70000000-0000-4000-8000-000000000003",
+          "description": "Monthly advisory",
+          "quantity": "1.0000",
+          "unitAmount": "1200.0000",
+          "lineAmount": "1200.00",
+          "taxAmount": "0.00",
+          "accountCode": "445",
+          "taxType": "NONE"
+        }
+      ],
+      "lineItemCount": 1,
+      "linesTruncated": false,
+      "attachmentsKnown": true,
+      "hasAttachments": false,
+      "updatedAt": "2026-07-20T08:00:00.000Z"
+    },
+    {
+      "tenantId": "10000000-0000-4000-8000-000000000001",
+      "invoiceId": "40000000-0000-4000-8000-000000000001",
+      "type": "ACCPAY",
+      "status": "PAID",
+      "contact": {
+        "contactId": "20000000-0000-4000-8000-000000000002",
+        "name": "Northwind Office Supplies Limited"
+      },
+      "invoiceNumber": "NOS-760",
+      "invoiceDate": "2026-06-05",
+      "dueDate": "2026-07-05",
+      "currency": "HKD",
+      "reference": "Office supplies settlement composition",
+      "lineAmountType": "NoTax",
+      "subTotal": "760.00",
+      "totalTax": "0.00",
+      "total": "760.00",
+      "amountDue": "0.00",
+      "amountPaid": "600.00",
+      "amountCredited": "160.00",
+      "fullyPaidOnDate": "2026-07-01",
+      "lines": [
+        {
+          "lineItemId": "70000000-0000-4000-8000-000000000001",
+          "description": "Office supplies",
+          "quantity": "1.0000",
+          "unitAmount": "760.0000",
+          "lineAmount": "760.00",
+          "taxAmount": "0.00",
+          "accountCode": "404",
+          "taxType": "NONE"
+        }
+      ],
+      "lineItemCount": 1,
+      "linesTruncated": false,
+      "attachmentsKnown": true,
+      "hasAttachments": true,
+      "updatedAt": "2026-07-01T09:00:00.000Z"
+    },
+    {
+      "tenantId": "10000000-0000-4000-8000-000000000001",
+      "invoiceId": "40000000-0000-4000-8000-000000000003",
+      "type": "ACCPAY",
+      "status": "VOIDED",
+      "contact": {
+        "contactId": "20000000-0000-4000-8000-000000000005",
+        "name": "Dormant Vendor Limited"
+      },
+      "invoiceNumber": "DORM-VOID-20",
+      "invoiceDate": "2026-05-01",
+      "dueDate": "2026-05-31",
+      "currency": "HKD",
+      "reference": "Historical void",
+      "lineAmountType": "NoTax",
+      "subTotal": "20.00",
+      "totalTax": "0.00",
+      "total": "20.00",
+      "amountDue": "0.00",
+      "amountPaid": "0.00",
+      "amountCredited": "0.00",
+      "lines": [
+        {
+          "lineItemId": "70000000-0000-4000-8000-000000000004",
+          "description": "Historical void",
+          "quantity": "1.0000",
+          "unitAmount": "20.0000",
+          "lineAmount": "20.00",
+          "taxAmount": "0.00",
+          "accountCode": "404",
+          "taxType": "NONE"
+        }
+      ],
+      "lineItemCount": 1,
+      "linesTruncated": false,
+      "attachmentsKnown": true,
+      "hasAttachments": false,
+      "updatedAt": "2026-05-03T09:00:00.000Z"
+    },
+    {
+      "tenantId": "10000000-0000-4000-8000-000000000001",
+      "invoiceId": "40000000-0000-4000-8000-000000000004",
+      "type": "ACCREC",
+      "status": "AUTHORISED",
+      "contact": {
+        "contactId": "20000000-0000-4000-8000-000000000006",
+        "name": "Blue Harbour Customer Limited"
+      },
+      "invoiceNumber": "INV-4300",
+      "invoiceDate": "2026-06-15",
+      "dueDate": "2026-07-15",
+      "currency": "HKD",
+      "reference": "Advisory project",
+      "lineAmountType": "NoTax",
+      "subTotal": "4300.00",
+      "totalTax": "0.00",
+      "total": "4300.00",
+      "amountDue": "100.00",
+      "amountPaid": "4200.00",
+      "amountCredited": "0.00",
+      "lines": [
+        {
+          "lineItemId": "70000000-0000-4000-8000-000000000002",
+          "description": "Advisory project",
+          "quantity": "1.0000",
+          "unitAmount": "4300.0000",
+          "lineAmount": "4300.00",
+          "taxAmount": "0.00",
+          "accountCode": "200",
+          "taxType": "NONE"
+        }
+      ],
+      "lineItemCount": 1,
+      "linesTruncated": false,
+      "attachmentsKnown": true,
+      "hasAttachments": false,
+      "updatedAt": "2026-07-15T10:00:00.000Z"
+    }
+  ],
+  "creditNotePages": [
+    {
+      "query": { "page": 1, "page_size": 100 },
+      "creditNotes": [
+        {
+          "creditNoteId": "50000000-0000-4000-8000-000000000001",
+          "type": "ACCPAYCREDIT",
+          "status": "PAID",
+          "contact": {
+            "contactId": "20000000-0000-4000-8000-000000000002",
+            "name": "Northwind Office Supplies Limited"
+          },
+          "creditNoteNumber": "CN-160",
+          "creditNoteDate": "2026-06-25",
+          "currency": "HKD",
+          "reference": "Returned goods",
+          "subTotal": "160.00",
+          "totalTax": "0.00",
+          "total": "160.00",
+          "remainingCredit": "0.00",
+          "appliedAmount": "160.00",
+          "attachmentsKnown": true,
+          "hasAttachments": false,
+          "associatedInvoiceIds": ["40000000-0000-4000-8000-000000000001"],
+          "associatedInvoiceIdCount": 1,
+          "associatedInvoiceIdsTruncated": false,
+          "updatedAt": "2026-07-01T09:00:00.000Z"
+        },
+        {
+          "creditNoteId": "50000000-0000-4000-8000-000000000002",
+          "type": "ACCRECCREDIT",
+          "status": "AUTHORISED",
+          "contact": {
+            "contactId": "20000000-0000-4000-8000-000000000006",
+            "name": "Blue Harbour Customer Limited"
+          },
+          "creditNoteNumber": "CN-AR-300",
+          "creditNoteDate": "2026-07-18",
+          "currency": "HKD",
+          "reference": "Allocation list intentionally bounded",
+          "subTotal": "300.00",
+          "totalTax": "0.00",
+          "total": "300.00",
+          "remainingCredit": "0.00",
+          "appliedAmount": "300.00",
+          "attachmentsKnown": true,
+          "hasAttachments": false,
+          "associatedInvoiceIds": [
+            "40000000-0000-4000-8000-000000000004",
+            "40000000-0000-4000-8000-000000000005"
+          ],
+          "associatedInvoiceIdCount": 4,
+          "associatedInvoiceIdsTruncated": true,
+          "updatedAt": "2026-07-18T10:00:00.000Z"
+        }
+      ],
+      "pagination": {
+        "page": 1,
+        "pageSize": 100,
+        "returned": 2,
+        "providerPageCount": 1,
+        "providerItemCount": 2,
+        "hasNextPage": false,
+        "hasNextPageIsEstimated": false,
+        "omittedInvalid": 0,
+        "omittedOverflow": 0
+      }
+    }
+  ],
+  "paymentPages": [
+    {
+      "query": { "page": 1, "page_size": 3 },
+      "payments": [
+        {
+          "paymentId": "60000000-0000-4000-8000-000000000001",
+          "type": "ACCPAYPAYMENT",
+          "status": "AUTHORISED",
+          "paymentDate": "2026-07-01",
+          "amount": "600.00",
+          "currency": "HKD",
+          "currencyKnown": true,
+          "currencySource": "INVOICE",
+          "bankAmount": "600.00",
+          "bankCurrency": "HKD",
+          "bankCurrencyKnown": true,
+          "reference": "Partial cash settlement NOS-760",
+          "isReconciled": true,
+          "contact": {
+            "contactId": "20000000-0000-4000-8000-000000000002",
+            "name": "Northwind Office Supplies Limited"
+          },
+          "invoiceId": "40000000-0000-4000-8000-000000000001",
+          "invoiceNumber": "NOS-760",
+          "account": {
+            "accountId": "30000000-0000-4000-8000-000000000001",
+            "code": "090",
+            "name": "Business Bank Account"
+          },
+          "updatedAt": "2026-07-01T09:00:00.000Z"
+        },
+        {
+          "paymentId": "60000000-0000-4000-8000-000000000002",
+          "type": "APCREDITPAYMENT",
+          "status": "AUTHORISED",
+          "paymentDate": "2026-07-01",
+          "amount": "160.00",
+          "currency": "HKD",
+          "currencyKnown": true,
+          "currencySource": "CREDIT_NOTE",
+          "bankCurrencyKnown": false,
+          "reference": "Credit allocation, not cash paid",
+          "isReconciled": false,
+          "contact": {
+            "contactId": "20000000-0000-4000-8000-000000000002",
+            "name": "Northwind Office Supplies Limited"
+          },
+          "creditNoteId": "50000000-0000-4000-8000-000000000001",
+          "creditNoteNumber": "CN-160",
+          "updatedAt": "2026-07-01T09:00:00.000Z"
+        },
+        {
+          "paymentId": "60000000-0000-4000-8000-000000000003",
+          "type": "APPREPAYMENTPAYMENT",
+          "status": "AUTHORISED",
+          "paymentDate": "2026-07-02",
+          "amount": "200.00",
+          "currency": "HKD",
+          "currencyKnown": true,
+          "currencySource": "PREPAYMENT",
+          "bankCurrencyKnown": false,
+          "reference": "AP prepayment movement",
+          "isReconciled": false,
+          "contact": {
+            "contactId": "20000000-0000-4000-8000-000000000001",
+            "name": "Horizon Business Services Limited"
+          },
+          "prepaymentId": "65000000-0000-4000-8000-000000000001",
+          "updatedAt": "2026-07-02T09:00:00.000Z"
+        }
+      ],
+      "pagination": {
+        "page": 1,
+        "pageSize": 3,
+        "returned": 3,
+        "providerPageCount": 2,
+        "providerItemCount": 6,
+        "hasNextPage": true,
+        "hasNextPageIsEstimated": false,
+        "omittedInvalid": 0,
+        "omittedOverflow": 0
+      }
+    },
+    {
+      "query": { "page": 2, "page_size": 3 },
+      "payments": [
+        {
+          "paymentId": "60000000-0000-4000-8000-000000000004",
+          "type": "APOVERPAYMENTPAYMENT",
+          "status": "AUTHORISED",
+          "paymentDate": "2026-07-03",
+          "amount": "50.00",
+          "currencyKnown": false,
+          "currencySource": "UNAVAILABLE",
+          "bankCurrencyKnown": false,
+          "reference": "Currency and invoice association intentionally unavailable",
+          "isReconciled": false,
+          "contact": {
+            "contactId": "20000000-0000-4000-8000-000000000001",
+            "name": "Horizon Business Services Limited"
+          },
+          "overpaymentId": "65000000-0000-4000-8000-000000000002",
+          "updatedAt": "2026-07-03T09:00:00.000Z"
+        },
+        {
+          "paymentId": "60000000-0000-4000-8000-000000000005",
+          "type": "ACCRECPAYMENT",
+          "status": "AUTHORISED",
+          "paymentDate": "2026-07-15",
+          "amount": "4200.00",
+          "currency": "HKD",
+          "currencyKnown": true,
+          "currencySource": "INVOICE",
+          "bankAmount": "4200.00",
+          "bankCurrency": "HKD",
+          "bankCurrencyKnown": true,
+          "reference": "Receipt against INV-4300",
+          "isReconciled": true,
+          "contact": {
+            "contactId": "20000000-0000-4000-8000-000000000006",
+            "name": "Blue Harbour Customer Limited"
+          },
+          "invoiceId": "40000000-0000-4000-8000-000000000004",
+          "invoiceNumber": "INV-4300",
+          "account": {
+            "accountId": "30000000-0000-4000-8000-000000000001",
+            "code": "090",
+            "name": "Business Bank Account"
+          },
+          "updatedAt": "2026-07-15T10:00:00.000Z"
+        },
+        {
+          "paymentId": "60000000-0000-4000-8000-000000000006",
+          "type": "ARPREPAYMENTPAYMENT",
+          "status": "AUTHORISED",
+          "paymentDate": "2026-07-16",
+          "amount": "100.00",
+          "currency": "HKD",
+          "currencyKnown": true,
+          "currencySource": "PREPAYMENT",
+          "bankCurrencyKnown": false,
+          "reference": "Customer prepayment not proven allocated to INV-4300",
+          "isReconciled": false,
+          "contact": {
+            "contactId": "20000000-0000-4000-8000-000000000006",
+            "name": "Blue Harbour Customer Limited"
+          },
+          "prepaymentId": "65000000-0000-4000-8000-000000000003",
+          "updatedAt": "2026-07-16T10:00:00.000Z"
+        }
+      ],
+      "pagination": {
+        "page": 2,
+        "pageSize": 3,
+        "returned": 3,
+        "providerPageCount": 2,
+        "providerItemCount": 6,
+        "hasNextPage": false,
+        "hasNextPageIsEstimated": false,
+        "omittedInvalid": 0,
+        "omittedOverflow": 0
+      }
+    }
+  ],
+  "trialBalance": {
+    "reportDate": "2026-08-06",
+    "rows": [
+      { "accountCode": "090", "accountName": "Business Bank Account", "debit": "10000.00", "credit": "0.00" },
+      { "accountCode": "800", "accountName": "Accounts Receivable", "debit": "4400.00", "credit": "0.00" },
+      { "accountCode": "404", "accountName": "Office Expenses", "debit": "760.00", "credit": "0.00" },
+      { "accountCode": "820", "accountName": "Accounts Payable", "debit": "0.00", "credit": "760.00" },
+      { "accountCode": "200", "accountName": "Sales", "debit": "0.00", "credit": "4300.00" },
+      { "accountCode": "900", "accountName": "Owner Equity", "debit": "0.00", "credit": "10100.00" }
+    ],
+    "totalDebit": "15160.00",
+    "totalCredit": "15160.00",
+    "balanced": true
+  },
+  "knownUnknowns": [
+    "No evidence establishes that the AR prepayment was allocated to INV-4300.",
+    "No opening-balance evidence is provided beyond the bounded Xero records.",
+    "The currency for payment 60000000-0000-4000-8000-000000000004 is unavailable and must not be inferred.",
+    "Credit note 50000000-0000-4000-8000-000000000002 exposes only two of four associated invoice IDs."
+  ]
+}

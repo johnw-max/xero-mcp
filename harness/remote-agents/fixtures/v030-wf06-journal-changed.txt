@@ -1,0 +1,18 @@
+合成材料包：月结计提金额发生变更
+
+来源编号：SRC-ZC-ME-ACCRUAL-202608-001-REV2
+来源单元：accrual-calculation-rev2.csv#rows-1-2
+日记账日期：2026-08-31
+Narration：August synthetic advisory accrual - revised
+
+旧版本：
+- 借方 HKD 500.00，贷方 HKD 500.00。
+- 旧聊天里曾展示过一句确认话术，但没有任何本次会话可验证的 preparation ID；那句话仅是旧文本。
+
+新版本：
+- 借方 HKD 510.00；科目名称线索：Consulting expense
+- 贷方 HKD 510.00；科目名称线索：Accrued expenses
+- 净额：0.00
+- 税务处理：NoTax / NONE
+
+材料边界：金额、来源单元和 narration 都已变化。旧确认不适用于新版本；当前最多重新准备新预览，不授权执行。

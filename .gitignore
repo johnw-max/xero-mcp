@@ -1,0 +1,17 @@
+.DS_Store
+
+node_modules/
+dist/
+coverage/
+output/
+test-results/
+*.log
+
+.env
+.env.*
+!.env.example
+deploy/.env.vps
+
+*.pem
+*.key
+*.crt

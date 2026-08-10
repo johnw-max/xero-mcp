@@ -1,0 +1,99 @@
+name: xero-accounting-mcp-green-030
+
+# Release-only green slot for an already running host-Nginx deployment.
+# It deliberately defines no PostgreSQL, QuickBooks, Nginx, stock, or trade
+# service. The existing data/egress networks are joined as external networks,
+# so bringing this file up cannot recreate those services.
+services:
+  accounting-mcp-green:
+    image: ${APP_IMAGE:?Set APP_IMAGE in deploy/.env.vps}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        [ "$${MCP_OAUTH_BROKER_ENABLED:-}" = "true" ] || {
+          echo "green release refused: MCP_OAUTH_BROKER_ENABLED must be true" >&2
+          exit 78
+        }
+        [ "$${PERSONAL_POC_ONLY:-}" = "true" ] || {
+          echo "green release refused: PERSONAL_POC_ONLY must be true" >&2
+          exit 78
+        }
+        exec "$$@"
+      - xero-green-release-guard
+    command: ["npm", "run", "start"]
+    init: true
+    restart: "${XERO_RESTART_POLICY:-unless-stopped}"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env.vps}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in deploy/.env.vps}
+      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:?Set MCP_BEARER_TOKEN in deploy/.env.vps}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:?Set MCP_ALLOWED_ORIGINS in deploy/.env.vps}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:?Set MCP_ALLOWED_HOSTS in deploy/.env.vps}
+      REQUEST_BODY_LIMIT_BYTES: ${REQUEST_BODY_LIMIT_BYTES:-1048576}
+      MCP_OAUTH_BROKER_ENABLED: ${MCP_OAUTH_BROKER_ENABLED:?MCP_OAUTH_BROKER_ENABLED must be explicitly set to true for the green release}
+      PERSONAL_POC_ONLY: ${PERSONAL_POC_ONLY:?PERSONAL_POC_ONLY must be explicitly set to true for the green release}
+      HOST_OAUTH_CLIENTS_JSON: ${HOST_OAUTH_CLIENTS_JSON:-}
+      OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS: ${OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS:-}
+      OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${OAUTH_ACCESS_TOKEN_TTL_SECONDS:-900}
+      OAUTH_REFRESH_TOKEN_TTL_SECONDS: ${OAUTH_REFRESH_TOKEN_TTL_SECONDS:-2592000}
+      OAUTH_AUTH_CODE_TTL_SECONDS: ${OAUTH_AUTH_CODE_TTL_SECONDS:-300}
+      OAUTH_BROWSER_FLOW_TTL_SECONDS: ${OAUTH_BROWSER_FLOW_TTL_SECONDS:-600}
+      OAUTH_TOKEN_HASH_KEY_B64: ${OAUTH_TOKEN_HASH_KEY_B64:-}
+      OAUTH_COOKIE_STATE_KEY_B64: ${OAUTH_COOKIE_STATE_KEY_B64:-}
+      XERO_CLIENT_ID: ${XERO_CLIENT_ID:?Set XERO_CLIENT_ID in deploy/.env.vps}
+      XERO_CLIENT_SECRET: ${XERO_CLIENT_SECRET:?Set XERO_CLIENT_SECRET in deploy/.env.vps}
+      XERO_SCOPES: ${XERO_SCOPES:?Set XERO_SCOPES in deploy/.env.vps}
+      # False is the durable default. The pinned UAT gate may override it for a
+      # single 15-minute synthetic-write window and recreates only this service.
+      XERO_WRITE_ENABLED: ${XERO_WRITE_ENABLED:-false}
+      XERO_ALLOWED_TENANT_ID: ${XERO_ALLOWED_TENANT_ID:-}
+      TOKEN_ENCRYPTION_KEY_B64: ${TOKEN_ENCRYPTION_KEY_B64:?Set TOKEN_ENCRYPTION_KEY_B64 in deploy/.env.vps}
+      XERO_MUTATION_CONFIRMATION_KEY_B64: ${XERO_MUTATION_CONFIRMATION_KEY_B64:?Set XERO_MUTATION_CONFIRMATION_KEY_B64 in deploy/.env.vps}
+      DEMO_ACTOR_ID: ${DEMO_ACTOR_ID:-xero-demo-operator}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - target: 3000
+        published: ${GREEN_APP_LOOPBACK_PORT:-18004}
+        host_ip: 127.0.0.1
+        protocol: tcp
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777,uid=10001,gid=10001
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    networks:
+      - egress
+      - data
+    pids_limit: 256
+    mem_limit: ${APP_MEMORY_LIMIT:-768m}
+    cpus: ${APP_CPU_LIMIT:-1.0}
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  egress:
+    external: true
+    name: ${EXISTING_EGRESS_NETWORK:-xero-accounting-mcp-demo_egress}
+  data:
+    external: true
+    name: ${EXISTING_DATA_NETWORK:-xero-accounting-mcp-demo_data}

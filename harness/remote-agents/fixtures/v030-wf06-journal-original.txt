@@ -1,0 +1,14 @@
+合成材料包：2026 年 8 月顾问费计提
+
+来源编号：SRC-ZC-ME-ACCRUAL-202608-001
+来源单元：accrual-calculation.csv#rows-1-2
+日记账日期：2026-08-31
+Narration：August synthetic advisory accrual
+
+计算：
+- 借方 HKD 500.00；科目名称线索：Consulting expense；说明：Recognise August synthetic advisory expense
+- 贷方 HKD 500.00；科目名称线索：Accrued expenses；说明：Recognise unpaid August synthetic advisory accrual
+- 净额：0.00
+- 税务处理：NoTax / NONE
+
+材料边界：科目名称只是线索。必须从当前 Xero 找到准确、有效、非银行、非系统保护科目；找不到就停止，不得猜测。当前用户只要求准备草稿预览。

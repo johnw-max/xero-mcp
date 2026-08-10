@@ -1,0 +1,44 @@
+{
+  "name": "@zcloak/xero-accounting-mcp-demo",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Controlled remote MCP bridge between zCloak agents and a Xero demo organisation.",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "dev:quickbooks": "tsx watch src/quickbooks/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "migrate": "node dist/db/migrate.js",
+    "migrate:dev": "tsx src/db/migrate.ts",
+    "start": "node dist/server.js",
+    "start:quickbooks": "node dist/quickbooks/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:postgres:oauth-identity": "vitest run tests/postgres-oauth-identity.integration.test.ts",
+    "test:postgres:oauth-broker-flow": "vitest run tests/postgres-oauth-broker-flow.integration.test.ts",
+    "test:postgres:required": "node scripts/require-test-database-url.mjs && vitest run tests/postgres-oauth-broker-flow.integration.test.ts tests/postgres-oauth-identity.integration.test.ts tests/postgres-source-evidence.integration.test.ts tests/postgres-xero-duplicate-guards.integration.test.ts tests/postgres-xero-provenance.integration.test.ts tests/postgres-xero-mutation-foundation.integration.test.ts --maxWorkers=1",
+    "test:http:required": "TEST_HTTP_LOOPBACK=true vitest run tests/http-oauth-edge.test.ts",
+    "verify:postgres:ephemeral-cleanup": "node dist/scripts/verifyPostgresEphemeralCleanup.js",
+    "verify:postgres:audit-continuity": "node dist/scripts/verifyPostgresAuditContinuity.js",
+    "verify:quickbooks:oauth-concurrency": "node dist/scripts/verifyQuickBooksMcpOAuthConcurrency.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "express": "5.1.0",
+    "pg": "8.16.3",
+    "xero-node": "19.0.0",
+    "zod": "4.1.5"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3",
+    "@types/node": "24.3.0",
+    "@types/pg": "8.15.5",
+    "tsx": "4.20.5",
+    "typescript": "5.9.2",
+    "vitest": "3.2.7"
+  }
+}

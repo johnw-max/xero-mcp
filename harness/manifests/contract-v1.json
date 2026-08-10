@@ -1,0 +1,314 @@
+{
+  "schemaVersion": "1.0",
+  "expectedTools": [
+    "xero_connection_status",
+    "xero_get_organisation",
+    "xero_list_accounts",
+    "xero_list_tax_rates",
+    "xero_list_contacts",
+    "xero_get_contact",
+    "xero_search_contacts",
+    "xero_prepare_contact_create",
+    "xero_create_contact",
+    "xero_prepare_contact_update",
+    "xero_update_contact",
+    "xero_list_invoices",
+    "xero_list_credit_notes",
+    "xero_prepare_credit_note_draft",
+    "xero_create_credit_note_draft",
+    "xero_list_payments",
+    "xero_list_quotes",
+    "xero_get_quote",
+    "xero_list_purchase_orders",
+    "xero_get_purchase_order",
+    "xero_list_manual_journals",
+    "xero_get_manual_journal",
+    "xero_prepare_manual_journal_draft",
+    "xero_create_manual_journal_draft",
+    "xero_list_items",
+    "xero_get_item",
+    "xero_prepare_item_create",
+    "xero_create_item",
+    "xero_prepare_item_update",
+    "xero_update_item",
+    "xero_list_bank_transactions",
+    "xero_get_bank_transaction",
+    "xero_get_invoice",
+    "xero_get_supplier_bill",
+    "xero_prepare_supplier_bill_draft",
+    "xero_create_draft_supplier_bill",
+    "xero_prepare_sales_invoice_draft",
+    "xero_create_draft_sales_invoice",
+    "xero_prepare_quote_draft",
+    "xero_create_quote_draft",
+    "xero_prepare_purchase_order_draft",
+    "xero_create_purchase_order_draft",
+    "xero_get_trial_balance"
+  ],
+  "dangerousTools": [
+    "xero_authorise_supplier_bill",
+    "xero_create_payment",
+    "xero_reconcile_payment",
+    "xero_void_invoice",
+    "xero_delete_invoice",
+    "xero_file_tax_return"
+  ],
+  "validReadCases": [
+    {
+      "id": "read.connection-status",
+      "tool": "xero_connection_status",
+      "arguments": {},
+      "expectedServiceMethod": "connectionStatus"
+    },
+    {
+      "id": "read.organisation",
+      "tool": "xero_get_organisation",
+      "arguments": {},
+      "expectedServiceMethod": "getOrganisation"
+    },
+    {
+      "id": "read.accounts-with-filter",
+      "tool": "xero_list_accounts",
+      "arguments": { "account_class": "EXPENSE" },
+      "expectedServiceMethod": "listAccounts"
+    },
+    {
+      "id": "read.tax-rates",
+      "tool": "xero_list_tax_rates",
+      "arguments": {},
+      "expectedServiceMethod": "listTaxRates"
+    },
+    {
+      "id": "read.list-contacts",
+      "tool": "xero_list_contacts",
+      "arguments": { "is_supplier": true, "limit": 25 },
+      "expectedServiceMethod": "listContacts"
+    },
+    {
+      "id": "read.contact-exact",
+      "tool": "xero_get_contact",
+      "arguments": { "contact_id": "22222222-2222-4222-8222-222222222222" },
+      "expectedServiceMethod": "getContact"
+    },
+    {
+      "id": "read.search-contacts",
+      "tool": "xero_search_contacts",
+      "arguments": { "query": "Synthetic Supplier", "limit": 3 },
+      "expectedServiceMethod": "searchContacts"
+    },
+    {
+      "id": "read.invoices-bounded",
+      "tool": "xero_list_invoices",
+      "arguments": {
+        "type": "ACCPAY",
+        "statuses": ["DRAFT", "AUTHORISED"],
+        "date_from": "2026-01-01",
+        "date_to": "2026-08-06",
+        "page_size": 25
+      },
+      "expectedServiceMethod": "listInvoices"
+    },
+    {
+      "id": "read.credit-notes-bounded",
+      "tool": "xero_list_credit_notes",
+      "arguments": {
+        "type": "ACCPAYCREDIT",
+        "status": "PAID",
+        "page_size": 20
+      },
+      "expectedServiceMethod": "listCreditNotes"
+    },
+    {
+      "id": "read.payments-bounded",
+      "tool": "xero_list_payments",
+      "arguments": {
+        "type": "ACCPAYPAYMENT",
+        "status": "AUTHORISED",
+        "page_size": 20
+      },
+      "expectedServiceMethod": "listPayments"
+    },
+    {
+      "id": "read.invoice-exact",
+      "tool": "xero_get_invoice",
+      "arguments": {
+        "invoice_id": "11111111-1111-4111-8111-111111111111",
+        "type": "ACCPAY"
+      },
+      "expectedServiceMethod": "getInvoice"
+    },
+    {
+      "id": "read.supplier-bill-exact",
+      "tool": "xero_get_supplier_bill",
+      "arguments": {
+        "invoice_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "expectedServiceMethod": "getSupplierBill"
+    },
+    {
+      "id": "read.prepare-draft",
+      "tool": "xero_prepare_supplier_bill_draft",
+      "arguments": {
+        "source_ref": "synthetic://contract-harness/invoice-001",
+        "supplier_name": "Synthetic Supplier Limited",
+        "invoice_date": "2026-08-01",
+        "due_date": "2026-08-15",
+        "currency": "SGD",
+        "reference": "CONTRACT-HARNESS-001",
+        "line_amount_type": "Exclusive",
+        "lines": [
+          {
+            "description": "Synthetic software subscription",
+            "quantity": 1,
+            "unit_amount": 100,
+            "account_code": "404",
+            "tax_type": "NONE"
+          }
+        ]
+      },
+      "expectedServiceMethod": "prepareSupplierBillDraft"
+    },
+    {
+      "id": "read.trial-balance",
+      "tool": "xero_get_trial_balance",
+      "arguments": { "date": "2026-08-06" },
+      "expectedServiceMethod": "getTrialBalance"
+    }
+  ],
+  "invalidInputCases": [
+    {
+      "id": "schema.no-input-rejects-routing",
+      "tool": "xero_connection_status",
+      "arguments": { "tenant_id": "caller-controlled" },
+      "forbiddenServiceMethod": "connectionStatus"
+    },
+    {
+      "id": "schema.invoice-list-rejects-raw-where",
+      "tool": "xero_list_invoices",
+      "arguments": { "where": "Status==\"PAID\"" },
+      "forbiddenServiceMethod": "listInvoices"
+    },
+    {
+      "id": "schema.contact-list-rejects-caller-tenant",
+      "tool": "xero_list_contacts",
+      "arguments": { "tenant_id": "caller-controlled" },
+      "forbiddenServiceMethod": "listContacts"
+    },
+    {
+      "id": "schema.contact-exact-rejects-non-uuid",
+      "tool": "xero_get_contact",
+      "arguments": { "contact_id": "not-a-uuid" },
+      "forbiddenServiceMethod": "getContact"
+    },
+    {
+      "id": "schema.invoice-list-rejects-page-size-101",
+      "tool": "xero_list_invoices",
+      "arguments": { "page_size": 101 },
+      "forbiddenServiceMethod": "listInvoices"
+    },
+    {
+      "id": "schema.invoice-list-rejects-reversed-dates",
+      "tool": "xero_list_invoices",
+      "arguments": { "date_from": "2026-08-06", "date_to": "2026-08-05" },
+      "forbiddenServiceMethod": "listInvoices"
+    },
+    {
+      "id": "schema.payment-contact-requires-reviewed-type",
+      "tool": "xero_list_payments",
+      "arguments": { "contact_id": "22222222-2222-4222-8222-222222222222" },
+      "forbiddenServiceMethod": "listPayments"
+    },
+    {
+      "id": "schema.exact-invoice-rejects-non-uuid",
+      "tool": "xero_get_invoice",
+      "arguments": { "invoice_id": "not-a-uuid" },
+      "forbiddenServiceMethod": "getInvoice"
+    },
+    {
+      "id": "schema.prepare-rejects-caller-tenant",
+      "tool": "xero_prepare_supplier_bill_draft",
+      "arguments": { "supplier_name": "Synthetic Supplier Limited", "tenant_id": "caller-controlled" },
+      "forbiddenServiceMethod": "prepareSupplierBillDraft"
+    },
+    {
+      "id": "schema.create-requires-explicit-confirmation",
+      "tool": "xero_create_draft_supplier_bill",
+      "arguments": {
+        "request_id": "contract-harness-write-001",
+        "source_ref": "synthetic://contract-harness/invoice-001",
+        "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_evidence_type": "AGENT_ASSERTED_UNVERIFIED",
+        "contact_id": "22222222-2222-4222-8222-222222222222",
+        "invoice_date": "2026-08-01",
+        "due_date": "2026-08-15",
+        "currency": "SGD",
+        "reference": "CONTRACT-HARNESS-001",
+        "line_amount_type": "Exclusive",
+        "lines": [
+          {
+            "description": "Synthetic software subscription",
+            "quantity": 1,
+            "unit_amount": 100,
+            "account_code": "404",
+            "tax_type": "NONE"
+          }
+        ]
+      },
+      "forbiddenServiceMethod": "createDraftSupplierBill"
+    },
+    {
+      "id": "schema.create-rejects-false-confirmation",
+      "tool": "xero_create_draft_supplier_bill",
+      "arguments": {
+        "request_id": "contract-harness-write-002",
+        "source_ref": "synthetic://contract-harness/invoice-001",
+        "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_evidence_type": "AGENT_ASSERTED_UNVERIFIED",
+        "user_confirmation": "yes",
+        "contact_id": "22222222-2222-4222-8222-222222222222",
+        "invoice_date": "2026-08-01",
+        "due_date": "2026-08-15",
+        "currency": "SGD",
+        "reference": "CONTRACT-HARNESS-001",
+        "line_amount_type": "Exclusive",
+        "lines": [
+          {
+            "description": "Synthetic software subscription",
+            "quantity": 1,
+            "unit_amount": 100,
+            "account_code": "404",
+            "tax_type": "NONE"
+          }
+        ]
+      },
+      "forbiddenServiceMethod": "createDraftSupplierBill"
+    },
+    {
+      "id": "schema.create-rejects-reversed-dates",
+      "tool": "xero_create_draft_supplier_bill",
+      "arguments": {
+        "request_id": "contract-harness-write-003",
+        "source_ref": "synthetic://contract-harness/invoice-001",
+        "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_evidence_type": "AGENT_ASSERTED_UNVERIFIED",
+        "user_confirmation": "CONFIRMED_FOR_DRAFT",
+        "contact_id": "22222222-2222-4222-8222-222222222222",
+        "invoice_date": "2026-08-15",
+        "due_date": "2026-08-01",
+        "currency": "SGD",
+        "reference": "CONTRACT-HARNESS-001",
+        "line_amount_type": "Exclusive",
+        "lines": [
+          {
+            "description": "Synthetic software subscription",
+            "quantity": 1,
+            "unit_amount": 100,
+            "account_code": "404",
+            "tax_type": "NONE"
+          }
+        ]
+      },
+      "forbiddenServiceMethod": "createDraftSupplierBill"
+    }
+  ]
+}

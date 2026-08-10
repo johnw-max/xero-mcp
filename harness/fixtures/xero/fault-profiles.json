@@ -1,0 +1,73 @@
+{
+  "fixture_version": "1.0",
+  "fixture_id": "xero-fault-profiles-p0",
+  "synthetic": true,
+  "profiles": [
+    {
+      "id": "trial_balance_oversize_5000_rows",
+      "operation": "READ",
+      "failure": {
+        "code": "OVERSIZE_PROVIDER_RESPONSE",
+        "retryable": false,
+        "provider_row_count": 5000,
+        "provider_payload_bytes": 750000
+      },
+      "injection_count": 1,
+      "expected_provider_write_count": 0,
+      "expected_contract": "The MCP returns one content-only model output with independently measurable model-text and complete CallToolResult byte limits, a visited JSON-node limit, bounded source inspection, and machine-readable truncation/Provider-completeness metadata."
+    },
+    {
+      "id": "read_rate_limit_once",
+      "operation": "READ",
+      "failure": { "code": "RATE_LIMITED", "retryable": true, "retry_after_seconds": 1 },
+      "injection_count": 1,
+      "expected_provider_write_count": 0
+    },
+    {
+      "id": "oauth_expired_read",
+      "operation": "READ",
+      "failure": { "code": "AUTH_REQUIRED", "retryable": false },
+      "injection_count": 1,
+      "expected_provider_write_count": 0
+    },
+    {
+      "id": "draft_timeout_after_commit",
+      "operation": "WRITE_DRAFT",
+      "failure": {
+        "code": "WRITE_RESULT_UNKNOWN",
+        "retryable": false,
+        "provider_commit_occurred": true,
+        "response_delivered": false
+      },
+      "injection_count": 1,
+      "expected_provider_write_count": 1,
+      "allowed_recovery_operation": "EXACT_READBACK_ONLY"
+    },
+    {
+      "id": "draft_readback_mismatch",
+      "operation": "WRITE_DRAFT",
+      "failure": {
+        "code": "READBACK_MISMATCH",
+        "retryable": false,
+        "provider_commit_occurred": true,
+        "mutated_field": "currency"
+      },
+      "injection_count": 1,
+      "expected_provider_write_count": 1,
+      "allowed_recovery_operation": "EXACT_READBACK_ONLY"
+    },
+    {
+      "id": "repository_completion_failure_after_commit",
+      "operation": "WRITE_DRAFT",
+      "failure": {
+        "code": "WRITE_RESULT_UNKNOWN",
+        "retryable": false,
+        "provider_commit_occurred": true,
+        "repository_completion_occurred": false
+      },
+      "injection_count": 1,
+      "expected_provider_write_count": 1,
+      "allowed_recovery_operation": "EXACT_READBACK_ONLY"
+    }
+  ]
+}

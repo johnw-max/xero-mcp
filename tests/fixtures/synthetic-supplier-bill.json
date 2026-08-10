@@ -1,0 +1,22 @@
+{
+  "request_id": "zc-demo-REPLACE-RUN-ID-001",
+  "source_ref": "synthetic://fixtures/software-subscription-001",
+  "source_sha256": "REPLACE_WITH_ACTUAL_SHA256",
+  "source_evidence_type": "AGENT_ASSERTED_UNVERIFIED",
+  "user_confirmation": "CONFIRMED_FOR_DRAFT",
+  "contact_id": "REPLACE_WITH_CONTACT_ID_READ_FROM_TARGET_TENANT",
+  "invoice_date": "2026-08-03",
+  "due_date": "2026-08-17",
+  "currency": "REPLACE_WITH_TARGET_TENANT_BASE_CURRENCY",
+  "reference": "ZC-XERO-DEMO-REPLACE-RUN-ID",
+  "line_amount_type": "Inclusive",
+  "lines": [
+    {
+      "description": "Synthetic software subscription - no real service",
+      "quantity": 1,
+      "unit_amount": 109,
+      "account_code": "REPLACE_WITH_ACCOUNT_CODE_READ_FROM_TARGET_TENANT",
+      "tax_type": "REPLACE_WITH_TAX_TYPE_READ_FROM_TARGET_TENANT"
+    }
+  ]
+}

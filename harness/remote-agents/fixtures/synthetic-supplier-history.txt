@@ -1,0 +1,12 @@
+SYNTHETIC TEST MATERIAL — NOT A REAL CUSTOMER RECORD
+
+Organisation: Harbour Lantern Consulting (Demo)
+Supplier: Brown Office Supplies
+Contact hint: accounts@brown-office.example
+
+Known history supplied by the accountant:
+- BILL-760, 2026-05-05, SGD 760.00, expected status PAID.
+- BILL-160, 2026-06-02, SGD 160.00, expected status PAID.
+- BILL-600, 2026-07-08, SGD 600.00, expected status AUTHORISED with an outstanding balance.
+
+This material is only a hint. The Agent must read Xero before making a conclusion. It must not create, update, authorise, pay, void, delete, post, or reconcile anything.

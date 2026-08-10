@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "name": "offline-write-no-retry-regression",
+  "settings": {
+    "concurrency": 2,
+    "timeoutMs": 5000,
+    "readMaxAttempts": 3,
+    "readRetryBaseMs": 0,
+    "maxRetryAfterMs": 1000,
+    "retryJitterRatio": 0
+  },
+  "agents": [
+    {
+      "alias": "controlled_writer",
+      "id": "mock-writer-agent",
+      "persona": "Controlled accounting operator who writes only after explicit confirmation and always performs exact read-back."
+    }
+  ],
+  "cases": [
+    {
+      "id": "write-503-must-not-retry",
+      "title": "A failed write-intent request is not automatically retried",
+      "operation": "write",
+      "fixture": "../fixtures/synthetic-draft-candidate.txt",
+      "agents": ["controlled_writer"],
+      "transcript": [
+        {
+          "role": "developer",
+          "content": "Synthetic draft candidate:\n\n{{fixture}}"
+        },
+        {
+          "role": "user",
+          "content": "CONFIRMED_FOR_DRAFT. Create exactly one DRAFT from this synthetic candidate and read it back."
+        }
+      ],
+      "expect": {
+        "requiredTools": ["*create_draft*"],
+        "minToolCalls": 1,
+        "maxToolCalls": 1,
+        "allCallsHaveOutput": true
+      },
+      "mock": {
+        "sequence": [
+          {
+            "status": 503,
+            "headers": {
+              "Retry-After": "0"
+            },
+            "body": {
+              "error": "synthetic response loss"
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "id": "resp_should_never_be_reached",
+              "status": "completed",
+              "output": [
+                {
+                  "type": "function_call",
+                  "call_id": "call_should_never_be_reached",
+                  "name": "accounting__xero_create_draft_bill",
+                  "arguments": "{}",
+                  "status": "completed"
+                },
+                {
+                  "type": "function_call_output",
+                  "call_id": "call_should_never_be_reached",
+                  "output": "{\"status\":\"DRAFT\"}",
+                  "status": "completed"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

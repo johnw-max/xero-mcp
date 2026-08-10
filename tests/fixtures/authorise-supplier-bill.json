@@ -1,0 +1,8 @@
+{
+  "posting_request_id": "REPLACE_WITH_POSTING_REQUEST_ID",
+  "invoice_id": "REPLACE_WITH_EXACT_XERO_INVOICE_ID",
+  "expected_status": "DRAFT",
+  "approval_ref": "REPLACE_WITH_ONE_TIME_SERVER_APPROVAL_REF",
+  "approved_payload_hash": "REPLACE_WITH_64_CHARACTER_SERVER_COMPUTED_SHA256_HEX",
+  "request_id": "zc-demo-REPLACE-RUN-ID-001-authorise"
+}

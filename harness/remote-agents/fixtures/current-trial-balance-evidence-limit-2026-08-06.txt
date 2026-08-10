@@ -1,0 +1,7 @@
+CURRENT SYNTHETIC TRIAL BALANCE REVIEW BRIEF
+
+Read the zcloak test organisation's Xero Trial Balance for 2026-08-05.
+
+Candidate contract v2.0 to verify after deployment: xero_get_trial_balance returns one canonical content-only model result. Its top-level pagination object must separately report maxModelTextUtf8Bytes=98304, maxCallToolResultUtf8Bytes=131072, maxReturnedVisitedJsonNodes=5000, actual modelTextUtf8Bytes/callToolResultUtf8Bytes/returnedVisitedJsonNodes, mcpTruncated and truncationReasons. sourceMeasurement must report EXACT or LOWER_BOUND status plus explicit byte/node relations. providerCompleteness.status must remain NOT_VERIFIED and auditCompleteness must remain NOT_ESTABLISHED. Treat missing or different metadata as deployment drift, not as permission to infer completeness.
+
+The visited-node bound counts returned Provider-report object properties and array elements; it is not a report-row count and excludes MCP metadata. A LOWER_BOUND sourceMeasurement means source inspection stopped at a declared bound. Do not change Xero. Do not represent API success, EXACT source measurement, or mcpTruncated=false as proof of a complete audit, tax result, full ledger, or absence of provider-side omissions.

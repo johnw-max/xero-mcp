@@ -1,0 +1,17 @@
+# Initial HTTP-only site used exclusively for the ACME HTTP-01 challenge.
+# Replace with the final sibling config only after Certbot has issued the cert.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name mcp.jiayuanwang.xyz;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/xero-mcp-certbot;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 404;
+    }
+}

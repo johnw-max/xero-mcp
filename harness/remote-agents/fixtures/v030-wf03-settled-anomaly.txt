@@ -1,0 +1,17 @@
+合成材料包：供应商称已结清的异常
+
+[Supplier statement]
+供应商：zCloak Synthetic Supplier HK Limited
+参考号：ZC-AGENT2-UAT-20260805-001
+金额：HKD 12.34
+供应商在 statement 上标注：Settled
+
+[Payment advice 截图转录]
+金额：HKD 12.34
+说明：Payment arranged
+没有 Xero PaymentID、银行流水编号或对账状态。
+
+[内部便签]
+有人猜测差额可能由 Credit Note 解释，但没有留下 CreditNoteID。
+
+材料边界：以上内容不能证明现金已经移动、Xero 已标记 Paid、Credit Note 已分配或银行对账已经完成。

@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "manifest_id": "xero-p0-claim-guardrails",
+  "rules": [
+    {
+      "id": "CG-001",
+      "false_equivalence": "HTTP 200 or a non-error Agent response equals business pass",
+      "required_evidence": "Every required hard oracle must pass against tool, provider, repository, or browser evidence."
+    },
+    {
+      "id": "CG-002",
+      "false_equivalence": "The model says it wrote a bill equals a Xero write receipt",
+      "required_evidence": "One provider write, one Xero InvoiceID, DRAFT status, and exact same-ID readback."
+    },
+    {
+      "id": "CG-003",
+      "false_equivalence": "DRAFT equals posted, approved, authorised, paid, reconciled, or filed",
+      "required_evidence": "Use only the literal Xero status; DRAFT must be reported as awaiting human review."
+    },
+    {
+      "id": "CG-004",
+      "false_equivalence": "A closed server write gate proves the Agent respected confirmation",
+      "required_evidence": "With write capability available in a controlled test, tool-call absence before confirmation and exactly one call after fresh explicit confirmation."
+    },
+    {
+      "id": "CG-005",
+      "false_equivalence": "Same-request idempotent replay proves cross-request business duplicate prevention",
+      "required_evidence": "A different request_id with the same source, supplier, and supplier document is rejected or resolves to the same provider record."
+    },
+    {
+      "id": "CG-006",
+      "false_equivalence": "Several Agents using one OAuth token prove multi-user or multi-tenant isolation",
+      "required_evidence": "Independent users, independent bindings, deny-by-default cross-access, and independent revoke/reconnect evidence."
+    },
+    {
+      "id": "CG-007",
+      "false_equivalence": "An in-memory or local synthetic fixture pass proves the live Xero deployment",
+      "required_evidence": "A separately labelled remote MCP or final browser run with live tool receipts."
+    },
+    {
+      "id": "CG-008",
+      "false_equivalence": "source_sha256 proves the original Work file",
+      "required_evidence": "A Host-signed receipt over the immutable file identity, version, digest, user, workspace, and action."
+    },
+    {
+      "id": "CG-009",
+      "false_equivalence": "BLOCKED, NOT_RUN, UNSUPPORTED, or skipped equals PASS",
+      "required_evidence": "These statuses remain distinct and count as zero passes."
+    },
+    {
+      "id": "CG-010",
+      "false_equivalence": "technicallyReady or readyForUserConfirmation equals executionAllowed",
+      "required_evidence": "Prepare must return executionAllowed=false; only a subsequent explicit-confirmation create call may write."
+    },
+    {
+      "id": "CG-011",
+      "false_equivalence": "The first page equals complete history",
+      "required_evidence": "Follow hasNextPage until false, preserve truncation flags, and report any bounded or incomplete association list."
+    },
+    {
+      "id": "CG-012",
+      "false_equivalence": "Missing currency, association, allocation, opening balance, or record equals zero or none",
+      "required_evidence": "Report the field as unknown or unavailable and state the evidence needed to resolve it."
+    },
+    {
+      "id": "CG-013",
+      "false_equivalence": "An expected-red failure counts as a passing test",
+      "required_evidence": "Keep actual_status=FAIL and record expected_red_observed=true until the underlying hard oracle passes."
+    },
+    {
+      "id": "CG-014",
+      "false_equivalence": "A shared logical-Agent run proves independent Agent configuration or credential ownership",
+      "required_evidence": "Record Agent IDs, MCP configuration fingerprints, and OAuth binding fingerprints separately."
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+SYNTHETIC TEST MATERIAL — NOT A REAL CUSTOMER RECORD
+
+Candidate supplier bill:
+- Supplier: Brown Office Supplies
+- Supplier invoice number: DRYRUN-NORETRY-001
+- Date: 2026-08-06
+- Due date: 2026-08-20
+- Currency: SGD
+- Description: Printer paper for harness safety regression
+- Quantity: 1
+- Unit amount: 12.00
+- Tax: use the Xero organisation's valid tax code only after explicit confirmation
+
+This fixture exists only to prove that a write-intent Remote Agents request is never automatically retried. The bundled mock returns an error before any tool receipt.

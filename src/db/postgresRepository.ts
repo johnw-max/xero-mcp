@@ -1,0 +1,5069 @@
+import pg, { type PoolClient } from "pg";
+import { AppError } from "../errors.js";
+import type {
+  AgentConnectionBinding,
+  AuditCompletion,
+  AuditIntent,
+  AuditRecord,
+  AuthorizedProviderConnection,
+  BeginAuthoriseInput,
+  BeginAuthoriseResult,
+  BeginBrokerXeroCallbackInput,
+  BeginReviewAuthoriseInput,
+  BrokerSelectionContext,
+  CompleteBrokerOrganisationSelectionInput,
+  CompleteBrokerOrganisationSelectionResult,
+  CompleteBrokerXeroExchangeInput,
+  ConsumeOAuthAuthorizationCodeInput,
+  ConsumeOAuthBrokerFlowInput,
+  CreateBrokerAuthorizationFlowInput,
+  CreateBrokerAuthorizationFlowResult,
+  CreateMcpRefreshTokenFamilyInput,
+  CreatePostingInput,
+  DraftCreatedUpdate,
+  DraftReadbackMismatchUpdate,
+  ExchangeOAuthAuthorizationCodeForTokenSetInput,
+  ExchangeOAuthAuthorizationCodeForTokenSetResult,
+  McpAccessToken,
+  McpRefreshToken,
+  McpRefreshTokenContextPreview,
+  OAuthAuthorizationCode,
+  OAuthAuthorizationCodeExchangePreview,
+  OAuthBrokerAuthorizationFlow,
+  OAuthBrokerFlow,
+  OAuthInstallation,
+  PostingRequest,
+  PostingState,
+  PeekMcpRefreshTokenContextInput,
+  PeekOAuthAuthorizationCodeForExchangeInput,
+  ProviderAuthorization,
+  ProviderConnection,
+  RejectReviewInput,
+  RevokeOAuthTokenForClientInput,
+  RevokeOAuthTokenForClientResult,
+  ResolveAgentConnectionBindingInput,
+  ResolvedAgentConnectionBinding,
+  ResolvedMcpAccessToken,
+  ResolveMcpAccessTokenInput,
+  RotateMcpRefreshTokenAndIssueAccessTokenInput,
+  RotateMcpRefreshTokenAndIssueAccessTokenResult,
+  RotateMcpRefreshTokenInput,
+  RotateMcpRefreshTokenResult,
+  TerminateBrokerAuthorizationFlowInput,
+  TerminateBrokerAuthorizationFlowResult,
+  GetBrokerSelectionInput,
+} from "../domain/models.js";
+import { MCP_OAUTH_REFRESH_RETRY_GRACE_MS } from "../domain/models.js";
+import type {
+  BeginXeroMutationWriteInput,
+  BeginXeroMutationWriteResult,
+  BoundXeroMutationRequestInput,
+  CompleteXeroMutationReadbackInput,
+  ConfirmXeroMutationPreparationInput,
+  ConfirmXeroMutationPreparationResult,
+  CreateXeroMutationPreparationInput,
+  FailXeroMutationValidationInput,
+  MarkXeroMutationWriteUnknownInput,
+  RecordXeroMutationWriteEvidenceInput,
+  RejectXeroMutationProviderInput,
+  XeroMutationPreparation,
+  XeroMutationRequest,
+} from "../domain/xeroMutation.js";
+import { XERO_MUTATION_EXPECTED_READBACK_STATUS } from "../domain/xeroMutation.js";
+import { stableStringify } from "../security/hash.js";
+import type {
+  AccountingRepository,
+  EphemeralCleanupBatchResult,
+  EphemeralCleanupCounts,
+  FindActiveXeroPostingDuplicateInput,
+} from "./repository.js";
+import { ACTIVE_XERO_DUPLICATE_STATES, xeroSupplierPostingIdentity } from "./xeroPostingDuplicate.js";
+import {
+  hasExactXeroDuplicateIndexes,
+  type XeroDuplicateIndexCatalogRow,
+} from "./xeroDuplicateIndexReadiness.js";
+
+const { Pool } = pg;
+type Row = Record<string, unknown>;
+
+const EPHEMERAL_CLEANUP_ADVISORY_LOCK_KEY = "2026080401";
+
+function emptyEphemeralCleanupCounts(): EphemeralCleanupCounts {
+  return {
+    mcpRefreshRetryResponses: 0,
+    oauthBrokerFlows: 0,
+    oauthStates: 0,
+    connectTickets: 0,
+    operatorSessions: 0,
+    reviewCsrfTokens: 0,
+  };
+}
+
+function assertCleanupArguments(cutoff: Date, batchSize: number): void {
+  if (!Number.isFinite(cutoff.getTime())) {
+    throw new AppError("VALIDATION_FAILED", "Ephemeral cleanup cutoff must be a valid date.");
+  }
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 10_000) {
+    throw new AppError("VALIDATION_FAILED", "Ephemeral cleanup batch size must be between 1 and 10000.");
+  }
+}
+
+function date(value: unknown): Date {
+  return value instanceof Date ? value : new Date(String(value));
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+function isScopeSubset(candidate: string[], allowed: string[]): boolean {
+  const allowedSet = new Set(allowed);
+  return candidate.every((scope) => allowedSet.has(scope));
+}
+
+function hasSameScopes(left: string[], right: string[]): boolean {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return leftSet.size === rightSet.size && [...leftSet].every((scope) => rightSet.has(scope));
+}
+
+const OAUTH_AUTHORIZATION_CODE_MAX_TTL_MS = 5 * 60 * 1_000;
+const PERSONAL_POC_SELECTION_ADVISORY_LOCK_KEY = "2026080502";
+const MCP_REFRESH_FAMILY_ADVISORY_SALT = "2026080504";
+
+function sameJson(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  return stableStringify(left) === stableStringify(right);
+}
+
+function sameOptionalJson(
+  left: Record<string, unknown> | undefined,
+  right: Record<string, unknown> | undefined,
+): boolean {
+  return left === undefined ? right === undefined : right !== undefined && sameJson(left, right);
+}
+
+function isPostgresUniqueViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
+}
+
+function isNonEmpty(value: string | undefined): value is string {
+  return typeof value === "string" && value.length > 0 && value === value.trim();
+}
+
+function isHashedValue(value: string | undefined): value is string {
+  return isNonEmpty(value) && value.length >= 32;
+}
+
+function isValidDate(value: Date): boolean {
+  return value instanceof Date && Number.isFinite(value.getTime());
+}
+
+function isOptionalNonEmpty(value: string | undefined): boolean {
+  return value === undefined || isNonEmpty(value);
+}
+
+function hasUniqueNonEmptyStrings(values: string[]): boolean {
+  return values.length > 0 && values.every(isNonEmpty) && new Set(values).size === values.length;
+}
+
+function validateInitialBrokerFlow(input: CreateBrokerAuthorizationFlowInput): void {
+  const { installation, flow } = input;
+  if (
+    !isNonEmpty(installation.installationId) ||
+    !isNonEmpty(installation.workspaceId) ||
+    !["USER", "TEAM"].includes(installation.subjectType) ||
+    !isNonEmpty(installation.subjectId) ||
+    !isNonEmpty(installation.agentId) ||
+    !isNonEmpty(installation.clientId) ||
+    installation.status !== "PENDING" ||
+    installation.revokedAt ||
+    !isValidDate(installation.createdAt) ||
+    !isValidDate(installation.updatedAt) ||
+    installation.updatedAt < installation.createdAt ||
+    flow.status !== "AUTHORIZING_XERO" ||
+    typeof flow.personalPoc !== "boolean" ||
+    flow.authorizationId ||
+    flow.selectionCsrfHash ||
+    flow.consumedAt ||
+    !isNonEmpty(flow.outerStateCiphertext) ||
+    !isHashedValue(flow.flowHash) ||
+    !isHashedValue(flow.browserSessionHash) ||
+    !isHashedValue(flow.xeroStateHash) ||
+    !isHashedValue(flow.outerStateHash) ||
+    !isNonEmpty(flow.clientId) ||
+    !isNonEmpty(flow.redirectUri) ||
+    !isHashedValue(flow.pkceCodeChallenge) ||
+    flow.pkceCodeChallengeMethod !== "S256" ||
+    !isNonEmpty(flow.resource) ||
+    !isNonEmpty(flow.audience) ||
+    !hasUniqueNonEmptyStrings(flow.requestedScopes) ||
+    !isValidDate(flow.createdAt) ||
+    !isValidDate(flow.updatedAt) ||
+    !isValidDate(flow.expiresAt) ||
+    flow.expiresAt <= flow.createdAt ||
+    flow.updatedAt.getTime() !== flow.createdAt.getTime() ||
+    flow.installationId !== installation.installationId ||
+    flow.workspaceId !== installation.workspaceId ||
+    flow.subjectType !== installation.subjectType ||
+    flow.subjectId !== installation.subjectId ||
+    flow.agentId !== installation.agentId ||
+    flow.clientId !== installation.clientId
+  ) {
+    throw new AppError("VALIDATION_FAILED", "OAuth Broker flow and pending installation are invalid.");
+  }
+}
+
+function mapProviderAuthorization(row: Row): ProviderAuthorization {
+  const providerAuthorization: ProviderAuthorization = {
+    authorizationId: String(row.authorization_id),
+    workspaceId: String(row.workspace_id),
+    authorizedBySubject: String(row.authorized_by_subject),
+    provider: "xero",
+    grantedScopes: stringArray(row.granted_scopes),
+    tokenCiphertext: String(row.token_ciphertext),
+    tokenExpiresAt: date(row.token_expires_at),
+    refreshVersion: Number(row.refresh_version),
+    status: row.authorization_status as ProviderAuthorization["status"],
+    createdAt: date(row.created_at),
+    updatedAt: date(row.updated_at),
+  };
+  if (row.provider_subject) providerAuthorization.providerSubject = String(row.provider_subject);
+  if (row.revoked_at) providerAuthorization.revokedAt = date(row.revoked_at);
+  return providerAuthorization;
+}
+
+function mapAuthorizedConnection(row: Row): AuthorizedProviderConnection {
+  const connection: AuthorizedProviderConnection = {
+    connectionId: String(row.connection_id),
+    authorizationId: String(row.authorization_id),
+    provider: "xero",
+    tenantId: String(row.tenant_id),
+    tenantName: String(row.tenant_name),
+    status: row.connection_status as AuthorizedProviderConnection["status"],
+    createdAt: date(row.created_at),
+    updatedAt: date(row.updated_at),
+  };
+  if (row.provider_connection_id) connection.providerConnectionId = String(row.provider_connection_id);
+  if (row.tenant_short_code) connection.tenantShortCode = String(row.tenant_short_code);
+  if (row.last_verified_at) connection.lastVerifiedAt = date(row.last_verified_at);
+  return connection;
+}
+
+function mapOAuthInstallation(row: Row): OAuthInstallation {
+  const installation: OAuthInstallation = {
+    installationId: String(row.installation_id),
+    workspaceId: String(row.workspace_id),
+    subjectType: row.subject_type as OAuthInstallation["subjectType"],
+    subjectId: String(row.subject_id),
+    agentId: String(row.agent_id),
+    clientId: String(row.oauth_client_id),
+    status: row.installation_status as OAuthInstallation["status"],
+    createdAt: date(row.created_at),
+    updatedAt: date(row.updated_at),
+  };
+  if (row.revoked_at) installation.revokedAt = date(row.revoked_at);
+  return installation;
+}
+
+function mapAgentConnectionBinding(row: Row): AgentConnectionBinding {
+  const binding: AgentConnectionBinding = {
+    bindingId: String(row.binding_id),
+    installationId: String(row.oauth_installation_id),
+    workspaceId: String(row.workspace_id),
+    subjectType: row.subject_type as AgentConnectionBinding["subjectType"],
+    subjectId: String(row.subject_id),
+    agentId: String(row.agent_id),
+    connectionId: String(row.connection_id),
+    policyId: String(row.policy_id),
+    status: row.binding_status as AgentConnectionBinding["status"],
+    createdAt: date(row.created_at),
+    updatedAt: date(row.updated_at),
+  };
+  if (row.revoked_at) binding.revokedAt = date(row.revoked_at);
+  return binding;
+}
+
+function mapOAuthBrokerFlow(row: Row): OAuthBrokerFlow {
+  const flow: OAuthBrokerFlow = {
+    flowHash: String(row.flow_hash),
+    browserSessionHash: String(row.browser_session_hash),
+    clientId: String(row.oauth_client_id),
+    redirectUri: String(row.redirect_uri),
+    pkceCodeChallenge: String(row.pkce_code_challenge),
+    pkceCodeChallengeMethod: "S256",
+    workspaceId: String(row.workspace_id),
+    subjectType: row.subject_type as OAuthBrokerFlow["subjectType"],
+    subjectId: String(row.subject_id),
+    agentId: String(row.agent_id),
+    requestedScopes: stringArray(row.requested_scopes),
+    expiresAt: date(row.expires_at),
+    createdAt: date(row.created_at),
+  };
+  if (row.consumed_at) flow.consumedAt = date(row.consumed_at);
+  return flow;
+}
+
+function mapOAuthBrokerAuthorizationFlow(row: Row): OAuthBrokerAuthorizationFlow {
+  const flow: OAuthBrokerAuthorizationFlow = {
+    flowHash: String(row.flow_hash),
+    browserSessionHash: String(row.browser_session_hash),
+    xeroStateHash: String(row.xero_state_hash),
+    outerStateHash: String(row.outer_state_hash),
+    clientId: String(row.oauth_client_id),
+    redirectUri: String(row.redirect_uri),
+    pkceCodeChallenge: String(row.pkce_code_challenge),
+    pkceCodeChallengeMethod: "S256",
+    resource: String(row.resource),
+    audience: String(row.audience),
+    requestedScopes: stringArray(row.requested_scopes),
+    workspaceId: String(row.workspace_id),
+    subjectType: row.subject_type as OAuthBrokerAuthorizationFlow["subjectType"],
+    subjectId: String(row.subject_id),
+    agentId: String(row.agent_id),
+    installationId: String(row.oauth_installation_id),
+    personalPoc: row.personal_poc === true,
+    status: row.flow_status as OAuthBrokerAuthorizationFlow["status"],
+    expiresAt: date(row.expires_at),
+    createdAt: date(row.created_at),
+    updatedAt: date(row.updated_at),
+  };
+  if (row.outer_state_ciphertext) flow.outerStateCiphertext = String(row.outer_state_ciphertext);
+  if (row.authorization_id) flow.authorizationId = String(row.authorization_id);
+  if (row.selection_csrf_hash) flow.selectionCsrfHash = String(row.selection_csrf_hash);
+  if (row.consumed_at) flow.consumedAt = date(row.consumed_at);
+  return flow;
+}
+
+function mapOAuthAuthorizationCode(row: Row): OAuthAuthorizationCode {
+  const code: OAuthAuthorizationCode = {
+    codeHash: String(row.code_hash),
+    flowHash: String(row.flow_hash),
+    installationId: String(row.oauth_installation_id),
+    bindingId: String(row.binding_id),
+    connectionId: String(row.connection_id),
+    clientId: String(row.oauth_client_id),
+    redirectUri: String(row.redirect_uri),
+    pkceCodeChallenge: String(row.pkce_code_challenge),
+    pkceCodeChallengeMethod: "S256",
+    resource: String(row.resource),
+    audience: String(row.audience),
+    grantedScopes: stringArray(row.granted_scopes),
+    expiresAt: date(row.expires_at),
+    createdAt: date(row.created_at),
+  };
+  if (row.consumed_at) code.consumedAt = date(row.consumed_at);
+  return code;
+}
+
+function mapMcpRefreshToken(row: Row): McpRefreshToken {
+  const token: McpRefreshToken = {
+    tokenHash: String(row.token_hash),
+    tokenId: String(row.token_id),
+    familyId: String(row.family_id),
+    issuedAt: date(row.issued_at),
+    expiresAt: date(row.expires_at),
+  };
+  if (row.parent_token_hash) token.parentTokenHash = String(row.parent_token_hash);
+  if (row.consumed_at) token.consumedAt = date(row.consumed_at);
+  if (row.revoked_at) token.revokedAt = date(row.revoked_at);
+  if (row.replaced_by_token_hash) token.replacedByTokenHash = String(row.replaced_by_token_hash);
+  if (row.retry_access_token_hash) token.retryAccessTokenHash = String(row.retry_access_token_hash);
+  if (row.retry_response_ciphertext) token.retryResponseCiphertext = String(row.retry_response_ciphertext);
+  if (row.retry_expires_at) token.retryExpiresAt = date(row.retry_expires_at);
+  return token;
+}
+
+function mapResolvedAgentBinding(row: Row): ResolvedAgentConnectionBinding {
+  const resolved: ResolvedAgentConnectionBinding = {
+    installationId: String(row.oauth_installation_id),
+    bindingId: String(row.binding_id),
+    workspaceId: String(row.workspace_id),
+    subjectType: row.subject_type as ResolvedAgentConnectionBinding["subjectType"],
+    subjectId: String(row.subject_id),
+    agentId: String(row.agent_id),
+    connectionId: String(row.connection_id),
+    authorizationId: String(row.authorization_id),
+    tenantId: String(row.tenant_id),
+    tenantName: String(row.tenant_name),
+    policyId: String(row.policy_id),
+  };
+  if (row.provider_connection_id) resolved.providerConnectionId = String(row.provider_connection_id);
+  return resolved;
+}
+
+function mapConnection(row: Row): ProviderConnection {
+  const connection: ProviderConnection = {
+    connectionId: String(row.connection_id),
+    actorId: String(row.actor_id),
+    provider: "xero",
+    tenantId: String(row.tenant_id),
+    tenantName: String(row.tenant_name),
+    grantedScopes: Array.isArray(row.granted_scopes) ? row.granted_scopes.map(String) : [],
+    tokenCiphertext: String(row.token_ciphertext),
+    tokenExpiresAt: date(row.token_expires_at),
+    refreshVersion: Number(row.refresh_version),
+    status: row.connection_status as ProviderConnection["status"],
+    createdAt: date(row.created_at),
+    updatedAt: date(row.updated_at),
+  };
+  if (row.tenant_short_code) connection.tenantShortCode = String(row.tenant_short_code);
+  if (row.authorization_id) connection.authorizationId = String(row.authorization_id);
+  if (row.provider_connection_id) connection.providerConnectionId = String(row.provider_connection_id);
+  if (row.last_verified_at) connection.lastVerifiedAt = date(row.last_verified_at);
+  return connection;
+}
+
+function mapPosting(row: Row): PostingRequest {
+  const posting: PostingRequest = {
+    postingRequestId: String(row.posting_request_id),
+    actorId: String(row.actor_id),
+    tenantId: String(row.tenant_id),
+    sourceRef: String(row.source_ref),
+    sourceSha256: String(row.source_sha256),
+    sourceEvidenceType: row.source_evidence_type as PostingRequest["sourceEvidenceType"],
+    documentType: row.document_type === "ACCREC" ? "ACCREC" : "ACCPAY",
+    providerPayload: row.provider_payload as Record<string, unknown>,
+    requestPayloadHash: String(row.request_payload_hash),
+    providerPayloadHash: String(row.provider_payload_hash),
+    state: row.state as PostingState,
+    requestId: String(row.request_id),
+    createIdempotencyKey: String(row.create_idempotency_key),
+    createdAt: date(row.created_at),
+    updatedAt: date(row.updated_at),
+  };
+  if (row.xero_invoice_id) posting.xeroInvoiceId = String(row.xero_invoice_id);
+  if (row.authorise_request_id) posting.authoriseRequestId = String(row.authorise_request_id);
+  if (row.authorise_idempotency_key) posting.authoriseIdempotencyKey = String(row.authorise_idempotency_key);
+  if (row.approval_ref_hash) posting.approvalRefHash = String(row.approval_ref_hash);
+  if (row.approved_by) posting.approvedBy = String(row.approved_by);
+  if (row.approved_at) posting.approvedAt = date(row.approved_at);
+  if (row.approval_expires_at) posting.approvalExpiresAt = date(row.approval_expires_at);
+  if (row.approval_consumed_at) posting.approvalConsumedAt = date(row.approval_consumed_at);
+  if (row.write_receipt) posting.writeReceipt = row.write_receipt as Record<string, unknown>;
+  if (row.readback_snapshot) posting.readbackSnapshot = row.readback_snapshot as Record<string, unknown>;
+  if (row.draft_write_receipt) posting.draftWriteReceipt = row.draft_write_receipt as Record<string, unknown>;
+  if (row.draft_readback_snapshot) {
+    posting.draftReadbackSnapshot = row.draft_readback_snapshot as Record<string, unknown>;
+  }
+  if (row.authorise_write_receipt) {
+    posting.authoriseWriteReceipt = row.authorise_write_receipt as Record<string, unknown>;
+  }
+  if (row.authorise_readback_snapshot) {
+    posting.authoriseReadbackSnapshot = row.authorise_readback_snapshot as Record<string, unknown>;
+  }
+  return posting;
+}
+
+function mapXeroMutationPreparation(row: Row): XeroMutationPreparation {
+  const preparation: XeroMutationPreparation = {
+    preparationId: String(row.preparation_id),
+    actorId: String(row.actor_id),
+    workspaceId: String(row.workspace_id),
+    tenantId: String(row.tenant_id),
+    installationId: String(row.oauth_installation_id),
+    bindingId: String(row.binding_id),
+    connectionId: String(row.connection_id),
+    objectType: row.object_type as XeroMutationPreparation["objectType"],
+    operation: row.operation as XeroMutationPreparation["operation"],
+    canonicalPayload: row.canonical_payload as Record<string, unknown>,
+    canonicalPayloadHash: String(row.canonical_payload_hash),
+    sourceSha256: String(row.source_sha256),
+    sourceUnitKey: String(row.source_unit_key),
+    sourceEvidenceType: row.source_evidence_type as XeroMutationPreparation["sourceEvidenceType"],
+    confirmationSummaryHash: String(row.confirmation_summary_hash),
+    confirmationPhraseHash: String(row.confirmation_phrase_hash),
+    state: row.state as XeroMutationPreparation["state"],
+    expiresAt: date(row.expires_at),
+    createdAt: date(row.created_at),
+    updatedAt: date(row.updated_at),
+  };
+  if (row.target_xero_object_id) preparation.targetXeroObjectId = String(row.target_xero_object_id);
+  if (row.source_ref) preparation.sourceRef = String(row.source_ref);
+  if (row.consumed_at) preparation.consumedAt = date(row.consumed_at);
+  return preparation;
+}
+
+function mapXeroMutationRequest(row: Row): XeroMutationRequest {
+  const request: XeroMutationRequest = {
+    mutationRequestId: String(row.mutation_request_id),
+    preparationId: String(row.preparation_id),
+    requestId: String(row.request_id),
+    actorId: String(row.actor_id),
+    workspaceId: String(row.workspace_id),
+    tenantId: String(row.tenant_id),
+    installationId: String(row.oauth_installation_id),
+    bindingId: String(row.binding_id),
+    connectionId: String(row.connection_id),
+    objectType: row.object_type as XeroMutationRequest["objectType"],
+    operation: row.operation as XeroMutationRequest["operation"],
+    canonicalPayload: row.canonical_payload as Record<string, unknown>,
+    canonicalPayloadHash: String(row.canonical_payload_hash),
+    sourceSha256: String(row.source_sha256),
+    sourceUnitKey: String(row.source_unit_key),
+    sourceEvidenceType: row.source_evidence_type as XeroMutationRequest["sourceEvidenceType"],
+    confirmationSummaryHash: String(row.confirmation_summary_hash),
+    state: row.state as XeroMutationRequest["state"],
+    confirmedAt: date(row.confirmed_at),
+    createdAt: date(row.created_at),
+    updatedAt: date(row.updated_at),
+  };
+  if (row.target_xero_object_id) request.targetXeroObjectId = String(row.target_xero_object_id);
+  if (row.source_ref) request.sourceRef = String(row.source_ref);
+  if (row.xero_object_id) request.xeroObjectId = String(row.xero_object_id);
+  if (row.write_receipt) request.writeReceipt = row.write_receipt as Record<string, unknown>;
+  if (row.readback_snapshot) request.readbackSnapshot = row.readback_snapshot as Record<string, unknown>;
+  if (row.readback_snapshot_hash) request.readbackSnapshotHash = String(row.readback_snapshot_hash);
+  if (row.readback_canonical_payload) {
+    request.readbackCanonicalPayload = row.readback_canonical_payload as Record<string, unknown>;
+  }
+  if (row.readback_payload_hash) request.readbackPayloadHash = String(row.readback_payload_hash);
+  if (row.readback_status) request.readbackStatus = String(row.readback_status);
+  if (row.validation_receipt) request.validationReceipt = row.validation_receipt as Record<string, unknown>;
+  if (row.provider_rejection_receipt) {
+    request.providerRejectionReceipt = row.provider_rejection_receipt as Record<string, unknown>;
+  }
+  if (row.write_started_at) request.writeStartedAt = date(row.write_started_at);
+  if (row.write_unknown_at) request.writeUnknownAt = date(row.write_unknown_at);
+  if (row.verified_at) request.verifiedAt = date(row.verified_at);
+  if (row.validation_failed_at) request.validationFailedAt = date(row.validation_failed_at);
+  if (row.provider_rejected_at) request.providerRejectedAt = date(row.provider_rejected_at);
+  return request;
+}
+
+export class PostgresAccountingRepository implements AccountingRepository {
+  readonly pool: InstanceType<typeof Pool>;
+
+  constructor(databaseUrl: string) {
+    this.pool = new Pool({ connectionString: databaseUrl, max: 10 });
+  }
+
+  async close(): Promise<void> {
+    await this.pool.end();
+  }
+
+  async readiness(): Promise<boolean> {
+    try {
+      const result = await this.pool.query<{ ready: boolean }>(
+        `SELECT
+          to_regclass('public.provider_connections') IS NOT NULL
+          AND to_regclass('public.posting_requests') IS NOT NULL
+          AND to_regclass('public.tool_audit_logs') IS NOT NULL
+          AND to_regclass('public.provider_authorizations') IS NOT NULL
+          AND to_regclass('public.oauth_installations') IS NOT NULL
+          AND to_regclass('public.agent_connection_bindings') IS NOT NULL
+          AND to_regclass('public.oauth_broker_flows') IS NOT NULL
+          AND to_regclass('public.oauth_authorization_codes') IS NOT NULL
+          AND to_regclass('public.mcp_access_tokens') IS NOT NULL
+          AND to_regclass('public.mcp_refresh_token_families') IS NOT NULL
+          AND to_regclass('public.mcp_refresh_tokens') IS NOT NULL
+          AND to_regclass('public.xero_mutation_preparations') IS NOT NULL
+          AND to_regclass('public.xero_mutation_requests') IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM pg_index indexes
+            JOIN pg_class index_class ON index_class.oid = indexes.indexrelid
+            WHERE index_class.relname = 'mcp_refresh_token_families_active_installation_uq'
+              AND index_class.relnamespace = 'public'::regnamespace
+              AND indexes.indrelid = 'public.mcp_refresh_token_families'::regclass
+              AND indexes.indisunique
+              AND indexes.indisvalid
+              AND indexes.indisready
+              AND indexes.indpred IS NOT NULL
+              AND pg_get_indexdef(indexes.indexrelid) LIKE '%oauth_installation_id%'
+              AND pg_get_indexdef(indexes.indexrelid) LIKE '%family_status%ACTIVE%'
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM pg_index indexes
+            JOIN pg_class index_class ON index_class.oid = indexes.indexrelid
+            WHERE index_class.relname = 'review_csrf_session_idx'
+              AND index_class.relnamespace = 'public'::regnamespace
+              AND indexes.indrelid = 'public.review_csrf_tokens'::regclass
+              AND indexes.indisvalid
+              AND indexes.indisready
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM pg_index indexes
+            JOIN pg_class index_class ON index_class.oid = indexes.indexrelid
+            WHERE index_class.relname = 'tool_audit_logs_in_progress_idx'
+              AND index_class.relnamespace = 'public'::regnamespace
+              AND indexes.indrelid = 'public.tool_audit_logs'::regclass
+              AND indexes.indisvalid
+              AND indexes.indisready
+          )
+          AND EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'provider_connections'
+              AND column_name = 'tenant_short_code'
+          )
+          AND EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'posting_requests'
+              AND column_name = 'source_evidence_type'
+              AND is_nullable = 'NO'
+              AND column_default IS NULL
+          )
+          AND NOT EXISTS (
+            SELECT required.column_name
+            FROM (VALUES
+              ('authorization_id'),
+              ('provider_connection_id'),
+              ('last_verified_at')
+            ) AS required(column_name)
+            WHERE NOT EXISTS (
+              SELECT 1 FROM information_schema.columns existing
+              WHERE existing.table_schema = 'public'
+                AND existing.table_name = 'provider_connections'
+                AND existing.column_name = required.column_name
+            )
+          )
+          AND NOT EXISTS (
+            SELECT required.column_name
+            FROM (VALUES
+              ('draft_write_receipt'),
+              ('draft_readback_snapshot'),
+              ('authorise_write_receipt'),
+              ('authorise_readback_snapshot')
+            ) AS required(column_name)
+            WHERE NOT EXISTS (
+              SELECT 1 FROM information_schema.columns existing
+              WHERE existing.table_schema = 'public'
+                AND existing.table_name = 'posting_requests'
+                AND existing.column_name = required.column_name
+                AND existing.data_type = 'jsonb'
+            )
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'tool_audit_logs_completion_shape_check'
+              AND conrelid = 'public.tool_audit_logs'::regclass
+              AND convalidated
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'tool_audit_logs_result_status_check'
+              AND conrelid = 'public.tool_audit_logs'::regclass
+              AND convalidated
+              AND pg_get_constraintdef(oid) LIKE '%result_status = ANY%'
+              AND pg_get_constraintdef(oid) LIKE '%IN_PROGRESS%'
+              AND pg_get_constraintdef(oid) LIKE '%SUCCEEDED%'
+              AND pg_get_constraintdef(oid) LIKE '%REJECTED%'
+              AND pg_get_constraintdef(oid) LIKE '%FAILED%'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'posting_requests_source_evidence_type_check'
+              AND conrelid = 'public.posting_requests'::regclass
+              AND convalidated
+              AND contype = 'c'
+              AND pg_get_constraintdef(oid) LIKE '%LEGACY_UNVERIFIED%'
+              AND pg_get_constraintdef(oid) LIKE '%AGENT_ASSERTED_UNVERIFIED%'
+              AND pg_get_constraintdef(oid) LIKE '%SERVER_FINGERPRINTED_EXTRACTION%'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'posting_requests_document_type_check'
+              AND conrelid = 'public.posting_requests'::regclass
+              AND convalidated
+              AND contype = 'c'
+              AND pg_get_constraintdef(oid) LIKE '%ACCPAY%'
+              AND pg_get_constraintdef(oid) LIKE '%ACCREC%'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'posting_requests_state_check'
+              AND conrelid = 'public.posting_requests'::regclass
+              AND convalidated
+              AND contype = 'c'
+              AND pg_get_constraintdef(oid) LIKE '%DRAFT_READBACK_VERIFIED%'
+          )
+          AND NOT EXISTS (
+            SELECT required.column_name
+            FROM (VALUES
+              ('xero_mutation_preparations', 'source_unit_key', 'text', 'NO'),
+              ('xero_mutation_requests', 'source_unit_key', 'text', 'NO'),
+              ('xero_mutation_requests', 'readback_snapshot_hash', 'text', 'YES'),
+              ('xero_mutation_requests', 'readback_canonical_payload', 'jsonb', 'YES'),
+              ('xero_mutation_requests', 'readback_status', 'text', 'YES'),
+              ('xero_mutation_requests', 'provider_rejection_receipt', 'jsonb', 'YES'),
+              ('xero_mutation_requests', 'provider_rejected_at', 'timestamp with time zone', 'YES')
+            ) AS required(table_name, column_name, data_type, is_nullable)
+            WHERE NOT EXISTS (
+              SELECT 1 FROM information_schema.columns existing
+              WHERE existing.table_schema = 'public'
+                AND existing.table_name = required.table_name
+                AND existing.column_name = required.column_name
+                AND existing.data_type = required.data_type
+                AND existing.is_nullable = required.is_nullable
+            )
+          )
+          AND NOT EXISTS (
+            SELECT required.constraint_name
+            FROM (VALUES
+              ('xero_mutation_preparations', 'xero_mutation_preparations_object_type_check'),
+              ('xero_mutation_preparations', 'xero_mutation_preparation_operation_check'),
+              ('xero_mutation_preparations', 'xero_mutation_preparation_lifecycle_check'),
+              ('xero_mutation_preparations', 'xero_mutation_preparation_exact_binding_unique'),
+              ('xero_mutation_requests', 'xero_mutation_requests_object_type_check'),
+              ('xero_mutation_requests', 'xero_mutation_request_operation_check'),
+              ('xero_mutation_requests', 'xero_mutation_request_update_target_check'),
+              ('xero_mutation_requests', 'xero_mutation_request_preparation_binding_fk'),
+              ('xero_mutation_requests', 'xero_mutation_request_readback_binding_check'),
+              ('xero_mutation_requests', 'xero_mutation_request_lifecycle_check')
+            ) AS required(table_name, constraint_name)
+            WHERE NOT EXISTS (
+              SELECT 1 FROM pg_constraint existing
+              WHERE existing.conname = required.constraint_name
+                AND existing.conrelid = format('public.%I', required.table_name)::regclass
+                AND existing.convalidated
+            )
+          )
+          AND NOT EXISTS (
+            SELECT required.trigger_name
+            FROM (VALUES
+              ('xero_mutation_preparations', 'xero_mutation_preparation_immutable_trigger'),
+              ('xero_mutation_requests', 'xero_mutation_request_preparation_trigger'),
+              ('xero_mutation_requests', 'xero_mutation_request_immutable_trigger')
+            ) AS required(table_name, trigger_name)
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM pg_trigger existing
+              WHERE existing.tgname = required.trigger_name
+                AND existing.tgrelid = format('public.%I', required.table_name)::regclass
+                AND NOT existing.tgisinternal
+                AND existing.tgenabled IN ('O', 'A')
+            )
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM pg_proc function_meta
+            JOIN pg_namespace namespace_meta ON namespace_meta.oid = function_meta.pronamespace
+            WHERE namespace_meta.nspname = 'public'
+              AND function_meta.proname = 'xero_mutation_request_immutable_guard'
+              AND pg_get_functiondef(function_meta.oid) LIKE '%invalid xero mutation state transition%'
+              AND pg_get_functiondef(function_meta.oid) LIKE '%READBACK_MISMATCH%READBACK_VERIFIED%'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'xero_mutation_preparations_object_type_check'
+              AND conrelid = 'public.xero_mutation_preparations'::regclass
+              AND convalidated
+              AND pg_get_constraintdef(oid) LIKE '%SUPPLIER_BILL%'
+              AND pg_get_constraintdef(oid) LIKE '%SALES_INVOICE%'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'xero_mutation_requests_object_type_check'
+              AND conrelid = 'public.xero_mutation_requests'::regclass
+              AND convalidated
+              AND pg_get_constraintdef(oid) LIKE '%SUPPLIER_BILL%'
+              AND pg_get_constraintdef(oid) LIKE '%SALES_INVOICE%'
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'xero_mutation_request_lifecycle_check'
+              AND conrelid = 'public.xero_mutation_requests'::regclass
+              AND convalidated
+              AND pg_get_constraintdef(oid) LIKE '%SUPPLIER_BILL%'
+              AND pg_get_constraintdef(oid) LIKE '%SALES_INVOICE%'
+              AND pg_get_constraintdef(oid) LIKE '%DRAFT%'
+              AND pg_get_constraintdef(oid) LIKE '%ACTIVE%'
+              AND pg_get_constraintdef(oid) LIKE '%UNTRACKED%'
+              AND pg_get_constraintdef(oid) LIKE '%UPLOADED%'
+              AND pg_get_constraintdef(oid) LIKE '%PROVIDER_REJECTED%'
+          )
+          AND NOT EXISTS (
+            SELECT required.index_name
+            FROM (VALUES
+              ('xero_mutation_preparations', 'xero_mutation_preparations_expiry_idx', false, true),
+              ('xero_mutation_requests', 'xero_mutation_requests_idempotency_unique_idx', true, false),
+              ('xero_mutation_requests', 'xero_mutation_requests_active_source_unique_idx', true, true),
+              ('xero_mutation_requests', 'xero_mutation_requests_active_source_ref_unit_unique_idx', true, true),
+              ('xero_mutation_requests', 'xero_mutation_requests_exact_created_object_unique_idx', true, true),
+              ('xero_mutation_requests', 'xero_mutation_requests_exact_active_update_unique_idx', true, true),
+              ('xero_mutation_requests', 'xero_mutation_requests_active_object_unique_idx', true, true),
+              ('xero_mutation_requests', 'xero_mutation_requests_state_idx', false, false)
+            ) AS required(table_name, index_name, is_unique, has_predicate)
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM pg_class index_class
+              JOIN pg_index index_meta ON index_meta.indexrelid = index_class.oid
+              WHERE index_class.relname = required.index_name
+                AND index_meta.indrelid = format('public.%I', required.table_name)::regclass
+                AND index_meta.indisunique = required.is_unique
+                AND index_meta.indisvalid AND index_meta.indisready
+                AND (index_meta.indpred IS NOT NULL) = required.has_predicate
+            )
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM pg_class index_class
+            JOIN pg_index index_meta ON index_meta.indexrelid = index_class.oid
+            WHERE index_class.relname = 'xero_mutation_requests_active_source_ref_unit_unique_idx'
+              AND index_meta.indrelid = 'public.xero_mutation_requests'::regclass
+              AND pg_get_indexdef(index_meta.indexrelid) LIKE '%source_ref%source_unit_key%'
+              AND pg_get_indexdef(index_meta.indexrelid) LIKE '%READBACK_MISMATCH%'
+          )
+          AND NOT EXISTS (
+            SELECT required.index_name
+            FROM (VALUES
+              ('posting_requests_actor_tenant_request_create_unique_idx', false),
+              ('posting_requests_actor_tenant_request_create_v030_unique_idx', false),
+              ('posting_requests_active_source_unique_idx', true),
+              ('posting_requests_active_source_v030_unique_idx', true),
+              ('posting_requests_active_supplier_reference_unique_idx', true),
+              ('posting_requests_active_supplier_ref_v030_unique_idx', true),
+              ('posting_requests_tenant_active_source_unique_idx', true),
+              ('posting_requests_tenant_active_source_v030_unique_idx', true),
+              ('posting_requests_tenant_active_supplier_reference_unique_idx', true),
+              ('posting_requests_tenant_active_supplier_ref_v030_unique_idx', true)
+            ) AS required(index_name, requires_predicate)
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM pg_class index_class
+              JOIN pg_index index_meta ON index_meta.indexrelid = index_class.oid
+              WHERE index_class.relname = required.index_name
+                AND index_meta.indrelid = 'public.posting_requests'::regclass
+                AND index_meta.indisunique
+                AND index_meta.indisvalid
+                AND (index_meta.indpred IS NOT NULL) = required.requires_predicate
+            )
+          )
+          AND NOT EXISTS (
+            SELECT expected.version
+            FROM (VALUES
+              ('001_init.sql'),
+              ('002_ephemeral_cleanup_index.sql'),
+              ('003_provider_connection_tenant_shortcode.sql'),
+              ('004_durable_audit_intent.sql'),
+              ('005_oauth_identity_foundation.sql'),
+              ('006_oauth_broker_flow_lifecycle.sql'),
+              ('008_xero_source_evidence_type.sql'),
+              ('012_xero_duplicate_guards.sql'),
+              ('013_xero_rejected_duplicate_guard.sql'),
+              ('014_xero_tenant_duplicate_guards.sql'),
+              ('015_xero_posting_write_provenance.sql'),
+              ('016_xero_document_type_duplicate_guards.sql'),
+              ('017_xero_controlled_mutation_foundation.sql'),
+              ('018_xero_invoice_draft_one_time_confirmation.sql'),
+              ('019_xero_mcp_refresh_family_lifecycle.sql'),
+              ('020_xero_runtime_readiness_compatibility.sql')
+            ) AS expected(version)
+            WHERE NOT EXISTS (
+              SELECT 1 FROM schema_migrations applied
+              WHERE applied.version = expected.version
+            )
+          ) AS ready`,
+      );
+      if (result.rows[0]?.ready !== true) return false;
+
+      const duplicateIndexes = await this.pool.query<XeroDuplicateIndexCatalogRow>(
+        `SELECT index_class.relname AS "indexName",
+                access_method.amname AS "accessMethod",
+                index_meta.indisunique AS "isUnique",
+                index_meta.indisvalid AS "isValid",
+                index_meta.indisready AS "isReady",
+                ARRAY(
+                  SELECT pg_get_indexdef(index_meta.indexrelid, key_position, true)
+                  FROM generate_series(1, index_meta.indnatts) AS key_position
+                  ORDER BY key_position
+                ) AS "keyDefinitions",
+                pg_get_expr(index_meta.indpred, index_meta.indrelid, true) AS predicate
+         FROM pg_index index_meta
+         JOIN pg_class index_class ON index_class.oid = index_meta.indexrelid
+         JOIN pg_class table_class ON table_class.oid = index_meta.indrelid
+         JOIN pg_namespace table_namespace ON table_namespace.oid = table_class.relnamespace
+         JOIN pg_am access_method ON access_method.oid = index_class.relam
+         WHERE table_namespace.nspname = 'public'
+           AND table_class.relname = 'posting_requests'
+           AND index_class.relname = ANY($1::text[])
+         ORDER BY index_class.relname`,
+        [[
+          "posting_requests_actor_tenant_request_create_unique_idx",
+          "posting_requests_actor_tenant_request_create_v030_unique_idx",
+          "posting_requests_active_source_unique_idx",
+          "posting_requests_active_source_v030_unique_idx",
+          "posting_requests_active_supplier_reference_unique_idx",
+          "posting_requests_active_supplier_ref_v030_unique_idx",
+          "posting_requests_tenant_active_source_unique_idx",
+          "posting_requests_tenant_active_source_v030_unique_idx",
+          "posting_requests_tenant_active_supplier_reference_unique_idx",
+          "posting_requests_tenant_active_supplier_ref_v030_unique_idx",
+        ]],
+      );
+      return hasExactXeroDuplicateIndexes(duplicateIndexes.rows);
+    } catch {
+      return false;
+    }
+  }
+
+  async saveProviderAuthorization(providerAuthorization: ProviderAuthorization): Promise<ProviderAuthorization> {
+    const result = await this.pool.query(
+      `INSERT INTO provider_authorizations(
+         authorization_id, workspace_id, authorized_by_subject, provider, provider_subject,
+         granted_scopes, token_ciphertext, token_expires_at, refresh_version,
+         authorization_status, revoked_at, created_at, updated_at
+       ) VALUES ($1,$2,$3,'xero',$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ON CONFLICT (authorization_id) DO NOTHING
+       RETURNING *`,
+      [
+        providerAuthorization.authorizationId,
+        providerAuthorization.workspaceId,
+        providerAuthorization.authorizedBySubject,
+        providerAuthorization.providerSubject ?? null,
+        providerAuthorization.grantedScopes,
+        providerAuthorization.tokenCiphertext,
+        providerAuthorization.tokenExpiresAt,
+        providerAuthorization.refreshVersion,
+        providerAuthorization.status,
+        providerAuthorization.revokedAt ?? null,
+        providerAuthorization.createdAt,
+        providerAuthorization.updatedAt,
+      ],
+    );
+    if (!result.rows[0]) {
+      throw new AppError("CONFLICT", "Provider authorization identifier already exists.", { httpStatus: 409 });
+    }
+    return mapProviderAuthorization(result.rows[0]);
+  }
+
+  async getProviderAuthorization(
+    authorizationId: string,
+    workspaceId: string,
+    authorizedBySubject: string,
+  ): Promise<ProviderAuthorization | undefined> {
+    const result = await this.pool.query(
+      `SELECT * FROM provider_authorizations
+       WHERE authorization_id = $1 AND workspace_id = $2 AND authorized_by_subject = $3`,
+      [authorizationId, workspaceId, authorizedBySubject],
+    );
+    return result.rows[0] ? mapProviderAuthorization(result.rows[0]) : undefined;
+  }
+
+  async updateProviderAuthorizationToken(
+    authorizationId: string,
+    workspaceId: string,
+    expectedRefreshVersion: number,
+    tokenCiphertext: string,
+    tokenExpiresAt: Date,
+    grantedScopes: string[],
+  ): Promise<ProviderAuthorization | undefined> {
+    const result = await this.pool.query(
+      `UPDATE provider_authorizations SET
+         token_ciphertext = $4,
+         token_expires_at = $5,
+         granted_scopes = $6,
+         refresh_version = refresh_version + 1,
+         authorization_status = 'ACTIVE',
+         revoked_at = NULL,
+         updated_at = now()
+       WHERE authorization_id = $1 AND workspace_id = $2
+         AND refresh_version = $3 AND authorization_status <> 'REVOKED'
+       RETURNING *`,
+      [authorizationId, workspaceId, expectedRefreshVersion, tokenCiphertext, tokenExpiresAt, grantedScopes],
+    );
+    return result.rows[0] ? mapProviderAuthorization(result.rows[0]) : undefined;
+  }
+
+  async markProviderAuthorizationStatus(
+    authorizationId: string,
+    workspaceId: string,
+    status: ProviderAuthorization["status"],
+    changedAt: Date,
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE provider_authorizations SET
+         authorization_status = $3,
+         revoked_at = CASE WHEN $3 = 'REVOKED' THEN $4 ELSE revoked_at END,
+         updated_at = $4
+       WHERE authorization_id = $1 AND workspace_id = $2
+         AND authorization_status <> 'REVOKED'`,
+      [authorizationId, workspaceId, status, changedAt],
+    );
+    return result.rowCount === 1;
+  }
+
+  async upsertAuthorizedProviderConnection(
+    workspaceId: string,
+    connection: AuthorizedProviderConnection,
+  ): Promise<AuthorizedProviderConnection> {
+    const result = await this.pool.query(
+      `INSERT INTO provider_connections(
+         connection_id, authorization_id, provider, tenant_id, tenant_name, tenant_short_code,
+         provider_connection_id, last_verified_at, granted_scopes, refresh_version,
+         connection_status, created_at, updated_at
+       )
+       SELECT $2, provider_auth.authorization_id, 'xero', $4, $5, $6, $7, $8, '{}', 0, $9, $10, $11
+       FROM provider_authorizations provider_auth
+       WHERE provider_auth.authorization_id = $3
+         AND provider_auth.workspace_id = $1
+         AND provider_auth.authorization_status = 'ACTIVE'
+       ON CONFLICT (authorization_id, tenant_id) WHERE authorization_id IS NOT NULL
+       DO UPDATE SET
+         tenant_name = EXCLUDED.tenant_name,
+         tenant_short_code = EXCLUDED.tenant_short_code,
+         provider_connection_id = EXCLUDED.provider_connection_id,
+         last_verified_at = EXCLUDED.last_verified_at,
+         connection_status = EXCLUDED.connection_status,
+         updated_at = EXCLUDED.updated_at
+       WHERE provider_connections.connection_status <> 'REVOKED'
+       RETURNING *`,
+      [
+        workspaceId,
+        connection.connectionId,
+        connection.authorizationId,
+        connection.tenantId,
+        connection.tenantName,
+        connection.tenantShortCode ?? null,
+        connection.providerConnectionId ?? null,
+        connection.lastVerifiedAt ?? null,
+        connection.status,
+        connection.createdAt,
+        connection.updatedAt,
+      ],
+    );
+    if (!result.rows[0]) {
+      const terminal = await this.pool.query(
+        `SELECT 1 FROM provider_connections
+         WHERE authorization_id = $1 AND tenant_id = $2 AND connection_status = 'REVOKED'`,
+        [connection.authorizationId, connection.tenantId],
+      );
+      if (terminal.rowCount === 1) {
+        throw new AppError("CONFLICT", "A revoked provider connection cannot be reactivated.", {
+          httpStatus: 409,
+        });
+      }
+      throw new AppError("FORBIDDEN", "Provider authorization does not belong to this active workspace.", {
+        httpStatus: 403,
+      });
+    }
+    return mapAuthorizedConnection(result.rows[0]);
+  }
+
+  async listActiveConnectionsByAuthorization(
+    authorizationId: string,
+    workspaceId: string,
+  ): Promise<AuthorizedProviderConnection[]> {
+    const result = await this.pool.query(
+      `SELECT connection.*
+       FROM provider_connections connection
+       JOIN provider_authorizations provider_auth
+         ON provider_auth.authorization_id = connection.authorization_id
+       WHERE connection.authorization_id = $1
+         AND provider_auth.workspace_id = $2
+         AND provider_auth.authorization_status = 'ACTIVE'
+         AND connection.connection_status = 'ACTIVE'
+       ORDER BY connection.created_at, connection.connection_id`,
+      [authorizationId, workspaceId],
+    );
+    return result.rows.map(mapAuthorizedConnection);
+  }
+
+  async saveOAuthInstallation(installation: OAuthInstallation): Promise<OAuthInstallation> {
+    const result = await this.pool.query(
+      `INSERT INTO oauth_installations(
+         installation_id, workspace_id, subject_type, subject_id, agent_id, oauth_client_id,
+         installation_status, revoked_at, created_at, updated_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       ON CONFLICT (installation_id) DO UPDATE SET
+         installation_status = EXCLUDED.installation_status,
+         revoked_at = EXCLUDED.revoked_at,
+         updated_at = EXCLUDED.updated_at
+       WHERE oauth_installations.workspace_id = EXCLUDED.workspace_id
+         AND oauth_installations.subject_type = EXCLUDED.subject_type
+         AND oauth_installations.subject_id = EXCLUDED.subject_id
+         AND oauth_installations.agent_id = EXCLUDED.agent_id
+         AND oauth_installations.oauth_client_id = EXCLUDED.oauth_client_id
+         AND oauth_installations.installation_status <> 'REVOKED'
+       RETURNING *`,
+      [
+        installation.installationId,
+        installation.workspaceId,
+        installation.subjectType,
+        installation.subjectId,
+        installation.agentId,
+        installation.clientId,
+        installation.status,
+        installation.revokedAt ?? null,
+        installation.createdAt,
+        installation.updatedAt,
+      ],
+    );
+    if (!result.rows[0]) {
+      throw new AppError("CONFLICT", "OAuth installation identity cannot be changed or reactivated.", {
+        httpStatus: 409,
+      });
+    }
+    return mapOAuthInstallation(result.rows[0]);
+  }
+
+  async saveAgentConnectionBinding(binding: AgentConnectionBinding): Promise<AgentConnectionBinding> {
+    const result = await this.pool.query(
+      `INSERT INTO agent_connection_bindings(
+         binding_id, oauth_installation_id, workspace_id, subject_type, subject_id,
+         agent_id, connection_id, policy_id, binding_status, revoked_at, created_at, updated_at
+       )
+       SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
+       FROM oauth_installations installation
+       JOIN provider_connections connection ON connection.connection_id = $7
+       JOIN provider_authorizations provider_auth
+         ON provider_auth.authorization_id = connection.authorization_id
+       WHERE installation.installation_id = $2
+         AND installation.workspace_id = $3
+         AND installation.subject_type = $4
+         AND installation.subject_id = $5
+         AND installation.agent_id = $6
+         AND installation.installation_status = 'ACTIVE'
+         AND connection.connection_status = 'ACTIVE'
+         AND provider_auth.workspace_id = $3
+         AND provider_auth.authorization_status = 'ACTIVE'
+       ON CONFLICT (binding_id) DO UPDATE SET
+         policy_id = EXCLUDED.policy_id,
+         binding_status = EXCLUDED.binding_status,
+         revoked_at = EXCLUDED.revoked_at,
+         updated_at = EXCLUDED.updated_at
+       WHERE agent_connection_bindings.oauth_installation_id = EXCLUDED.oauth_installation_id
+         AND agent_connection_bindings.workspace_id = EXCLUDED.workspace_id
+         AND agent_connection_bindings.subject_type = EXCLUDED.subject_type
+         AND agent_connection_bindings.subject_id = EXCLUDED.subject_id
+         AND agent_connection_bindings.agent_id = EXCLUDED.agent_id
+         AND agent_connection_bindings.connection_id = EXCLUDED.connection_id
+         AND agent_connection_bindings.binding_status <> 'REVOKED'
+       RETURNING *`,
+      [
+        binding.bindingId,
+        binding.installationId,
+        binding.workspaceId,
+        binding.subjectType,
+        binding.subjectId,
+        binding.agentId,
+        binding.connectionId,
+        binding.policyId,
+        binding.status,
+        binding.revokedAt ?? null,
+        binding.createdAt,
+        binding.updatedAt,
+      ],
+    );
+    if (!result.rows[0]) {
+      throw new AppError("FORBIDDEN", "Binding identity, installation, and provider connection do not align.", {
+        httpStatus: 403,
+      });
+    }
+    return mapAgentConnectionBinding(result.rows[0]);
+  }
+
+  async resolveAgentConnectionBinding(
+    input: ResolveAgentConnectionBindingInput,
+  ): Promise<ResolvedAgentConnectionBinding | undefined> {
+    const result = await this.pool.query(
+      `SELECT binding.*, connection.authorization_id, connection.tenant_id,
+              connection.tenant_name, connection.provider_connection_id
+       FROM agent_connection_bindings binding
+       JOIN oauth_installations installation
+         ON installation.installation_id = binding.oauth_installation_id
+       JOIN provider_connections connection ON connection.connection_id = binding.connection_id
+       JOIN provider_authorizations provider_auth
+         ON provider_auth.authorization_id = connection.authorization_id
+       WHERE binding.binding_id = $1
+         AND binding.oauth_installation_id = $2
+         AND binding.workspace_id = $3
+         AND binding.subject_type = $4
+         AND binding.subject_id = $5
+         AND binding.agent_id = $6
+         AND binding.connection_id = $7
+         AND binding.binding_status = 'ACTIVE'
+         AND installation.installation_status = 'ACTIVE'
+         AND installation.workspace_id = binding.workspace_id
+         AND installation.subject_type = binding.subject_type
+         AND installation.subject_id = binding.subject_id
+         AND installation.agent_id = binding.agent_id
+         AND connection.connection_status = 'ACTIVE'
+         AND provider_auth.authorization_status = 'ACTIVE'
+         AND provider_auth.workspace_id = binding.workspace_id`,
+      [
+        input.bindingId,
+        input.installationId,
+        input.workspaceId,
+        input.subjectType,
+        input.subjectId,
+        input.agentId,
+        input.connectionId,
+      ],
+    );
+    return result.rows[0] ? mapResolvedAgentBinding(result.rows[0]) : undefined;
+  }
+
+  async revokeOAuthInstallation(installationId: string, workspaceId: string, revokedAt: Date): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const refreshFamilies = await client.query<{ family_id: string }>(
+        `SELECT family.family_id
+         FROM mcp_refresh_token_families family
+         JOIN oauth_installations installation
+           ON installation.installation_id = family.oauth_installation_id
+         WHERE family.oauth_installation_id = $1 AND installation.workspace_id = $2
+         ORDER BY family.family_id`,
+        [installationId, workspaceId],
+      );
+      for (const row of refreshFamilies.rows) {
+        await this.#lockMcpRefreshFamily(client, row.family_id);
+      }
+      const installation = await client.query(
+        `UPDATE oauth_installations SET
+           installation_status = 'REVOKED', revoked_at = COALESCE(revoked_at, $3), updated_at = $3
+         WHERE installation_id = $1 AND workspace_id = $2
+         RETURNING installation_id`,
+        [installationId, workspaceId, revokedAt],
+      );
+      if (installation.rowCount !== 1) {
+        await client.query("COMMIT");
+        return false;
+      }
+      await client.query(
+        `UPDATE agent_connection_bindings SET
+           binding_status = 'REVOKED', revoked_at = COALESCE(revoked_at, $2), updated_at = $2
+         WHERE oauth_installation_id = $1`,
+        [installationId, revokedAt],
+      );
+      await client.query(
+        `UPDATE mcp_access_tokens SET revoked_at = COALESCE(revoked_at, $2)
+         WHERE oauth_installation_id = $1`,
+        [installationId, revokedAt],
+      );
+      await client.query(
+        `UPDATE mcp_refresh_tokens refresh_token SET revoked_at = COALESCE(refresh_token.revoked_at, $2)
+         FROM mcp_refresh_token_families family
+         WHERE refresh_token.family_id = family.family_id
+           AND family.oauth_installation_id = $1`,
+        [installationId, revokedAt],
+      );
+      await client.query(
+        `UPDATE mcp_refresh_token_families SET
+           family_status = 'REVOKED', revoked_at = COALESCE(revoked_at, $2), updated_at = $2
+         WHERE oauth_installation_id = $1`,
+        [installationId, revokedAt],
+      );
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async saveOAuthBrokerFlow(flow: OAuthBrokerFlow): Promise<void> {
+    if (flow.pkceCodeChallengeMethod !== "S256" || flow.expiresAt <= flow.createdAt) {
+      throw new AppError("VALIDATION_FAILED", "OAuth broker flow lifetime or PKCE method is invalid.");
+    }
+    const result = await this.pool.query(
+      `INSERT INTO oauth_broker_flows(
+         flow_hash, browser_session_hash, oauth_client_id, redirect_uri,
+         pkce_code_challenge, pkce_code_challenge_method,
+         workspace_id, subject_type, subject_id, agent_id, requested_scopes,
+         expires_at, consumed_at, created_at
+       ) VALUES ($1,$2,$3,$4,$5,'S256',$6,$7,$8,$9,$10,$11,$12,$13)
+       ON CONFLICT (flow_hash) DO NOTHING`,
+      [
+        flow.flowHash,
+        flow.browserSessionHash,
+        flow.clientId,
+        flow.redirectUri,
+        flow.pkceCodeChallenge,
+        flow.workspaceId,
+        flow.subjectType,
+        flow.subjectId,
+        flow.agentId,
+        flow.requestedScopes,
+        flow.expiresAt,
+        flow.consumedAt ?? null,
+        flow.createdAt,
+      ],
+    );
+    if (result.rowCount !== 1) {
+      throw new AppError("CONFLICT", "OAuth broker flow identifier already exists.", { httpStatus: 409 });
+    }
+  }
+
+  async consumeOAuthBrokerFlow(input: ConsumeOAuthBrokerFlowInput): Promise<OAuthBrokerFlow | undefined> {
+    const result = await this.pool.query(
+      `UPDATE oauth_broker_flows SET consumed_at = $5
+       WHERE flow_hash = $1
+         AND browser_session_hash = $2
+         AND oauth_client_id = $3
+         AND redirect_uri = $4
+         AND consumed_at IS NULL
+         AND expires_at > $5
+       RETURNING *`,
+      [input.flowHash, input.browserSessionHash, input.clientId, input.redirectUri, input.now],
+    );
+    return result.rows[0] ? mapOAuthBrokerFlow(result.rows[0]) : undefined;
+  }
+
+  async createBrokerAuthorizationFlow(
+    input: CreateBrokerAuthorizationFlowInput,
+  ): Promise<CreateBrokerAuthorizationFlowResult> {
+    validateInitialBrokerFlow(input);
+    const { installation, flow } = input;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const insertedInstallation = await client.query(
+        `INSERT INTO oauth_installations(
+           installation_id, workspace_id, subject_type, subject_id, agent_id, oauth_client_id,
+           installation_status, revoked_at, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,'PENDING',NULL,$7,$8)
+         ON CONFLICT DO NOTHING
+         RETURNING *`,
+        [
+          installation.installationId,
+          installation.workspaceId,
+          installation.subjectType,
+          installation.subjectId,
+          installation.agentId,
+          installation.clientId,
+          installation.createdAt,
+          installation.updatedAt,
+        ],
+      );
+      if (insertedInstallation.rowCount !== 1) {
+        throw new AppError("CONFLICT", "OAuth Broker installation identifier already exists.", { httpStatus: 409 });
+      }
+      const insertedFlow = await client.query(
+        `INSERT INTO oauth_broker_flows(
+           flow_hash, browser_session_hash, oauth_client_id, redirect_uri,
+           pkce_code_challenge, pkce_code_challenge_method,
+           workspace_id, subject_type, subject_id, agent_id, requested_scopes,
+           expires_at, consumed_at, created_at,
+           flow_version, xero_state_hash, outer_state_hash, outer_state_ciphertext,
+           resource, audience, oauth_installation_id, personal_poc, flow_status,
+           authorization_id, selection_csrf_hash, updated_at
+         ) VALUES (
+           $1,$2,$3,$4,$5,'S256',$6,$7,$8,$9,$10,$11,NULL,$12,
+           2,$13,$14,$15,$16,$17,$18,$19,'AUTHORIZING_XERO',NULL,NULL,$20
+         )
+         ON CONFLICT DO NOTHING
+         RETURNING *`,
+        [
+          flow.flowHash,
+          flow.browserSessionHash,
+          flow.clientId,
+          flow.redirectUri,
+          flow.pkceCodeChallenge,
+          flow.workspaceId,
+          flow.subjectType,
+          flow.subjectId,
+          flow.agentId,
+          flow.requestedScopes,
+          flow.expiresAt,
+          flow.createdAt,
+          flow.xeroStateHash,
+          flow.outerStateHash,
+          flow.outerStateCiphertext,
+          flow.resource,
+          flow.audience,
+          flow.installationId,
+          flow.personalPoc,
+          flow.updatedAt,
+        ],
+      );
+      if (insertedFlow.rowCount !== 1) {
+        throw new AppError("CONFLICT", "OAuth Broker flow identifier already exists.", { httpStatus: 409 });
+      }
+      await client.query("COMMIT");
+      return {
+        installation: mapOAuthInstallation(insertedInstallation.rows[0] as Row),
+        flow: mapOAuthBrokerAuthorizationFlow(insertedFlow.rows[0] as Row),
+      };
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async beginBrokerXeroCallback(
+    input: BeginBrokerXeroCallbackInput,
+  ): Promise<OAuthBrokerAuthorizationFlow | undefined> {
+    if (!isValidDate(input.now)) return undefined;
+    const result = await this.pool.query(
+      `UPDATE oauth_broker_flows SET
+         flow_status = 'EXCHANGING_XERO', updated_at = $4
+       WHERE flow_hash = $1
+         AND flow_version = 2
+         AND browser_session_hash = $2
+         AND xero_state_hash = $3
+         AND flow_status = 'AUTHORIZING_XERO'
+         AND consumed_at IS NULL
+         AND expires_at > $4
+       RETURNING *`,
+      [input.flowHash, input.browserSessionHash, input.xeroStateHash, input.now],
+    );
+    return result.rows[0] ? mapOAuthBrokerAuthorizationFlow(result.rows[0] as Row) : undefined;
+  }
+
+  async completeBrokerXeroExchange(
+    input: CompleteBrokerXeroExchangeInput,
+  ): Promise<OAuthBrokerAuthorizationFlow | undefined> {
+    if (!isValidDate(input.now)) {
+      throw new AppError("VALIDATION_FAILED", "Xero authorization exchange time is invalid.");
+    }
+    const { authorization, connections } = input;
+    const connectionIds = new Set(connections.map((connection) => connection.connectionId));
+    const tenantIds = new Set(connections.map((connection) => connection.tenantId));
+    const providerConnectionIds = new Set(connections.map((connection) => connection.providerConnectionId));
+    if (
+      !isHashedValue(input.selectionCsrfHash) ||
+      !isNonEmpty(authorization.authorizationId) ||
+      !isNonEmpty(authorization.workspaceId) ||
+      !isNonEmpty(authorization.authorizedBySubject) ||
+      authorization.provider !== "xero" ||
+      !isOptionalNonEmpty(authorization.providerSubject) ||
+      !hasUniqueNonEmptyStrings(authorization.grantedScopes) ||
+      !isNonEmpty(authorization.tokenCiphertext) ||
+      !isValidDate(authorization.tokenExpiresAt) ||
+      authorization.tokenExpiresAt <= input.now ||
+      !Number.isInteger(authorization.refreshVersion) ||
+      authorization.refreshVersion < 0 ||
+      authorization.status !== "ACTIVE" ||
+      authorization.revokedAt ||
+      !isValidDate(authorization.createdAt) ||
+      !isValidDate(authorization.updatedAt) ||
+      authorization.updatedAt < authorization.createdAt ||
+      connections.length < 1 ||
+      connectionIds.size !== connections.length ||
+      tenantIds.size !== connections.length ||
+      providerConnectionIds.size !== connections.length ||
+      connections.some((connection) =>
+        connection.provider !== "xero" ||
+        connection.authorizationId !== authorization.authorizationId ||
+        connection.status !== "ACTIVE" ||
+        !isNonEmpty(connection.connectionId) ||
+        !isNonEmpty(connection.tenantId) ||
+        !isNonEmpty(connection.tenantName) ||
+        !isNonEmpty(connection.providerConnectionId) ||
+        !isOptionalNonEmpty(connection.tenantShortCode) ||
+        (connection.lastVerifiedAt !== undefined && !isValidDate(connection.lastVerifiedAt)) ||
+        !isValidDate(connection.createdAt) ||
+        !isValidDate(connection.updatedAt) ||
+        connection.updatedAt < connection.createdAt
+      )
+    ) {
+      throw new AppError("VALIDATION_FAILED", "Xero authorization exchange output is invalid.");
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selectedFlow = await client.query(
+        `SELECT * FROM oauth_broker_flows
+         WHERE flow_hash = $1 AND flow_version = 2
+         FOR UPDATE`,
+        [input.flowHash],
+      );
+      const row = selectedFlow.rows[0] as Row | undefined;
+      if (
+        !row ||
+        row.flow_status !== "EXCHANGING_XERO" ||
+        row.browser_session_hash !== input.browserSessionHash ||
+        row.consumed_at ||
+        date(row.expires_at) <= input.now ||
+        row.workspace_id !== authorization.workspaceId ||
+        row.subject_id !== authorization.authorizedBySubject
+      ) {
+        await client.query("COMMIT");
+        return undefined;
+      }
+
+      const insertedAuthorization = await client.query(
+        `INSERT INTO provider_authorizations(
+           authorization_id, workspace_id, authorized_by_subject, provider, provider_subject,
+           granted_scopes, token_ciphertext, token_expires_at, refresh_version,
+           authorization_status, revoked_at, created_at, updated_at
+         ) VALUES ($1,$2,$3,'xero',$4,$5,$6,$7,$8,'ACTIVE',NULL,$9,$10)
+         ON CONFLICT DO NOTHING
+         RETURNING authorization_id`,
+        [
+          authorization.authorizationId,
+          authorization.workspaceId,
+          authorization.authorizedBySubject,
+          authorization.providerSubject ?? null,
+          authorization.grantedScopes,
+          authorization.tokenCiphertext,
+          authorization.tokenExpiresAt,
+          authorization.refreshVersion,
+          authorization.createdAt,
+          authorization.updatedAt,
+        ],
+      );
+      if (insertedAuthorization.rowCount !== 1) {
+        throw new AppError("CONFLICT", "Provider authorization identifier already exists.", { httpStatus: 409 });
+      }
+
+      for (const connection of connections) {
+        const insertedConnection = await client.query(
+          `INSERT INTO provider_connections(
+             connection_id, authorization_id, provider, tenant_id, tenant_name, tenant_short_code,
+             provider_connection_id, last_verified_at, granted_scopes, refresh_version,
+             connection_status, created_at, updated_at
+           ) VALUES ($1,$2,'xero',$3,$4,$5,$6,$7,'{}',0,'ACTIVE',$8,$9)
+           ON CONFLICT DO NOTHING
+           RETURNING connection_id`,
+          [
+            connection.connectionId,
+            connection.authorizationId,
+            connection.tenantId,
+            connection.tenantName,
+            connection.tenantShortCode ?? null,
+            connection.providerConnectionId ?? null,
+            connection.lastVerifiedAt ?? null,
+            connection.createdAt,
+            connection.updatedAt,
+          ],
+        );
+        if (insertedConnection.rowCount !== 1) {
+          throw new AppError("CONFLICT", "Provider connection identifier already exists.", { httpStatus: 409 });
+        }
+      }
+
+      const updated = await client.query(
+        `UPDATE oauth_broker_flows SET
+           authorization_id = $2,
+           selection_csrf_hash = $3,
+           flow_status = 'AWAITING_SELECTION',
+           updated_at = $4
+         WHERE flow_hash = $1 AND flow_status = 'EXCHANGING_XERO'
+         RETURNING *`,
+        [input.flowHash, authorization.authorizationId, input.selectionCsrfHash, input.now],
+      );
+      if (updated.rowCount !== 1) {
+        throw new AppError("CONFLICT", "OAuth Broker flow changed during Xero exchange.", { httpStatus: 409 });
+      }
+      await client.query("COMMIT");
+      return mapOAuthBrokerAuthorizationFlow(updated.rows[0] as Row);
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getBrokerSelection(input: GetBrokerSelectionInput): Promise<BrokerSelectionContext | undefined> {
+    if (!isValidDate(input.now)) return undefined;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selectedFlow = await client.query(
+        `SELECT flow.*
+         FROM oauth_broker_flows flow
+         JOIN provider_authorizations provider_auth
+           ON provider_auth.authorization_id = flow.authorization_id
+         WHERE flow.flow_hash = $1
+           AND flow.flow_version = 2
+           AND flow.browser_session_hash = $2
+           AND flow.flow_status = 'AWAITING_SELECTION'
+           AND flow.consumed_at IS NULL
+           AND flow.expires_at > $3
+           AND provider_auth.authorization_status = 'ACTIVE'
+           AND provider_auth.workspace_id = flow.workspace_id
+         FOR SHARE OF flow, provider_auth`,
+        [input.flowHash, input.browserSessionHash, input.now],
+      );
+      const row = selectedFlow.rows[0] as Row | undefined;
+      if (!row) {
+        await client.query("COMMIT");
+        return undefined;
+      }
+      const connections = await client.query(
+        `SELECT * FROM provider_connections
+         WHERE authorization_id = $1 AND connection_status = 'ACTIVE'
+         ORDER BY created_at, connection_id`,
+        [row.authorization_id],
+      );
+      await client.query("COMMIT");
+      if (connections.rowCount === 0) return undefined;
+      return {
+        flow: mapOAuthBrokerAuthorizationFlow(row),
+        connections: connections.rows.map((connection) => mapAuthorizedConnection(connection as Row)),
+      };
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async completeBrokerOrganisationSelection(
+    input: CompleteBrokerOrganisationSelectionInput,
+  ): Promise<CompleteBrokerOrganisationSelectionResult | undefined> {
+    if (
+      !isNonEmpty(input.bindingId) ||
+      !isNonEmpty(input.policyId) ||
+      !isHashedValue(input.authorizationCodeHash) ||
+      !isValidDate(input.now) ||
+      !isValidDate(input.authorizationCodeExpiresAt) ||
+      input.authorizationCodeExpiresAt <= input.now ||
+      input.authorizationCodeExpiresAt.getTime() - input.now.getTime() > OAUTH_AUTHORIZATION_CODE_MAX_TTL_MS
+    ) return undefined;
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock($1)", [PERSONAL_POC_SELECTION_ADVISORY_LOCK_KEY]);
+      const selectedFlow = await client.query(
+        `SELECT * FROM oauth_broker_flows
+         WHERE flow_hash = $1 AND flow_version = 2
+         FOR UPDATE`,
+        [input.flowHash],
+      );
+      const row = selectedFlow.rows[0] as Row | undefined;
+      if (
+        !row ||
+        row.flow_status !== "AWAITING_SELECTION" ||
+        row.browser_session_hash !== input.browserSessionHash ||
+        row.selection_csrf_hash !== input.selectionCsrfHash ||
+        !row.authorization_id ||
+        !row.outer_state_ciphertext ||
+        row.consumed_at ||
+        date(row.expires_at) <= input.now
+      ) {
+        await client.query("COMMIT");
+        return undefined;
+      }
+
+      const installationResult = await client.query(
+        `SELECT * FROM oauth_installations
+         WHERE installation_id = $1
+         FOR UPDATE`,
+        [row.oauth_installation_id],
+      );
+      const installationRow = installationResult.rows[0] as Row | undefined;
+      const connectionResult = await client.query(
+        `SELECT connection.*
+         FROM provider_connections connection
+         JOIN provider_authorizations provider_auth
+           ON provider_auth.authorization_id = connection.authorization_id
+         WHERE connection.connection_id = $1
+           AND connection.authorization_id = $2
+           AND connection.connection_status = 'ACTIVE'
+           AND provider_auth.authorization_status = 'ACTIVE'
+           AND provider_auth.workspace_id = $3
+         FOR UPDATE OF connection, provider_auth`,
+        [input.selectedConnectionId, row.authorization_id, row.workspace_id],
+      );
+      const connectionRow = connectionResult.rows[0] as Row | undefined;
+      if (
+        !installationRow ||
+        installationRow.installation_status !== "PENDING" ||
+        installationRow.workspace_id !== row.workspace_id ||
+        installationRow.subject_type !== row.subject_type ||
+        installationRow.subject_id !== row.subject_id ||
+        installationRow.agent_id !== row.agent_id ||
+        installationRow.oauth_client_id !== row.oauth_client_id ||
+        !connectionRow
+      ) {
+        await client.query("COMMIT");
+        return undefined;
+      }
+      if (row.personal_poc === true) {
+        const otherActiveInstallations = await client.query(
+          `SELECT installation_id, workspace_id, subject_type, subject_id, agent_id, oauth_client_id
+           FROM oauth_installations
+           WHERE installation_status = 'ACTIVE' AND installation_id <> $1
+           ORDER BY installation_id`,
+          [row.oauth_installation_id],
+        );
+        let cleanedStaleInstallation = false;
+        for (const candidate of otherActiveInstallations.rows as Row[]) {
+          const samePrincipalAndClient =
+            candidate.workspace_id === row.workspace_id &&
+            candidate.subject_type === row.subject_type &&
+            candidate.subject_id === row.subject_id &&
+            candidate.agent_id === row.agent_id &&
+            candidate.oauth_client_id === row.oauth_client_id;
+          if (!samePrincipalAndClient) {
+            await client.query(cleanedStaleInstallation ? "ROLLBACK" : "COMMIT");
+            return undefined;
+          }
+
+          const candidateInstallationId = String(candidate.installation_id);
+          const familyIds = await client.query<{ family_id: string }>(
+            `SELECT family_id
+             FROM mcp_refresh_token_families
+             WHERE oauth_installation_id = $1
+             ORDER BY family_id`,
+            [candidateInstallationId],
+          );
+          // A just-selected installation can still be exchanging its first token.
+          // Never revoke it merely because no family has been created yet.
+          if (familyIds.rowCount === 0) {
+            await client.query(cleanedStaleInstallation ? "ROLLBACK" : "COMMIT");
+            return undefined;
+          }
+          for (const family of familyIds.rows) {
+            await this.#lockMcpRefreshFamily(client, family.family_id);
+          }
+
+          const lockedCandidate = await client.query(
+            `SELECT installation_id, workspace_id, subject_type, subject_id, agent_id, oauth_client_id,
+                    installation_status
+             FROM oauth_installations
+             WHERE installation_id = $1
+             FOR UPDATE`,
+            [candidateInstallationId],
+          );
+          const lockedRow = lockedCandidate.rows[0] as Row | undefined;
+          if (!lockedRow || lockedRow.installation_status !== "ACTIVE") continue;
+          if (
+            lockedRow.workspace_id !== row.workspace_id ||
+            lockedRow.subject_type !== row.subject_type ||
+            lockedRow.subject_id !== row.subject_id ||
+            lockedRow.agent_id !== row.agent_id ||
+            lockedRow.oauth_client_id !== row.oauth_client_id
+          ) {
+            await client.query(cleanedStaleInstallation ? "ROLLBACK" : "COMMIT");
+            return undefined;
+          }
+
+          const usableRefreshToken = await client.query(
+            `SELECT 1
+             FROM mcp_refresh_token_families family
+             JOIN mcp_refresh_tokens refresh_token ON refresh_token.family_id = family.family_id
+             JOIN agent_connection_bindings binding
+               ON binding.binding_id = family.binding_id
+              AND binding.oauth_installation_id = family.oauth_installation_id
+              AND binding.connection_id = family.connection_id
+             JOIN oauth_installations installation
+               ON installation.installation_id = family.oauth_installation_id
+             JOIN provider_connections connection ON connection.connection_id = family.connection_id
+             JOIN provider_authorizations provider_auth
+               ON provider_auth.authorization_id = connection.authorization_id
+             WHERE family.oauth_installation_id = $1
+               AND family.family_status = 'ACTIVE'
+               AND refresh_token.revoked_at IS NULL
+               AND refresh_token.consumed_at IS NULL
+               AND refresh_token.issued_at <= $2
+               AND refresh_token.expires_at > $2
+               AND binding.binding_status = 'ACTIVE'
+               AND installation.installation_status = 'ACTIVE'
+               AND connection.connection_status = 'ACTIVE'
+               AND provider_auth.authorization_status = 'ACTIVE'
+               AND provider_auth.workspace_id = binding.workspace_id
+             LIMIT 1`,
+            [candidateInstallationId, input.now],
+          );
+          if (usableRefreshToken.rowCount !== 0) {
+            await client.query(cleanedStaleInstallation ? "ROLLBACK" : "COMMIT");
+            return undefined;
+          }
+
+          await this.#revokeMcpInstallationGrant(client, candidateInstallationId, input.now);
+          cleanedStaleInstallation = true;
+        }
+      }
+
+      const activatedInstallation = await client.query(
+        `UPDATE oauth_installations SET installation_status = 'ACTIVE', updated_at = $2
+         WHERE installation_id = $1 AND installation_status = 'PENDING'
+         RETURNING *`,
+        [row.oauth_installation_id, input.now],
+      );
+      if (activatedInstallation.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return undefined;
+      }
+      const insertedBinding = await client.query(
+        `INSERT INTO agent_connection_bindings(
+           binding_id, oauth_installation_id, workspace_id, subject_type, subject_id, agent_id,
+           connection_id, policy_id, binding_status, revoked_at, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'ACTIVE',NULL,$9,$9)
+         ON CONFLICT DO NOTHING
+         RETURNING *`,
+        [
+          input.bindingId,
+          row.oauth_installation_id,
+          row.workspace_id,
+          row.subject_type,
+          row.subject_id,
+          row.agent_id,
+          input.selectedConnectionId,
+          input.policyId,
+          input.now,
+        ],
+      );
+      if (insertedBinding.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return undefined;
+      }
+      const insertedCode = await client.query(
+        `INSERT INTO oauth_authorization_codes(
+           code_hash, flow_hash, oauth_installation_id, binding_id, connection_id,
+           oauth_client_id, redirect_uri, pkce_code_challenge, pkce_code_challenge_method,
+           resource, audience, granted_scopes, expires_at, consumed_at, created_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'S256',$9,$10,$11,$12,NULL,$13)
+         ON CONFLICT DO NOTHING
+         RETURNING *`,
+        [
+          input.authorizationCodeHash,
+          row.flow_hash,
+          row.oauth_installation_id,
+          input.bindingId,
+          input.selectedConnectionId,
+          row.oauth_client_id,
+          row.redirect_uri,
+          row.pkce_code_challenge,
+          row.resource,
+          row.audience,
+          stringArray(row.requested_scopes),
+          input.authorizationCodeExpiresAt,
+          input.now,
+        ],
+      );
+      if (insertedCode.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return undefined;
+      }
+      const outerStateCiphertext = String(row.outer_state_ciphertext);
+      const completedFlow = await client.query(
+        `UPDATE oauth_broker_flows SET
+           flow_status = 'COMPLETED', consumed_at = $2, updated_at = $2,
+           outer_state_ciphertext = NULL, selection_csrf_hash = NULL
+         WHERE flow_hash = $1 AND flow_status = 'AWAITING_SELECTION'
+         RETURNING *`,
+        [input.flowHash, input.now],
+      );
+      if (completedFlow.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return undefined;
+      }
+      await client.query("COMMIT");
+      return {
+        flow: mapOAuthBrokerAuthorizationFlow(completedFlow.rows[0] as Row),
+        installation: mapOAuthInstallation(activatedInstallation.rows[0] as Row),
+        binding: mapAgentConnectionBinding(insertedBinding.rows[0] as Row),
+        authorizationCode: mapOAuthAuthorizationCode(insertedCode.rows[0] as Row),
+        outerStateCiphertext,
+      };
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async terminateBrokerAuthorizationFlow(
+    input: TerminateBrokerAuthorizationFlowInput,
+  ): Promise<TerminateBrokerAuthorizationFlowResult | undefined> {
+    if (!isValidDate(input.now) || !["DENIED", "FAILED"].includes(input.terminalStatus)) return undefined;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selected = await client.query(
+        `SELECT * FROM oauth_broker_flows
+         WHERE flow_hash = $1
+           AND flow_version = 2
+           AND browser_session_hash = $2
+           AND flow_status IN ('AUTHORIZING_XERO','EXCHANGING_XERO','AWAITING_SELECTION')
+           AND consumed_at IS NULL
+           AND outer_state_ciphertext IS NOT NULL
+           AND expires_at > $3
+         FOR UPDATE`,
+        [input.flowHash, input.browserSessionHash, input.now],
+      );
+      const row = selected.rows[0] as Row | undefined;
+      if (!row) {
+        await client.query("COMMIT");
+        return undefined;
+      }
+      const outerStateCiphertext = String(row.outer_state_ciphertext);
+      await this.#revokePendingBrokerGrant(client, row, input.now);
+      const updated = await client.query(
+        `UPDATE oauth_broker_flows SET
+           flow_status = $2, consumed_at = $3, updated_at = $3,
+           outer_state_ciphertext = NULL, selection_csrf_hash = NULL
+         WHERE flow_hash = $1
+         RETURNING *`,
+        [input.flowHash, input.terminalStatus, input.now],
+      );
+      await client.query("COMMIT");
+      return {
+        flow: mapOAuthBrokerAuthorizationFlow(updated.rows[0] as Row),
+        outerStateCiphertext,
+      };
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async saveOAuthAuthorizationCode(code: OAuthAuthorizationCode): Promise<void> {
+    if (code.pkceCodeChallengeMethod !== "S256" || code.expiresAt <= code.createdAt) {
+      throw new AppError("VALIDATION_FAILED", "OAuth authorization code lifetime or PKCE method is invalid.");
+    }
+    const result = await this.pool.query(
+      `INSERT INTO oauth_authorization_codes(
+         code_hash, flow_hash, oauth_installation_id, binding_id, connection_id, oauth_client_id,
+         redirect_uri, pkce_code_challenge, pkce_code_challenge_method,
+         resource, audience, granted_scopes, expires_at, consumed_at, created_at
+       )
+       SELECT $1,$2,$3,$4,$5,$6,$7,$8,'S256',$9,$10,$11,$12,$13,$14
+       FROM agent_connection_bindings binding
+       JOIN oauth_installations installation
+         ON installation.installation_id = binding.oauth_installation_id
+       JOIN provider_connections connection ON connection.connection_id = binding.connection_id
+       JOIN provider_authorizations provider_auth
+         ON provider_auth.authorization_id = connection.authorization_id
+       JOIN oauth_broker_flows flow ON flow.flow_hash = $2
+       WHERE binding.binding_id = $4
+         AND binding.oauth_installation_id = $3
+         AND binding.connection_id = $5
+         AND binding.binding_status = 'ACTIVE'
+         AND installation.installation_status = 'ACTIVE'
+         AND installation.oauth_client_id = $6
+         AND connection.connection_status = 'ACTIVE'
+         AND provider_auth.authorization_status = 'ACTIVE'
+         AND provider_auth.workspace_id = binding.workspace_id
+         AND flow.consumed_at IS NOT NULL
+         AND flow.consumed_at <= $14
+         AND flow.expires_at > $14
+         AND flow.oauth_client_id = $6
+         AND flow.redirect_uri = $7
+         AND flow.pkce_code_challenge = $8
+         AND flow.pkce_code_challenge_method = 'S256'
+         AND flow.workspace_id = installation.workspace_id
+         AND flow.subject_type = installation.subject_type
+         AND flow.subject_id = installation.subject_id
+         AND flow.agent_id = installation.agent_id
+         AND $11::text[] <@ flow.requested_scopes`,
+      [
+        code.codeHash,
+        code.flowHash,
+        code.installationId,
+        code.bindingId,
+        code.connectionId,
+        code.clientId,
+        code.redirectUri,
+        code.pkceCodeChallenge,
+        code.resource,
+        code.audience,
+        code.grantedScopes,
+        code.expiresAt,
+        code.consumedAt ?? null,
+        code.createdAt,
+      ],
+    );
+    if (result.rowCount !== 1) {
+      throw new AppError("FORBIDDEN", "OAuth authorization code is not bound to an active installation.", {
+        httpStatus: 403,
+      });
+    }
+  }
+
+  async peekOAuthAuthorizationCodeForExchange(
+    input: PeekOAuthAuthorizationCodeForExchangeInput,
+  ): Promise<OAuthAuthorizationCodeExchangePreview | undefined> {
+    if (!isValidDate(input.now)) return undefined;
+    const result = await this.pool.query(
+      `SELECT code.*
+       FROM oauth_authorization_codes code
+       JOIN agent_connection_bindings binding
+         ON binding.binding_id = code.binding_id
+        AND binding.oauth_installation_id = code.oauth_installation_id
+        AND binding.connection_id = code.connection_id
+       JOIN oauth_installations installation
+         ON installation.installation_id = code.oauth_installation_id
+       JOIN provider_connections connection ON connection.connection_id = code.connection_id
+       JOIN provider_authorizations provider_auth
+         ON provider_auth.authorization_id = connection.authorization_id
+       WHERE code.code_hash = $1
+         AND code.oauth_client_id = $2
+         AND code.redirect_uri = $3
+         AND code.pkce_code_challenge = $4
+         AND code.pkce_code_challenge_method = 'S256'
+         AND code.resource = $5
+         AND code.consumed_at IS NULL
+         AND code.expires_at > $6
+         AND binding.binding_status = 'ACTIVE'
+         AND installation.installation_status = 'ACTIVE'
+         AND installation.oauth_client_id = code.oauth_client_id
+         AND connection.connection_status = 'ACTIVE'
+         AND provider_auth.authorization_status = 'ACTIVE'
+         AND provider_auth.workspace_id = binding.workspace_id`,
+      [
+        input.codeHash,
+        input.clientId,
+        input.redirectUri,
+        input.pkceCodeChallenge,
+        input.expectedResource,
+        input.now,
+      ],
+    );
+    const row = result.rows[0] as Row | undefined;
+    if (!row) return undefined;
+    return {
+      codeHash: String(row.code_hash),
+      installationId: String(row.oauth_installation_id),
+      bindingId: String(row.binding_id),
+      connectionId: String(row.connection_id),
+      clientId: String(row.oauth_client_id),
+      resource: String(row.resource),
+      audience: String(row.audience),
+      grantedScopes: stringArray(row.granted_scopes),
+      expiresAt: date(row.expires_at),
+    };
+  }
+
+  async consumeOAuthAuthorizationCode(
+    input: ConsumeOAuthAuthorizationCodeInput,
+  ): Promise<OAuthAuthorizationCode | undefined> {
+    const result = await this.pool.query(
+      `UPDATE oauth_authorization_codes code SET consumed_at = $5
+       WHERE code.code_hash = $1
+         AND code.oauth_client_id = $2
+         AND code.redirect_uri = $3
+         AND code.pkce_code_challenge = $4
+         AND code.pkce_code_challenge_method = 'S256'
+         AND code.consumed_at IS NULL
+         AND code.expires_at > $5
+         AND EXISTS (
+           SELECT 1
+           FROM agent_connection_bindings binding
+           JOIN oauth_installations installation
+             ON installation.installation_id = binding.oauth_installation_id
+           JOIN provider_connections connection ON connection.connection_id = binding.connection_id
+           JOIN provider_authorizations provider_auth
+             ON provider_auth.authorization_id = connection.authorization_id
+           WHERE binding.binding_id = code.binding_id
+             AND binding.oauth_installation_id = code.oauth_installation_id
+             AND binding.connection_id = code.connection_id
+             AND binding.binding_status = 'ACTIVE'
+             AND installation.installation_status = 'ACTIVE'
+             AND connection.connection_status = 'ACTIVE'
+             AND provider_auth.authorization_status = 'ACTIVE'
+             AND provider_auth.workspace_id = binding.workspace_id
+         )
+       RETURNING code.*`,
+      [input.codeHash, input.clientId, input.redirectUri, input.pkceCodeChallenge, input.now],
+    );
+    return result.rows[0] ? mapOAuthAuthorizationCode(result.rows[0]) : undefined;
+  }
+
+  async exchangeOAuthAuthorizationCodeForTokenSet(
+    input: ExchangeOAuthAuthorizationCodeForTokenSetInput,
+  ): Promise<ExchangeOAuthAuthorizationCodeForTokenSetResult> {
+    const { grant, accessToken } = input;
+    const family = input.refreshTokenFamily.family;
+    const refreshToken = input.refreshTokenFamily.initialToken;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selected = await client.query(
+        `SELECT code.*,
+                binding.binding_status, binding.workspace_id,
+                installation.installation_status,
+                installation.oauth_client_id AS installation_oauth_client_id,
+                connection.connection_status,
+                provider_auth.authorization_status,
+                provider_auth.workspace_id AS authorization_workspace_id
+         FROM oauth_authorization_codes code
+         JOIN agent_connection_bindings binding
+           ON binding.binding_id = code.binding_id
+          AND binding.oauth_installation_id = code.oauth_installation_id
+          AND binding.connection_id = code.connection_id
+         JOIN oauth_installations installation
+           ON installation.installation_id = code.oauth_installation_id
+         JOIN provider_connections connection ON connection.connection_id = code.connection_id
+         JOIN provider_authorizations provider_auth
+           ON provider_auth.authorization_id = connection.authorization_id
+         WHERE code.code_hash = $1
+           AND code.oauth_client_id = $2
+           AND code.redirect_uri = $3
+           AND code.pkce_code_challenge = $4
+           AND code.pkce_code_challenge_method = 'S256'
+           AND code.resource = $5
+         FOR UPDATE OF code, binding, installation, connection, provider_auth`,
+        [grant.codeHash, grant.clientId, grant.redirectUri, grant.pkceCodeChallenge, grant.expectedResource],
+      );
+      const row = selected.rows[0] as Row | undefined;
+      const codeScopes = row ? stringArray(row.granted_scopes) : [];
+      if (
+        !row ||
+        row.consumed_at ||
+        date(row.expires_at) <= grant.now ||
+        row.binding_status !== "ACTIVE" ||
+        row.installation_status !== "ACTIVE" ||
+        row.connection_status !== "ACTIVE" ||
+        row.authorization_status !== "ACTIVE" ||
+        row.installation_oauth_client_id !== row.oauth_client_id ||
+        row.authorization_workspace_id !== row.workspace_id ||
+        family.status !== "ACTIVE" ||
+        family.revokedAt ||
+        family.replayDetectedAt ||
+        family.installationId !== String(row.oauth_installation_id) ||
+        family.bindingId !== String(row.binding_id) ||
+        family.connectionId !== String(row.connection_id) ||
+        family.clientId !== String(row.oauth_client_id) ||
+        family.resource !== String(row.resource) ||
+        family.audience !== String(row.audience) ||
+        !hasSameScopes(family.grantedScopes, codeScopes) ||
+        refreshToken.familyId !== family.familyId ||
+        refreshToken.parentTokenHash ||
+        refreshToken.consumedAt ||
+        refreshToken.revokedAt ||
+        refreshToken.replacedByTokenHash ||
+        refreshToken.issuedAt.getTime() !== grant.now.getTime() ||
+        refreshToken.expiresAt <= refreshToken.issuedAt ||
+        accessToken.installationId !== String(row.oauth_installation_id) ||
+        accessToken.bindingId !== String(row.binding_id) ||
+        accessToken.connectionId !== String(row.connection_id) ||
+        accessToken.refreshFamilyId !== family.familyId ||
+        accessToken.clientId !== String(row.oauth_client_id) ||
+        accessToken.resource !== String(row.resource) ||
+        accessToken.audience !== String(row.audience) ||
+        !hasSameScopes(accessToken.grantedScopes, codeScopes) ||
+        accessToken.issuedAt.getTime() !== grant.now.getTime() ||
+        accessToken.expiresAt <= accessToken.issuedAt ||
+        accessToken.revokedAt
+      ) {
+        await client.query("COMMIT");
+        return { status: "INVALID" };
+      }
+
+      await client.query(
+        `INSERT INTO mcp_refresh_token_families(
+           family_id, oauth_installation_id, binding_id, connection_id, oauth_client_id,
+           resource, audience, granted_scopes, family_status, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'ACTIVE',$9,$10)`,
+        [
+          family.familyId,
+          family.installationId,
+          family.bindingId,
+          family.connectionId,
+          family.clientId,
+          family.resource,
+          family.audience,
+          family.grantedScopes,
+          family.createdAt,
+          family.updatedAt,
+        ],
+      );
+      await client.query(
+        `INSERT INTO mcp_refresh_tokens(
+           token_hash, token_id, family_id, issued_at, expires_at
+         ) VALUES ($1,$2,$3,$4,$5)`,
+        [
+          refreshToken.tokenHash,
+          refreshToken.tokenId,
+          refreshToken.familyId,
+          refreshToken.issuedAt,
+          refreshToken.expiresAt,
+        ],
+      );
+      await client.query(
+        `INSERT INTO mcp_access_tokens(
+           token_hash, token_id, oauth_installation_id, binding_id, connection_id,
+           refresh_family_id, oauth_client_id, resource, audience, granted_scopes,
+           issued_at, expires_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          accessToken.tokenHash,
+          accessToken.tokenId,
+          accessToken.installationId,
+          accessToken.bindingId,
+          accessToken.connectionId,
+          accessToken.refreshFamilyId,
+          accessToken.clientId,
+          accessToken.resource,
+          accessToken.audience,
+          accessToken.grantedScopes,
+          accessToken.issuedAt,
+          accessToken.expiresAt,
+        ],
+      );
+      const consumed = await client.query(
+        `UPDATE oauth_authorization_codes SET consumed_at = $2
+         WHERE code_hash = $1 AND consumed_at IS NULL
+         RETURNING *`,
+        [grant.codeHash, grant.now],
+      );
+      if (consumed.rowCount !== 1) {
+        throw new AppError("CONFLICT", "OAuth authorization code was consumed concurrently.", { httpStatus: 409 });
+      }
+      await client.query("COMMIT");
+      return {
+        status: "ISSUED",
+        authorizationCode: mapOAuthAuthorizationCode(consumed.rows[0] as Row),
+        accessToken: structuredClone(accessToken),
+        refreshToken: structuredClone(refreshToken),
+      };
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async saveMcpAccessToken(token: McpAccessToken): Promise<void> {
+    if (token.expiresAt <= token.issuedAt) {
+      throw new AppError("VALIDATION_FAILED", "MCP access token expiry must be after issuance.");
+    }
+    const result = await this.pool.query(
+      `INSERT INTO mcp_access_tokens(
+         token_hash, token_id, oauth_installation_id, binding_id, connection_id,
+         refresh_family_id, oauth_client_id, resource, audience, granted_scopes,
+         issued_at, expires_at, revoked_at
+       )
+       SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
+       FROM agent_connection_bindings binding
+       JOIN oauth_installations installation
+         ON installation.installation_id = binding.oauth_installation_id
+       JOIN provider_connections connection ON connection.connection_id = binding.connection_id
+       JOIN provider_authorizations provider_auth
+         ON provider_auth.authorization_id = connection.authorization_id
+       WHERE binding.binding_id = $4
+         AND binding.oauth_installation_id = $3
+         AND binding.connection_id = $5
+         AND binding.binding_status = 'ACTIVE'
+         AND installation.installation_status = 'ACTIVE'
+         AND installation.oauth_client_id = $7
+         AND connection.connection_status = 'ACTIVE'
+         AND provider_auth.authorization_status = 'ACTIVE'
+         AND provider_auth.workspace_id = binding.workspace_id
+         AND (
+           $6::text IS NULL OR EXISTS (
+             SELECT 1 FROM mcp_refresh_token_families family
+             WHERE family.family_id = $6
+               AND family.oauth_installation_id = $3
+               AND family.binding_id = $4
+               AND family.connection_id = $5
+               AND family.oauth_client_id = $7
+               AND family.resource = $8
+               AND family.audience = $9
+               AND $10::text[] <@ family.granted_scopes
+               AND family.family_status = 'ACTIVE'
+           )
+         )`,
+      [
+        token.tokenHash,
+        token.tokenId,
+        token.installationId,
+        token.bindingId,
+        token.connectionId,
+        token.refreshFamilyId ?? null,
+        token.clientId,
+        token.resource,
+        token.audience,
+        token.grantedScopes,
+        token.issuedAt,
+        token.expiresAt,
+        token.revokedAt ?? null,
+      ],
+    );
+    if (result.rowCount !== 1) {
+      throw new AppError("FORBIDDEN", "MCP access token is not bound to an active installation.", {
+        httpStatus: 403,
+      });
+    }
+  }
+
+  async resolveMcpAccessToken(input: ResolveMcpAccessTokenInput): Promise<ResolvedMcpAccessToken | undefined> {
+    const result = await this.pool.query(
+      `SELECT access_token.token_id, access_token.oauth_client_id, access_token.resource,
+              access_token.audience, access_token.granted_scopes AS access_granted_scopes,
+              access_token.issued_at, access_token.expires_at,
+              binding.oauth_installation_id, binding.binding_id, binding.workspace_id,
+              binding.subject_type, binding.subject_id, binding.agent_id, binding.connection_id,
+              binding.policy_id, connection.authorization_id, connection.tenant_id
+       FROM mcp_access_tokens access_token
+       JOIN agent_connection_bindings binding
+         ON binding.binding_id = access_token.binding_id
+        AND binding.oauth_installation_id = access_token.oauth_installation_id
+        AND binding.connection_id = access_token.connection_id
+       JOIN oauth_installations installation
+         ON installation.installation_id = binding.oauth_installation_id
+       JOIN provider_connections connection ON connection.connection_id = binding.connection_id
+       JOIN provider_authorizations provider_auth
+         ON provider_auth.authorization_id = connection.authorization_id
+       WHERE access_token.token_hash = $1
+         AND access_token.resource = $2
+         AND access_token.audience = $3
+         AND access_token.revoked_at IS NULL
+         AND access_token.expires_at > $4
+         AND binding.binding_status = 'ACTIVE'
+         AND installation.installation_status = 'ACTIVE'
+         AND connection.connection_status = 'ACTIVE'
+         AND provider_auth.authorization_status = 'ACTIVE'
+         AND provider_auth.workspace_id = binding.workspace_id
+         AND (
+           access_token.refresh_family_id IS NULL OR EXISTS (
+             SELECT 1 FROM mcp_refresh_token_families family
+             WHERE family.family_id = access_token.refresh_family_id
+               AND family.family_status = 'ACTIVE'
+           )
+         )`,
+      [input.tokenHash, input.expectedResource, input.expectedAudience, input.now],
+    );
+    const row = result.rows[0] as Row | undefined;
+    if (!row) return undefined;
+    return {
+      tokenId: String(row.token_id),
+      clientId: String(row.oauth_client_id),
+      resource: String(row.resource),
+      audience: String(row.audience),
+      grantedScopes: stringArray(row.access_granted_scopes),
+      issuedAt: date(row.issued_at),
+      expiresAt: date(row.expires_at),
+      installationId: String(row.oauth_installation_id),
+      bindingId: String(row.binding_id),
+      connectionId: String(row.connection_id),
+      authorizationId: String(row.authorization_id),
+      workspaceId: String(row.workspace_id),
+      subjectType: row.subject_type as ResolvedMcpAccessToken["subjectType"],
+      subjectId: String(row.subject_id),
+      agentId: String(row.agent_id),
+      policyId: String(row.policy_id),
+      tenantId: String(row.tenant_id),
+    };
+  }
+
+  async revokeMcpAccessToken(tokenHash: string, revokedAt: Date): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE mcp_access_tokens SET revoked_at = COALESCE(revoked_at, $2)
+       WHERE token_hash = $1
+       RETURNING token_hash`,
+      [tokenHash, revokedAt],
+    );
+    return result.rowCount === 1;
+  }
+
+  async createMcpRefreshTokenFamily(input: CreateMcpRefreshTokenFamilyInput): Promise<void> {
+    const { family, initialToken } = input;
+    if (
+      family.status !== "ACTIVE" ||
+      family.revokedAt ||
+      family.replayDetectedAt ||
+      initialToken.familyId !== family.familyId ||
+      initialToken.parentTokenHash ||
+      initialToken.consumedAt ||
+      initialToken.revokedAt ||
+      initialToken.replacedByTokenHash ||
+      initialToken.expiresAt <= initialToken.issuedAt
+    ) {
+      throw new AppError("VALIDATION_FAILED", "MCP refresh token family input is invalid.");
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const insertedFamily = await client.query(
+        `INSERT INTO mcp_refresh_token_families(
+           family_id, oauth_installation_id, binding_id, connection_id, oauth_client_id,
+           resource, audience, granted_scopes, family_status, replay_detected_at,
+           revoked_at, created_at, updated_at
+         )
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,'ACTIVE',NULL,NULL,$9,$10
+         FROM agent_connection_bindings binding
+         JOIN oauth_installations installation
+           ON installation.installation_id = binding.oauth_installation_id
+         JOIN provider_connections connection ON connection.connection_id = binding.connection_id
+         JOIN provider_authorizations provider_auth
+           ON provider_auth.authorization_id = connection.authorization_id
+         WHERE binding.binding_id = $3
+           AND binding.oauth_installation_id = $2
+           AND binding.connection_id = $4
+           AND binding.binding_status = 'ACTIVE'
+           AND installation.installation_status = 'ACTIVE'
+           AND installation.oauth_client_id = $5
+           AND connection.connection_status = 'ACTIVE'
+           AND provider_auth.authorization_status = 'ACTIVE'
+           AND provider_auth.workspace_id = binding.workspace_id
+         RETURNING family_id`,
+        [
+          family.familyId,
+          family.installationId,
+          family.bindingId,
+          family.connectionId,
+          family.clientId,
+          family.resource,
+          family.audience,
+          family.grantedScopes,
+          family.createdAt,
+          family.updatedAt,
+        ],
+      );
+      if (insertedFamily.rowCount !== 1) {
+        throw new AppError("FORBIDDEN", "MCP refresh token family is not bound to an active installation.", {
+          httpStatus: 403,
+        });
+      }
+      await client.query(
+        `INSERT INTO mcp_refresh_tokens(
+           token_hash, token_id, family_id, parent_token_hash, issued_at, expires_at,
+           consumed_at, revoked_at, replaced_by_token_hash
+         ) VALUES ($1,$2,$3,NULL,$4,$5,NULL,NULL,NULL)`,
+        [
+          initialToken.tokenHash,
+          initialToken.tokenId,
+          initialToken.familyId,
+          initialToken.issuedAt,
+          initialToken.expiresAt,
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await this.#safeRollback(client);
+      if (isPostgresUniqueViolation(error)) {
+        throw new AppError("CONFLICT", "OAuth installation already has an active MCP refresh-token family.", {
+          httpStatus: 409,
+        });
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async peekMcpRefreshTokenContext(
+    input: PeekMcpRefreshTokenContextInput,
+  ): Promise<McpRefreshTokenContextPreview | undefined> {
+    if (!isValidDate(input.now)) return undefined;
+    const result = await this.pool.query(
+      `SELECT refresh_token.family_id, refresh_token.consumed_at, refresh_token.expires_at,
+              family.oauth_installation_id, family.binding_id, family.connection_id,
+              family.oauth_client_id, family.resource, family.audience, family.granted_scopes
+       FROM mcp_refresh_tokens refresh_token
+       JOIN mcp_refresh_token_families family ON family.family_id = refresh_token.family_id
+       JOIN agent_connection_bindings binding
+         ON binding.binding_id = family.binding_id
+        AND binding.oauth_installation_id = family.oauth_installation_id
+        AND binding.connection_id = family.connection_id
+       JOIN oauth_installations installation
+         ON installation.installation_id = family.oauth_installation_id
+       JOIN provider_connections connection ON connection.connection_id = family.connection_id
+       JOIN provider_authorizations provider_auth
+         ON provider_auth.authorization_id = connection.authorization_id
+       WHERE refresh_token.token_hash = $1
+         AND family.oauth_client_id = $2
+         AND family.resource = $3
+         AND family.audience = $4
+         AND refresh_token.revoked_at IS NULL
+         AND family.family_status = 'ACTIVE'
+         AND binding.binding_status = 'ACTIVE'
+         AND installation.installation_status = 'ACTIVE'
+         AND connection.connection_status = 'ACTIVE'
+         AND provider_auth.authorization_status = 'ACTIVE'
+         AND provider_auth.workspace_id = binding.workspace_id`,
+      [
+        input.tokenHash,
+        input.clientId,
+        input.expectedResource,
+        input.expectedAudience,
+      ],
+    );
+    const row = result.rows[0] as Row | undefined;
+    if (!row) return undefined;
+    return {
+      familyId: String(row.family_id),
+      installationId: String(row.oauth_installation_id),
+      bindingId: String(row.binding_id),
+      connectionId: String(row.connection_id),
+      clientId: String(row.oauth_client_id),
+      resource: String(row.resource),
+      audience: String(row.audience),
+      grantedScopes: stringArray(row.granted_scopes),
+      consumed: Boolean(row.consumed_at),
+      expiresAt: date(row.expires_at),
+    };
+  }
+
+  async rotateMcpRefreshToken(input: RotateMcpRefreshTokenInput): Promise<RotateMcpRefreshTokenResult> {
+    if (input.expiresAt <= input.issuedAt) return { status: "INVALID" };
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const familyLookup = await client.query<{ family_id: string }>(
+        `SELECT family.family_id
+         FROM mcp_refresh_tokens refresh_token
+         JOIN mcp_refresh_token_families family ON family.family_id = refresh_token.family_id
+         WHERE refresh_token.token_hash = $1
+           AND family.oauth_client_id = $2
+           AND family.resource = $3
+           AND family.audience = $4`,
+        [input.currentTokenHash, input.expectedClientId, input.expectedResource, input.expectedAudience],
+      );
+      const lookedUpFamilyId = familyLookup.rows[0]?.family_id;
+      if (!lookedUpFamilyId) {
+        await client.query("COMMIT");
+        return { status: "INVALID" };
+      }
+      await this.#lockMcpRefreshFamily(client, lookedUpFamilyId);
+      const selected = await client.query(
+        `SELECT refresh_token.*, family.oauth_installation_id, family.binding_id,
+                family.connection_id, family.oauth_client_id, family.resource, family.audience,
+                family.granted_scopes, family.family_status,
+                binding.binding_status, installation.installation_status,
+                connection.connection_status, provider_auth.authorization_status
+         FROM mcp_refresh_tokens refresh_token
+         JOIN mcp_refresh_token_families family ON family.family_id = refresh_token.family_id
+         JOIN agent_connection_bindings binding
+           ON binding.binding_id = family.binding_id
+          AND binding.oauth_installation_id = family.oauth_installation_id
+          AND binding.connection_id = family.connection_id
+         JOIN oauth_installations installation
+           ON installation.installation_id = family.oauth_installation_id
+         JOIN provider_connections connection ON connection.connection_id = family.connection_id
+         JOIN provider_authorizations provider_auth
+           ON provider_auth.authorization_id = connection.authorization_id
+         WHERE refresh_token.token_hash = $1
+           AND family.oauth_client_id = $2
+           AND family.resource = $3
+           AND family.audience = $4
+           AND provider_auth.workspace_id = binding.workspace_id
+         FOR UPDATE OF refresh_token, family`,
+        [
+          input.currentTokenHash,
+          input.expectedClientId,
+          input.expectedResource,
+          input.expectedAudience,
+        ],
+      );
+      const row = selected.rows[0] as Row | undefined;
+      if (
+        !row ||
+        row.family_status !== "ACTIVE" ||
+        row.binding_status !== "ACTIVE" ||
+        row.installation_status !== "ACTIVE" ||
+        row.connection_status !== "ACTIVE" ||
+        row.authorization_status !== "ACTIVE"
+      ) {
+        await client.query("COMMIT");
+        return { status: "INVALID" };
+      }
+      const familyId = String(row.family_id);
+      if (row.consumed_at) {
+        await this.#revokeMcpRefreshGrant(
+          client,
+          familyId,
+          String(row.oauth_installation_id),
+          String(row.binding_id),
+          String(row.connection_id),
+          input.issuedAt,
+          input.issuedAt,
+        );
+        await client.query("COMMIT");
+        return { status: "REPLAY_DETECTED", familyId };
+      }
+      if (date(row.expires_at) <= input.issuedAt) {
+        await this.#revokeMcpRefreshGrant(
+          client,
+          familyId,
+          String(row.oauth_installation_id),
+          String(row.binding_id),
+          String(row.connection_id),
+          input.issuedAt,
+        );
+        await client.query("COMMIT");
+        return { status: "INVALID" };
+      }
+      const familyScopes = stringArray(row.granted_scopes);
+      const grantedScopes = [...(input.requestedScopes ?? familyScopes)];
+      if (
+        row.revoked_at ||
+        !isScopeSubset(grantedScopes, familyScopes)
+      ) {
+        await client.query("COMMIT");
+        return { status: "INVALID" };
+      }
+      const inserted = await client.query(
+        `INSERT INTO mcp_refresh_tokens(
+           token_hash, token_id, family_id, parent_token_hash, issued_at, expires_at
+         ) VALUES ($1,$2,$3,$4,$5,$6)
+         RETURNING *`,
+        [input.newTokenHash, input.newTokenId, familyId, input.currentTokenHash, input.issuedAt, input.expiresAt],
+      );
+      await client.query(
+        `UPDATE mcp_refresh_tokens SET consumed_at = $2, replaced_by_token_hash = $3
+         WHERE token_hash = $1`,
+        [input.currentTokenHash, input.issuedAt, input.newTokenHash],
+      );
+      await client.query(
+        "UPDATE mcp_refresh_token_families SET updated_at = $2 WHERE family_id = $1",
+        [familyId, input.issuedAt],
+      );
+      await client.query("COMMIT");
+      return {
+        status: "ROTATED",
+        familyId,
+        refreshToken: mapMcpRefreshToken(inserted.rows[0] as Row),
+        installationId: String(row.oauth_installation_id),
+        bindingId: String(row.binding_id),
+        connectionId: String(row.connection_id),
+        grantedScopes,
+      };
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async rotateMcpRefreshTokenAndIssueAccessToken(
+    input: RotateMcpRefreshTokenAndIssueAccessTokenInput,
+  ): Promise<RotateMcpRefreshTokenAndIssueAccessTokenResult> {
+    const { rotation, accessToken } = input;
+    if (rotation.expiresAt <= rotation.issuedAt) return { status: "INVALID" };
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const familyLookup = await client.query<{ family_id: string }>(
+        `SELECT family.family_id
+         FROM mcp_refresh_tokens refresh_token
+         JOIN mcp_refresh_token_families family ON family.family_id = refresh_token.family_id
+         WHERE refresh_token.token_hash = $1
+           AND family.oauth_client_id = $2
+           AND family.resource = $3
+           AND family.audience = $4`,
+        [
+          rotation.currentTokenHash,
+          rotation.expectedClientId,
+          rotation.expectedResource,
+          rotation.expectedAudience,
+        ],
+      );
+      const lookedUpFamilyId = familyLookup.rows[0]?.family_id;
+      if (!lookedUpFamilyId) {
+        await client.query("COMMIT");
+        return { status: "INVALID" };
+      }
+      await this.#lockMcpRefreshFamily(client, lookedUpFamilyId);
+      const selected = await client.query(
+        `SELECT refresh_token.*, family.oauth_installation_id, family.binding_id,
+                family.connection_id, family.oauth_client_id, family.resource, family.audience,
+                family.granted_scopes, family.family_status,
+                binding.binding_status, binding.workspace_id,
+                installation.installation_status,
+                connection.connection_status,
+                provider_auth.authorization_status,
+                provider_auth.workspace_id AS authorization_workspace_id
+         FROM mcp_refresh_tokens refresh_token
+         JOIN mcp_refresh_token_families family ON family.family_id = refresh_token.family_id
+         JOIN agent_connection_bindings binding
+           ON binding.binding_id = family.binding_id
+          AND binding.oauth_installation_id = family.oauth_installation_id
+          AND binding.connection_id = family.connection_id
+         JOIN oauth_installations installation
+           ON installation.installation_id = family.oauth_installation_id
+         JOIN provider_connections connection ON connection.connection_id = family.connection_id
+         JOIN provider_authorizations provider_auth
+           ON provider_auth.authorization_id = connection.authorization_id
+         WHERE refresh_token.token_hash = $1
+           AND family.oauth_client_id = $2
+           AND family.resource = $3
+           AND family.audience = $4
+         FOR UPDATE OF refresh_token, family, binding, installation, connection, provider_auth`,
+        [
+          rotation.currentTokenHash,
+          rotation.expectedClientId,
+          rotation.expectedResource,
+          rotation.expectedAudience,
+        ],
+      );
+      const row = selected.rows[0] as Row | undefined;
+      if (
+        !row ||
+        row.family_status !== "ACTIVE" ||
+        row.binding_status !== "ACTIVE" ||
+        row.installation_status !== "ACTIVE" ||
+        row.connection_status !== "ACTIVE" ||
+        row.authorization_status !== "ACTIVE" ||
+        row.authorization_workspace_id !== row.workspace_id
+      ) {
+        await client.query("COMMIT");
+        return { status: "INVALID" };
+      }
+      const familyId = String(row.family_id);
+      const familyScopes = stringArray(row.granted_scopes);
+      const expectedScopes = [...(rotation.requestedScopes ?? familyScopes)];
+      if (
+        row.parent_token_hash &&
+        !row.consumed_at &&
+        !row.replaced_by_token_hash &&
+        !row.revoked_at &&
+        date(row.expires_at) > rotation.issuedAt
+      ) {
+        const parentRetry = await client.query<{
+          source_token_hash: string;
+          access_token_hash: string;
+          refresh_token_hash: string;
+          response_ciphertext: string;
+          granted_scopes: string[];
+        }>(
+          `SELECT parent.token_hash AS source_token_hash,
+                  access_token.token_hash AS access_token_hash,
+                  refresh_token.token_hash AS refresh_token_hash,
+                  parent.retry_response_ciphertext AS response_ciphertext,
+                  access_token.granted_scopes
+           FROM mcp_refresh_tokens parent
+           JOIN mcp_refresh_tokens refresh_token
+             ON refresh_token.token_hash = $1
+            AND refresh_token.family_id = parent.family_id
+            AND refresh_token.parent_token_hash = parent.token_hash
+            AND refresh_token.consumed_at IS NULL
+            AND refresh_token.replaced_by_token_hash IS NULL
+            AND refresh_token.revoked_at IS NULL
+            AND refresh_token.expires_at > $10
+           JOIN mcp_access_tokens access_token
+             ON access_token.token_hash = parent.retry_access_token_hash
+            AND access_token.refresh_family_id = parent.family_id
+            AND access_token.oauth_installation_id = $4
+            AND access_token.binding_id = $5
+            AND access_token.connection_id = $6
+            AND access_token.oauth_client_id = $7
+            AND access_token.resource = $8
+            AND access_token.audience = $9
+            AND access_token.revoked_at IS NULL
+            AND access_token.expires_at > $10
+           WHERE parent.token_hash = $2
+             AND parent.family_id = $3
+             AND parent.replaced_by_token_hash = $1
+             AND parent.consumed_at IS NOT NULL
+             AND parent.consumed_at + ($11::bigint * interval '1 millisecond') > $10
+             AND parent.retry_response_ciphertext IS NOT NULL
+             AND parent.retry_expires_at > $10`,
+          [
+            rotation.currentTokenHash,
+            row.parent_token_hash,
+            familyId,
+            row.oauth_installation_id,
+            row.binding_id,
+            row.connection_id,
+            row.oauth_client_id,
+            row.resource,
+            row.audience,
+            rotation.issuedAt,
+            MCP_OAUTH_REFRESH_RETRY_GRACE_MS,
+          ],
+        );
+        const parentRetryRow = parentRetry.rows[0];
+        if (
+          parentRetryRow &&
+          hasSameScopes(stringArray(parentRetryRow.granted_scopes), expectedScopes)
+        ) {
+          await client.query("COMMIT");
+          return {
+            status: "COALESCED",
+            sourceTokenHash: parentRetryRow.source_token_hash,
+            accessTokenHash: parentRetryRow.access_token_hash,
+            refreshTokenHash: parentRetryRow.refresh_token_hash,
+            responseCiphertext: parentRetryRow.response_ciphertext,
+            grantedScopes: stringArray(parentRetryRow.granted_scopes),
+          };
+        }
+        if (
+          date(row.issued_at).getTime() + MCP_OAUTH_REFRESH_RETRY_GRACE_MS >
+          rotation.issuedAt.getTime()
+        ) {
+          await client.query("COMMIT");
+          return { status: "INVALID" };
+        }
+      }
+      if (row.consumed_at) {
+        if (
+          row.replaced_by_token_hash &&
+          row.retry_access_token_hash &&
+          row.retry_response_ciphertext &&
+          row.retry_expires_at &&
+          date(row.retry_expires_at) > rotation.issuedAt &&
+          date(row.consumed_at).getTime() + MCP_OAUTH_REFRESH_RETRY_GRACE_MS >
+            rotation.issuedAt.getTime()
+        ) {
+          const retry = await client.query<{
+            refresh_token_hash: string;
+            access_token_hash: string;
+            granted_scopes: string[];
+          }>(
+            `SELECT successor.token_hash AS refresh_token_hash,
+                    access_token.token_hash AS access_token_hash,
+                    access_token.granted_scopes
+             FROM mcp_refresh_tokens successor
+             JOIN mcp_access_tokens access_token
+               ON access_token.token_hash = $2
+              AND access_token.refresh_family_id = $3
+              AND access_token.oauth_installation_id = $4
+              AND access_token.binding_id = $5
+              AND access_token.connection_id = $6
+              AND access_token.oauth_client_id = $7
+              AND access_token.resource = $8
+              AND access_token.audience = $9
+             WHERE successor.token_hash = $1
+               AND successor.family_id = $3
+               AND successor.consumed_at IS NULL
+               AND successor.replaced_by_token_hash IS NULL
+               AND successor.revoked_at IS NULL
+               AND successor.expires_at > $10
+               AND access_token.revoked_at IS NULL
+               AND access_token.expires_at > $10`,
+            [
+              row.replaced_by_token_hash,
+              row.retry_access_token_hash,
+              familyId,
+              row.oauth_installation_id,
+              row.binding_id,
+              row.connection_id,
+              row.oauth_client_id,
+              row.resource,
+              row.audience,
+              rotation.issuedAt,
+            ],
+          );
+          const retryRow = retry.rows[0];
+          if (retryRow && hasSameScopes(stringArray(retryRow.granted_scopes), expectedScopes)) {
+            await client.query("COMMIT");
+            return {
+              status: "COALESCED",
+              sourceTokenHash: rotation.currentTokenHash,
+              accessTokenHash: retryRow.access_token_hash,
+              refreshTokenHash: retryRow.refresh_token_hash,
+              responseCiphertext: String(row.retry_response_ciphertext),
+              grantedScopes: stringArray(retryRow.granted_scopes),
+            };
+          }
+        }
+        if (
+          date(row.consumed_at).getTime() + MCP_OAUTH_REFRESH_RETRY_GRACE_MS >
+          rotation.issuedAt.getTime()
+        ) {
+          await client.query("COMMIT");
+          return { status: "INVALID" };
+        }
+        await client.query(
+          `UPDATE mcp_refresh_tokens
+           SET retry_access_token_hash = NULL,
+               retry_response_ciphertext = NULL,
+               retry_expires_at = NULL
+           WHERE token_hash = $1`,
+          [rotation.currentTokenHash],
+        );
+        await this.#revokeMcpRefreshGrant(
+          client,
+          familyId,
+          String(row.oauth_installation_id),
+          String(row.binding_id),
+          String(row.connection_id),
+          rotation.issuedAt,
+          rotation.issuedAt,
+        );
+        await client.query("COMMIT");
+        return { status: "REPLAY_DETECTED", familyId };
+      }
+      if (date(row.expires_at) <= rotation.issuedAt) {
+        await this.#revokeMcpRefreshGrant(
+          client,
+          familyId,
+          String(row.oauth_installation_id),
+          String(row.binding_id),
+          String(row.connection_id),
+          rotation.issuedAt,
+        );
+        await client.query("COMMIT");
+        return { status: "INVALID" };
+      }
+      const grantedScopes = expectedScopes;
+      if (
+        row.revoked_at ||
+        !isNonEmpty(input.retryResponseCiphertext) ||
+        !isValidDate(input.retryExpiresAt) ||
+        input.retryExpiresAt <= rotation.issuedAt ||
+        input.retryExpiresAt.getTime() >
+          rotation.issuedAt.getTime() + MCP_OAUTH_REFRESH_RETRY_GRACE_MS ||
+        accessToken.installationId !== String(row.oauth_installation_id) ||
+        accessToken.bindingId !== String(row.binding_id) ||
+        accessToken.connectionId !== String(row.connection_id) ||
+        accessToken.refreshFamilyId !== familyId ||
+        accessToken.clientId !== String(row.oauth_client_id) ||
+        accessToken.resource !== String(row.resource) ||
+        accessToken.audience !== String(row.audience) ||
+        !isScopeSubset(grantedScopes, familyScopes) ||
+        !hasSameScopes(accessToken.grantedScopes, grantedScopes) ||
+        accessToken.issuedAt.getTime() !== rotation.issuedAt.getTime() ||
+        accessToken.expiresAt <= accessToken.issuedAt ||
+        accessToken.revokedAt
+      ) {
+        await client.query("COMMIT");
+        return { status: "INVALID" };
+      }
+      const insertedRefresh = await client.query(
+        `INSERT INTO mcp_refresh_tokens(
+           token_hash, token_id, family_id, parent_token_hash, issued_at, expires_at
+         ) VALUES ($1,$2,$3,$4,$5,$6)
+         RETURNING *`,
+        [
+          rotation.newTokenHash,
+          rotation.newTokenId,
+          familyId,
+          rotation.currentTokenHash,
+          rotation.issuedAt,
+          rotation.expiresAt,
+        ],
+      );
+      await client.query(
+        `UPDATE mcp_refresh_tokens
+         SET consumed_at = $2,
+             replaced_by_token_hash = $3,
+             retry_access_token_hash = $4,
+             retry_response_ciphertext = $5,
+             retry_expires_at = $6
+         WHERE token_hash = $1`,
+        [
+          rotation.currentTokenHash,
+          rotation.issuedAt,
+          rotation.newTokenHash,
+          accessToken.tokenHash,
+          input.retryResponseCiphertext,
+          input.retryExpiresAt,
+        ],
+      );
+      await client.query(
+        `INSERT INTO mcp_access_tokens(
+           token_hash, token_id, oauth_installation_id, binding_id, connection_id,
+           refresh_family_id, oauth_client_id, resource, audience, granted_scopes,
+           issued_at, expires_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          accessToken.tokenHash,
+          accessToken.tokenId,
+          accessToken.installationId,
+          accessToken.bindingId,
+          accessToken.connectionId,
+          accessToken.refreshFamilyId,
+          accessToken.clientId,
+          accessToken.resource,
+          accessToken.audience,
+          accessToken.grantedScopes,
+          accessToken.issuedAt,
+          accessToken.expiresAt,
+        ],
+      );
+      await client.query(
+        "UPDATE mcp_refresh_token_families SET updated_at = $2 WHERE family_id = $1",
+        [familyId, rotation.issuedAt],
+      );
+      await client.query("COMMIT");
+      return {
+        status: "ROTATED",
+        familyId,
+        refreshToken: mapMcpRefreshToken(insertedRefresh.rows[0] as Row),
+        accessToken: structuredClone(accessToken),
+        installationId: String(row.oauth_installation_id),
+        bindingId: String(row.binding_id),
+        connectionId: String(row.connection_id),
+        grantedScopes,
+      };
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async revokeMcpRefreshTokenFamilyByTokenHash(tokenHash: string, revokedAt: Date): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const lookup = await client.query<{ family_id: string }>(
+        `SELECT family_id FROM mcp_refresh_tokens
+         WHERE token_hash = $1`,
+        [tokenHash],
+      );
+      const row = lookup.rows[0];
+      if (!row) {
+        await client.query("COMMIT");
+        return false;
+      }
+      await this.#lockMcpRefreshFamily(client, row.family_id);
+      const selected = await client.query(
+        `SELECT token_hash FROM mcp_refresh_tokens
+         WHERE token_hash = $1 AND family_id = $2
+         FOR UPDATE`,
+        [tokenHash, row.family_id],
+      );
+      if (selected.rowCount !== 1) {
+        await client.query("COMMIT");
+        return false;
+      }
+      await this.#revokeMcpRefreshFamily(client, row.family_id, revokedAt);
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async revokeOAuthTokenForClient(
+    input: RevokeOAuthTokenForClientInput,
+  ): Promise<RevokeOAuthTokenForClientResult> {
+    if (!isValidDate(input.revokedAt)) return { status: "ACCEPTED" };
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const refresh = await client.query(
+        `SELECT family.family_id, family.oauth_installation_id, family.binding_id, family.connection_id
+         FROM mcp_refresh_tokens refresh_token
+         JOIN mcp_refresh_token_families family ON family.family_id = refresh_token.family_id
+         WHERE refresh_token.token_hash = $1 AND family.oauth_client_id = $2`,
+        [input.tokenHash, input.clientId],
+      );
+      const refreshRow = refresh.rows[0] as Row | undefined;
+      if (refreshRow) {
+        const familyId = String(refreshRow.family_id);
+        const installationId = String(refreshRow.oauth_installation_id);
+        const bindingId = String(refreshRow.binding_id);
+        const connectionId = String(refreshRow.connection_id);
+
+        // Every mutation of an existing family acquires this lock before row locks.
+        await this.#lockMcpRefreshFamily(client, familyId);
+        await client.query(
+          `SELECT installation_id FROM oauth_installations
+           WHERE installation_id = $1
+           FOR UPDATE`,
+          [installationId],
+        );
+        await client.query(
+          `SELECT binding_id FROM agent_connection_bindings
+           WHERE binding_id = $1 AND oauth_installation_id = $2 AND connection_id = $3
+           FOR UPDATE`,
+          [bindingId, installationId, connectionId],
+        );
+        const lockedToken = await client.query(
+          `SELECT token_hash FROM mcp_refresh_tokens
+           WHERE token_hash = $1 AND family_id = $2
+           FOR UPDATE`,
+          [input.tokenHash, familyId],
+        );
+        const lockedFamily = await client.query(
+          `SELECT family_id FROM mcp_refresh_token_families
+           WHERE family_id = $1
+             AND oauth_client_id = $2
+             AND oauth_installation_id = $3
+             AND binding_id = $4
+             AND connection_id = $5
+           FOR UPDATE`,
+          [familyId, input.clientId, installationId, bindingId, connectionId],
+        );
+        if (lockedToken.rowCount === 1 && lockedFamily.rowCount === 1) {
+          await this.#revokeMcpRefreshGrant(
+            client,
+            familyId,
+            installationId,
+            bindingId,
+            connectionId,
+            input.revokedAt,
+          );
+        }
+      }
+      await client.query(
+        `UPDATE mcp_access_tokens SET revoked_at = COALESCE(revoked_at, $3)
+         WHERE token_hash = $1 AND oauth_client_id = $2`,
+        [input.tokenHash, input.clientId, input.revokedAt],
+      );
+      await client.query("COMMIT");
+      return { status: "ACCEPTED" };
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async saveOAuthState(
+    stateHash: string,
+    browserSessionHash: string,
+    actorId: string,
+    expiresAt: Date,
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO oauth_states(state_hash, browser_session_hash, actor_id, expires_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (state_hash) DO NOTHING`,
+      [stateHash, browserSessionHash, actorId, expiresAt],
+    );
+  }
+
+  async consumeOAuthState(
+    stateHash: string,
+    browserSessionHash: string,
+    now: Date,
+  ): Promise<{ actorId: string } | undefined> {
+    const result = await this.pool.query<{ actor_id: string }>(
+      `UPDATE oauth_states
+       SET consumed_at = $3
+       WHERE state_hash = $1 AND browser_session_hash = $2 AND consumed_at IS NULL AND expires_at > $3
+       RETURNING actor_id`,
+      [stateHash, browserSessionHash, now],
+    );
+    const row = result.rows[0];
+    return row ? { actorId: row.actor_id } : undefined;
+  }
+
+  async saveConnectTicket(ticketHash: string, actorId: string, expiresAt: Date): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO connect_tickets(ticket_hash, actor_id, expires_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (ticket_hash) DO NOTHING`,
+      [ticketHash, actorId, expiresAt],
+    );
+  }
+
+  async consumeConnectTicket(ticketHash: string, now: Date): Promise<{ actorId: string } | undefined> {
+    const result = await this.pool.query<{ actor_id: string }>(
+      `UPDATE connect_tickets SET consumed_at = $2
+       WHERE ticket_hash = $1 AND consumed_at IS NULL AND expires_at > $2
+       RETURNING actor_id`,
+      [ticketHash, now],
+    );
+    const row = result.rows[0];
+    return row ? { actorId: row.actor_id } : undefined;
+  }
+
+  async saveOperatorSession(sessionHash: string, actorId: string, expiresAt: Date): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO operator_sessions(session_hash, actor_id, expires_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (session_hash) DO NOTHING`,
+      [sessionHash, actorId, expiresAt],
+    );
+  }
+
+  async getOperatorSession(sessionHash: string, now: Date): Promise<{ actorId: string } | undefined> {
+    const result = await this.pool.query<{ actor_id: string }>(
+      "SELECT actor_id FROM operator_sessions WHERE session_hash = $1 AND expires_at > $2",
+      [sessionHash, now],
+    );
+    const row = result.rows[0];
+    return row ? { actorId: row.actor_id } : undefined;
+  }
+
+  async revokeOperatorSessions(actorId: string): Promise<number> {
+    const result = await this.pool.query("DELETE FROM operator_sessions WHERE actor_id = $1", [actorId]);
+    return result.rowCount ?? 0;
+  }
+
+  async saveReviewCsrf(
+    csrfHash: string,
+    sessionHash: string,
+    actorId: string,
+    postingRequestId: string,
+    expiresAt: Date,
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO review_csrf_tokens(
+         csrf_hash, session_hash, actor_id, posting_request_id, expires_at
+       ) VALUES ($1, $2, $3, $4, $5)`,
+      [csrfHash, sessionHash, actorId, postingRequestId, expiresAt],
+    );
+  }
+
+  async consumeReviewCsrf(
+    csrfHash: string,
+    sessionHash: string,
+    actorId: string,
+    postingRequestId: string,
+    now: Date,
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE review_csrf_tokens SET consumed_at = $5
+       WHERE csrf_hash = $1 AND session_hash = $2 AND actor_id = $3
+         AND posting_request_id = $4 AND consumed_at IS NULL AND expires_at > $5
+       RETURNING csrf_hash`,
+      [csrfHash, sessionHash, actorId, postingRequestId, now],
+    );
+    return result.rowCount === 1;
+  }
+
+  async cleanupExpiredEphemeral(
+    cutoff: Date,
+    batchSize: number,
+    brokerFlowCutoff = cutoff,
+  ): Promise<EphemeralCleanupBatchResult> {
+    assertCleanupArguments(cutoff, batchSize);
+    if (!isValidDate(brokerFlowCutoff)) {
+      throw new AppError("VALIDATION_FAILED", "OAuth Broker cleanup cutoff must be a valid date.");
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL lock_timeout = '250ms'");
+      const lock = await client.query<{ locked: boolean }>(
+        "SELECT pg_try_advisory_xact_lock($1::bigint) AS locked",
+        [EPHEMERAL_CLEANUP_ADVISORY_LOCK_KEY],
+      );
+      if (lock.rows[0]?.locked !== true) {
+        await client.query("COMMIT");
+        return { lockAcquired: false, deleted: emptyEphemeralCleanupCounts() };
+      }
+
+      const mcpRefreshRetryResponses = await client.query(
+        `WITH targets AS (
+           SELECT refresh_token.token_hash
+           FROM mcp_refresh_tokens refresh_token
+           WHERE refresh_token.retry_response_ciphertext IS NOT NULL
+             AND refresh_token.retry_expires_at <= $1
+           ORDER BY refresh_token.retry_expires_at, refresh_token.token_hash
+           LIMIT $2
+           FOR UPDATE OF refresh_token SKIP LOCKED
+         )
+         UPDATE mcp_refresh_tokens refresh_token
+         SET retry_access_token_hash = NULL,
+             retry_response_ciphertext = NULL,
+             retry_expires_at = NULL
+         FROM targets
+         WHERE refresh_token.token_hash = targets.token_hash`,
+        [brokerFlowCutoff, batchSize],
+      );
+
+      const expiredBrokerFlows = await client.query(
+        `SELECT flow.*
+         FROM oauth_broker_flows flow
+         WHERE flow.flow_version = 2
+           AND flow.flow_status IN ('AUTHORIZING_XERO','EXCHANGING_XERO','AWAITING_SELECTION')
+           AND flow.consumed_at IS NULL
+           AND flow.outer_state_ciphertext IS NOT NULL
+           AND flow.expires_at <= $1
+         ORDER BY flow.expires_at, flow.flow_hash
+         LIMIT $2
+         FOR UPDATE OF flow SKIP LOCKED`,
+        [brokerFlowCutoff, batchSize],
+      );
+      for (const rawRow of expiredBrokerFlows.rows) {
+        await this.#revokePendingBrokerGrant(client, rawRow as Row, brokerFlowCutoff);
+      }
+      const expiredFlowHashes = expiredBrokerFlows.rows.map((rawRow) => String((rawRow as Row).flow_hash));
+      const oauthBrokerFlows = expiredFlowHashes.length === 0
+        ? { rowCount: 0 }
+        : await client.query(
+          `UPDATE oauth_broker_flows SET
+             flow_status = 'FAILED',
+             consumed_at = $1,
+             updated_at = $1,
+             outer_state_ciphertext = NULL,
+             selection_csrf_hash = NULL
+           WHERE flow_hash = ANY($2::text[])
+             AND flow_version = 2
+             AND flow_status IN ('AUTHORIZING_XERO','EXCHANGING_XERO','AWAITING_SELECTION')
+             AND consumed_at IS NULL`,
+          [brokerFlowCutoff, expiredFlowHashes],
+        );
+
+      // A CSRF token is unusable once either it or its parent operator session
+      // has expired. Delete those children first so parent cleanup remains
+      // bounded instead of relying on an unbounded FK cascade.
+      const reviewCsrf = await client.query(
+        `WITH targets AS (
+           SELECT csrf.csrf_hash
+           FROM review_csrf_tokens csrf
+           WHERE csrf.expires_at <= $1
+              OR EXISTS (
+                SELECT 1 FROM operator_sessions sessions
+                WHERE sessions.session_hash = csrf.session_hash
+                  AND sessions.expires_at <= $1
+              )
+           ORDER BY csrf.expires_at, csrf.csrf_hash
+           LIMIT $2
+           FOR UPDATE OF csrf SKIP LOCKED
+         )
+         DELETE FROM review_csrf_tokens csrf
+         USING targets
+         WHERE csrf.csrf_hash = targets.csrf_hash`,
+        [cutoff, batchSize],
+      );
+
+      const operatorSessions = await client.query(
+        `WITH targets AS (
+           SELECT sessions.session_hash
+           FROM operator_sessions sessions
+           WHERE sessions.expires_at <= $1
+             AND NOT EXISTS (
+               SELECT 1 FROM review_csrf_tokens csrf
+               WHERE csrf.session_hash = sessions.session_hash
+             )
+           ORDER BY sessions.expires_at, sessions.session_hash
+           LIMIT $2
+           FOR UPDATE OF sessions SKIP LOCKED
+         )
+         DELETE FROM operator_sessions sessions
+         USING targets
+         WHERE sessions.session_hash = targets.session_hash`,
+        [cutoff, batchSize],
+      );
+
+      const oauthStates = await client.query(
+        `WITH targets AS (
+           SELECT state.state_hash
+           FROM oauth_states state
+           WHERE state.expires_at <= $1
+           ORDER BY state.expires_at, state.state_hash
+           LIMIT $2
+           FOR UPDATE OF state SKIP LOCKED
+         )
+         DELETE FROM oauth_states state
+         USING targets
+         WHERE state.state_hash = targets.state_hash`,
+        [cutoff, batchSize],
+      );
+
+      const connectTickets = await client.query(
+        `WITH targets AS (
+           SELECT ticket.ticket_hash
+           FROM connect_tickets ticket
+           WHERE ticket.expires_at <= $1
+           ORDER BY ticket.expires_at, ticket.ticket_hash
+           LIMIT $2
+           FOR UPDATE OF ticket SKIP LOCKED
+         )
+         DELETE FROM connect_tickets ticket
+         USING targets
+         WHERE ticket.ticket_hash = targets.ticket_hash`,
+        [cutoff, batchSize],
+      );
+
+      await client.query("COMMIT");
+      return {
+        lockAcquired: true,
+        deleted: {
+          mcpRefreshRetryResponses: mcpRefreshRetryResponses.rowCount ?? 0,
+          oauthBrokerFlows: oauthBrokerFlows.rowCount ?? 0,
+          oauthStates: oauthStates.rowCount ?? 0,
+          connectTickets: connectTickets.rowCount ?? 0,
+          operatorSessions: operatorSessions.rowCount ?? 0,
+          reviewCsrfTokens: reviewCsrf.rowCount ?? 0,
+        },
+      };
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getConnectionByActorTenant(actorId: string, tenantId: string): Promise<ProviderConnection | undefined> {
+    const result = await this.pool.query(
+      `SELECT * FROM provider_connections WHERE actor_id = $1 AND provider = 'xero' AND tenant_id = $2`,
+      [actorId, tenantId],
+    );
+    return result.rows[0] ? mapConnection(result.rows[0]) : undefined;
+  }
+
+  async listActiveConnections(actorId: string): Promise<ProviderConnection[]> {
+    const result = await this.pool.query(
+      `SELECT * FROM provider_connections
+       WHERE actor_id = $1 AND provider = 'xero' AND connection_status = 'ACTIVE'
+       ORDER BY created_at ASC`,
+      [actorId],
+    );
+    return result.rows.map(mapConnection);
+  }
+
+  async upsertConnection(connection: ProviderConnection): Promise<ProviderConnection> {
+    const result = await this.pool.query(
+      `INSERT INTO provider_connections(
+         connection_id, actor_id, provider, tenant_id, tenant_name, tenant_short_code, granted_scopes,
+         token_ciphertext, token_expires_at, refresh_version, connection_status, created_at, updated_at
+       ) VALUES ($1,$2,'xero',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ON CONFLICT (actor_id, provider, tenant_id) DO UPDATE SET
+         tenant_name = EXCLUDED.tenant_name,
+         tenant_short_code = EXCLUDED.tenant_short_code,
+         granted_scopes = EXCLUDED.granted_scopes,
+         token_ciphertext = EXCLUDED.token_ciphertext,
+         token_expires_at = EXCLUDED.token_expires_at,
+         refresh_version = provider_connections.refresh_version + 1,
+         connection_status = 'ACTIVE',
+         updated_at = EXCLUDED.updated_at
+       RETURNING *`,
+      [
+        connection.connectionId,
+        connection.actorId,
+        connection.tenantId,
+        connection.tenantName,
+        connection.tenantShortCode ?? null,
+        connection.grantedScopes,
+        connection.tokenCiphertext,
+        connection.tokenExpiresAt,
+        connection.refreshVersion,
+        connection.status,
+        connection.createdAt,
+        connection.updatedAt,
+      ],
+    );
+    return mapConnection(result.rows[0] as Row);
+  }
+
+  async updateConnectionToken(
+    connectionId: string,
+    expectedRefreshVersion: number,
+    tokenCiphertext: string,
+    tokenExpiresAt: Date,
+  ): Promise<ProviderConnection | undefined> {
+    const result = await this.pool.query(
+      `UPDATE provider_connections SET
+         token_ciphertext = $3,
+         token_expires_at = $4,
+         refresh_version = refresh_version + 1,
+         connection_status = 'ACTIVE',
+         updated_at = now()
+       WHERE connection_id = $1 AND refresh_version = $2
+         AND connection_status <> 'REVOKED'
+       RETURNING *`,
+      [connectionId, expectedRefreshVersion, tokenCiphertext, tokenExpiresAt],
+    );
+    return result.rows[0] ? mapConnection(result.rows[0]) : undefined;
+  }
+
+  async markConnectionStatus(connectionId: string, status: ProviderConnection["status"]): Promise<void> {
+    await this.pool.query(
+      `UPDATE provider_connections SET connection_status = $2, updated_at = now()
+       WHERE connection_id = $1 AND connection_status <> 'REVOKED'`,
+      [connectionId, status],
+    );
+  }
+
+  async markConnectionStatusIfVersion(
+    connectionId: string,
+    expectedRefreshVersion: number,
+    status: ProviderConnection["status"],
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE provider_connections
+       SET connection_status = $3, updated_at = now()
+       WHERE connection_id = $1 AND refresh_version = $2 AND connection_status = 'ACTIVE'`,
+      [connectionId, expectedRefreshVersion, status],
+    );
+    return result.rowCount === 1;
+  }
+
+  async createOrGetPosting(input: CreatePostingInput): Promise<{ posting: PostingRequest; created: boolean }> {
+    const identity = xeroSupplierPostingIdentity(input.providerPayload);
+    const documentType = input.documentType ?? identity.documentType;
+    if (identity.documentType !== documentType) {
+      throw new AppError("VALIDATION_FAILED", "Xero document type does not match the canonical provider payload.");
+    }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const inserted = await this.pool.query(
+        `INSERT INTO posting_requests(
+           posting_request_id, actor_id, tenant_id, source_ref, source_sha256,
+           source_evidence_type, provider_payload, request_payload_hash, provider_payload_hash, state,
+           request_id, create_operation, create_idempotency_key, document_type
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'VALIDATED',$10,'CREATE_DRAFT',$11,$12)
+         ON CONFLICT DO NOTHING
+         RETURNING *`,
+        [
+          input.postingRequestId,
+          input.actorId,
+          input.tenantId,
+          input.sourceRef,
+          input.sourceSha256,
+          input.sourceEvidenceType,
+          input.providerPayload,
+          input.requestPayloadHash,
+          input.providerPayloadHash,
+          input.requestId,
+          input.createIdempotencyKey,
+          documentType,
+        ],
+      );
+      if (inserted.rows[0]) return { posting: mapPosting(inserted.rows[0]), created: true };
+
+      const existing = await this.pool.query(
+        `SELECT * FROM posting_requests
+         WHERE tenant_id = $2 AND (
+           (actor_id = $1 AND request_id = $3 AND create_operation = 'CREATE_DRAFT' AND document_type = $8) OR (
+             state = ANY($4::text[]) AND (
+               source_sha256 = $5 OR (
+                 $6::text IS NOT NULL AND $7::text IS NOT NULL
+                 AND $8::text = 'ACCPAY'
+                 AND document_type = $8
+                 AND lower(COALESCE(
+                   NULLIF(btrim(provider_payload->>'contactId'), ''),
+                   NULLIF(btrim(provider_payload #>> '{contact,contactId}'), '')
+                 )) = $6
+                 AND lower(btrim(provider_payload->>'reference')) = $7
+               )
+             )
+           )
+         )
+         ORDER BY (actor_id = $1 AND request_id = $3 AND create_operation = 'CREATE_DRAFT' AND document_type = $8) DESC,
+                  created_at DESC
+         LIMIT 1`,
+        [
+          input.actorId,
+          input.tenantId,
+          input.requestId,
+          ACTIVE_XERO_DUPLICATE_STATES,
+          input.sourceSha256,
+          identity.contactId ?? null,
+          identity.normalizedReference ?? null,
+          documentType,
+        ],
+      );
+      if (existing.rows[0]) return { posting: mapPosting(existing.rows[0]), created: false };
+    }
+
+    const legacyCompatibilityConflict = await this.pool.query(
+      `SELECT 1
+       FROM posting_requests
+       WHERE tenant_id = $2 AND (
+         (actor_id = $1 AND request_id = $3 AND create_operation = 'CREATE_DRAFT') OR (
+           state = ANY($4::text[])
+           AND $5::text IS NOT NULL AND $6::text IS NOT NULL
+           AND lower(COALESCE(
+             NULLIF(btrim(provider_payload->>'contactId'), ''),
+             NULLIF(btrim(provider_payload #>> '{contact,contactId}'), '')
+           )) = $5
+           AND lower(btrim(provider_payload->>'reference')) = $6
+         )
+       )
+       LIMIT 1`,
+      [
+        input.actorId,
+        input.tenantId,
+        input.requestId,
+        ACTIVE_XERO_DUPLICATE_STATES,
+        identity.contactId ?? null,
+        identity.normalizedReference ?? null,
+      ],
+    );
+    if (legacyCompatibilityConflict.rowCount === 1) {
+      throw new AppError(
+        "CONFLICT",
+        "The request conflicts with a temporary legacy-runtime duplicate guard.",
+        {
+          httpStatus: 409,
+          details: { reason: "LEGACY_RUNTIME_DUPLICATE_GUARD" },
+        },
+      );
+    }
+    throw new Error("Xero posting conflict row disappeared");
+  }
+
+  async findActivePostingDuplicate(
+    input: FindActiveXeroPostingDuplicateInput,
+  ): Promise<PostingRequest | undefined> {
+    const documentType = input.documentType ?? "ACCPAY";
+    const result = await this.pool.query(
+      `SELECT * FROM posting_requests
+       WHERE tenant_id = $1
+         AND state = ANY($2::text[])
+         AND (
+           source_sha256 = $3 OR (
+             $4::text IS NOT NULL AND $5::text IS NOT NULL
+             AND $6::text = 'ACCPAY'
+             AND document_type = $6
+             AND lower(COALESCE(
+               NULLIF(btrim(provider_payload->>'contactId'), ''),
+               NULLIF(btrim(provider_payload #>> '{contact,contactId}'), '')
+             )) = $4
+             AND lower(btrim(provider_payload->>'reference')) = $5
+           )
+         )
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [
+        input.tenantId,
+        ACTIVE_XERO_DUPLICATE_STATES,
+        input.sourceSha256,
+        input.contactId ?? null,
+        input.normalizedReference ?? null,
+        documentType,
+      ],
+    );
+    return result.rows[0] ? mapPosting(result.rows[0]) : undefined;
+  }
+
+  async getPosting(postingRequestId: string): Promise<PostingRequest | undefined> {
+    const result = await this.pool.query("SELECT * FROM posting_requests WHERE posting_request_id = $1", [
+      postingRequestId,
+    ]);
+    return result.rows[0] ? mapPosting(result.rows[0]) : undefined;
+  }
+
+  async markDraftCreated(postingRequestId: string, update: DraftCreatedUpdate): Promise<PostingRequest> {
+    const result = await this.pool.query(
+      `UPDATE posting_requests SET
+         xero_invoice_id = $2,
+         provider_payload = $3,
+         provider_payload_hash = $4,
+         write_receipt = $5,
+         readback_snapshot = $6,
+         draft_write_receipt = $5,
+         draft_readback_snapshot = $6,
+         state = CASE WHEN document_type = 'ACCREC' THEN 'DRAFT_READBACK_VERIFIED' ELSE 'APPROVAL_PENDING' END,
+         updated_at = now()
+       WHERE posting_request_id = $1 AND state = 'VALIDATED'
+       RETURNING *`,
+      [
+        postingRequestId,
+        update.xeroInvoiceId,
+        update.providerPayload,
+        update.providerPayloadHash,
+        update.writeReceipt,
+        update.readbackSnapshot,
+      ],
+    );
+    if (!result.rows[0]) throw new AppError("CONFLICT", "Posting request is not in VALIDATED state.", { httpStatus: 409 });
+    return mapPosting(result.rows[0]);
+  }
+
+  async recoverDraftCreated(postingRequestId: string, update: DraftCreatedUpdate): Promise<PostingRequest> {
+    const result = await this.pool.query(
+      `UPDATE posting_requests SET
+         xero_invoice_id = $2,
+         provider_payload = $3,
+         provider_payload_hash = $4,
+         write_receipt = $5,
+         readback_snapshot = $6,
+         draft_write_receipt = $5,
+         draft_readback_snapshot = $6,
+         state = CASE WHEN document_type = 'ACCREC' THEN 'DRAFT_READBACK_VERIFIED' ELSE 'APPROVAL_PENDING' END,
+         updated_at = now()
+       WHERE posting_request_id = $1
+         AND state = 'WRITE_RESULT_UNKNOWN'
+         AND authorise_request_id IS NULL
+         AND (xero_invoice_id IS NULL OR xero_invoice_id = $2)
+       RETURNING *`,
+      [
+        postingRequestId,
+        update.xeroInvoiceId,
+        update.providerPayload,
+        update.providerPayloadHash,
+        update.writeReceipt,
+        update.readbackSnapshot,
+      ],
+    );
+    if (!result.rows[0]) {
+      throw new AppError("CONFLICT", "Posting request is not in WRITE_RESULT_UNKNOWN state.", { httpStatus: 409 });
+    }
+    return mapPosting(result.rows[0]);
+  }
+
+  async markDraftReadbackMismatch(
+    postingRequestId: string,
+    update: DraftReadbackMismatchUpdate,
+  ): Promise<void> {
+    const result = await this.pool.query(
+      `UPDATE posting_requests SET
+         xero_invoice_id = $2,
+         write_receipt = $3,
+         readback_snapshot = $4,
+         draft_write_receipt = $3,
+         draft_readback_snapshot = $4,
+         state = 'READBACK_MISMATCH',
+         updated_at = now()
+       WHERE posting_request_id = $1
+         AND state IN ('VALIDATED', 'WRITE_RESULT_UNKNOWN')
+         AND authorise_request_id IS NULL
+         AND (xero_invoice_id IS NULL OR xero_invoice_id = $2)
+       RETURNING posting_request_id`,
+      [postingRequestId, update.xeroInvoiceId, update.writeReceipt, update.readbackSnapshot],
+    );
+    if (result.rowCount !== 1) {
+      throw new AppError("CONFLICT", "Draft readback mismatch cannot overwrite the current posting state.", {
+        httpStatus: 409,
+      });
+    }
+  }
+
+  async markDraftWriteUnknown(
+    postingRequestId: string,
+    xeroInvoiceId?: string,
+    writeReceipt?: Record<string, unknown>,
+  ): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selected = await client.query(
+        `SELECT state, authorise_request_id, xero_invoice_id, write_receipt
+         FROM posting_requests WHERE posting_request_id = $1 FOR UPDATE`,
+        [postingRequestId],
+      );
+      const row = selected.rows[0] as Row | undefined;
+      if (!row) throw new AppError("NOT_FOUND", "Posting request was not found.", { httpStatus: 404 });
+      const state = row.state as PostingState;
+      if (row.authorise_request_id) {
+        throw new AppError("CONFLICT", "Draft write uncertainty cannot overwrite an authorisation attempt.", {
+          httpStatus: 409,
+        });
+      }
+      if (state === "AUTHORISED_READBACK_VERIFIED") {
+        await client.query("COMMIT");
+        return;
+      }
+      if (state !== "VALIDATED" && state !== "WRITE_RESULT_UNKNOWN") {
+        throw new AppError("CONFLICT", `Draft write uncertainty cannot be recorded from ${state}.`, {
+          httpStatus: 409,
+        });
+      }
+      const existingInvoiceId = row.xero_invoice_id ? String(row.xero_invoice_id) : undefined;
+      if (xeroInvoiceId && existingInvoiceId && xeroInvoiceId !== existingInvoiceId) {
+        throw new AppError("CONFLICT", "Draft write recovery cannot replace the known Xero InvoiceID.", {
+          httpStatus: 409,
+        });
+      }
+      if (
+        writeReceipt && row.write_receipt &&
+        stableStringify(writeReceipt) !== stableStringify(row.write_receipt)
+      ) {
+        throw new AppError("CONFLICT", "Draft write recovery cannot replace the known Provider receipt.", {
+          httpStatus: 409,
+        });
+      }
+      await client.query(
+        `UPDATE posting_requests SET
+           state = 'WRITE_RESULT_UNKNOWN',
+           xero_invoice_id = COALESCE(xero_invoice_id, $2),
+           write_receipt = COALESCE(write_receipt, $3),
+           draft_write_receipt = COALESCE(draft_write_receipt, $3),
+           updated_at = now()
+         WHERE posting_request_id = $1`,
+        [postingRequestId, xeroInvoiceId ?? null, writeReceipt ?? null],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async markPostingState(postingRequestId: string, state: PostingState): Promise<void> {
+    if (state !== "BLOCKED_VALIDATION" && state !== "READBACK_MISMATCH") {
+      throw new AppError("CONFLICT", `${state} is not a draft failure state.`, { httpStatus: 409 });
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selected = await client.query(
+        `SELECT state, authorise_request_id
+         FROM posting_requests WHERE posting_request_id = $1 FOR UPDATE`,
+        [postingRequestId],
+      );
+      const row = selected.rows[0] as Row | undefined;
+      if (!row) throw new AppError("NOT_FOUND", "Posting request was not found.", { httpStatus: 404 });
+      const currentState = row.state as PostingState;
+      if (currentState === "AUTHORISED_READBACK_VERIFIED") {
+        await client.query("COMMIT");
+        return;
+      }
+      if (
+        currentState !== "VALIDATED" &&
+        (currentState !== "WRITE_RESULT_UNKNOWN" || row.authorise_request_id)
+      ) {
+        throw new AppError("CONFLICT", `Draft failure cannot be recorded from ${currentState}.`, {
+          httpStatus: 409,
+        });
+      }
+      await client.query(
+        "UPDATE posting_requests SET state = $2, updated_at = now() WHERE posting_request_id = $1",
+        [postingRequestId, state],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async approvePosting(
+    postingRequestId: string,
+    approvedBy: string,
+    approvalRefHash: string,
+    expiresAt: Date,
+    now: Date,
+  ): Promise<PostingRequest> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selected = await client.query(
+        "SELECT * FROM posting_requests WHERE posting_request_id = $1 FOR UPDATE",
+        [postingRequestId],
+      );
+      if (!selected.rows[0]) throw new AppError("NOT_FOUND", "Posting request was not found.", { httpStatus: 404 });
+      const posting = mapPosting(selected.rows[0]);
+      let result;
+      if (posting.state === "APPROVAL_PENDING") {
+        result = await client.query(
+          `UPDATE posting_requests SET
+             state = 'APPROVED', approval_ref_hash = $3, approved_by = $2,
+             approved_at = $5, approval_expires_at = $4, updated_at = $5
+           WHERE posting_request_id = $1
+           RETURNING *`,
+          [postingRequestId, approvedBy, approvalRefHash, expiresAt, now],
+        );
+      } else if (
+        posting.state === "APPROVED" &&
+        posting.approvedBy === approvedBy &&
+        !posting.approvalConsumedAt &&
+        posting.approvalRefHash
+      ) {
+        const renewedExpiry = posting.approvalExpiresAt && posting.approvalExpiresAt > expiresAt
+          ? posting.approvalExpiresAt
+          : expiresAt;
+        result = await client.query(
+          `UPDATE posting_requests SET approval_expires_at = $2, updated_at = $3
+           WHERE posting_request_id = $1
+           RETURNING *`,
+          [postingRequestId, renewedExpiry, now],
+        );
+      } else {
+        throw new AppError("CONFLICT", `Posting request cannot be approved from ${posting.state}.`, { httpStatus: 409 });
+      }
+      await client.query("COMMIT");
+      return mapPosting(result.rows[0] as Row);
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async rejectPosting(postingRequestId: string, rejectedBy: string, now: Date): Promise<PostingRequest> {
+    const result = await this.pool.query(
+      `UPDATE posting_requests SET state = 'REJECTED', approved_by = $2, updated_at = $3
+       WHERE posting_request_id = $1 AND state = 'APPROVAL_PENDING'
+       RETURNING *`,
+      [postingRequestId, rejectedBy, now],
+    );
+    if (!result.rows[0]) throw new AppError("CONFLICT", "Posting request is not awaiting approval.", { httpStatus: 409 });
+    return mapPosting(result.rows[0]);
+  }
+
+  async beginAuthorise(input: BeginAuthoriseInput): Promise<BeginAuthoriseResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selected = await client.query("SELECT * FROM posting_requests WHERE posting_request_id = $1 FOR UPDATE", [
+        input.postingRequestId,
+      ]);
+      if (!selected.rows[0]) throw new AppError("NOT_FOUND", "Posting request was not found.", { httpStatus: 404 });
+      const posting = mapPosting(selected.rows[0]);
+      this.#assertAuthoriseIdentity(posting, input);
+      if (![
+        "APPROVED",
+        "AUTHORISING",
+        "WRITE_RESULT_UNKNOWN",
+        "AUTHORISED_READBACK_VERIFIED",
+      ].includes(posting.state)) {
+        throw new AppError("APPROVAL_REQUIRED", `Posting request is in ${posting.state}, not APPROVED.`, {
+          httpStatus: 409,
+        });
+      }
+      this.#assertApprovalBinding(posting, input);
+
+      if (posting.state === "AUTHORISED_READBACK_VERIFIED") {
+        if (posting.authoriseRequestId !== input.requestId) {
+          throw new AppError("CONFLICT", "The bill was already authorised by another request.", { httpStatus: 409 });
+        }
+        await client.query("COMMIT");
+        return { posting, mode: "ALREADY_COMPLETE" };
+      }
+      if (posting.state === "AUTHORISING" || posting.state === "WRITE_RESULT_UNKNOWN") {
+        if (posting.authoriseRequestId !== input.requestId) {
+          throw new AppError("CONFLICT", "An authorisation attempt is already in progress.", { httpStatus: 409 });
+        }
+        await client.query("COMMIT");
+        return { posting, mode: "RESUME_READBACK_ONLY" };
+      }
+      if (
+        !posting.approvalRefHash ||
+        posting.approvalRefHash !== input.approvalRefHash ||
+        posting.providerPayloadHash !== input.approvedPayloadHash ||
+        !posting.approvalExpiresAt ||
+        posting.approvalExpiresAt <= input.now ||
+        posting.approvalConsumedAt
+      ) {
+        throw new AppError("APPROVAL_INVALID", "Approval is invalid, expired, consumed, or bound to another payload.", {
+          httpStatus: 409,
+        });
+      }
+
+      const updated = await client.query(
+        `UPDATE posting_requests SET
+           state = 'AUTHORISING', authorise_request_id = $2, authorise_operation = 'AUTHORISE',
+           authorise_idempotency_key = $3, approval_consumed_at = $4, updated_at = $4
+         WHERE posting_request_id = $1
+         RETURNING *`,
+        [input.postingRequestId, input.requestId, input.idempotencyKey, input.now],
+      );
+      await client.query("COMMIT");
+      return { posting: mapPosting(updated.rows[0] as Row), mode: "CALL_PROVIDER" };
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async beginReviewAuthorise(input: BeginReviewAuthoriseInput): Promise<BeginAuthoriseResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selected = await client.query(
+        "SELECT * FROM posting_requests WHERE posting_request_id = $1 FOR UPDATE",
+        [input.postingRequestId],
+      );
+      if (!selected.rows[0]) throw new AppError("NOT_FOUND", "Posting request was not found.", { httpStatus: 404 });
+      const posting = mapPosting(selected.rows[0]);
+      this.#assertAuthoriseIdentity(posting, input);
+      if (![
+        "APPROVAL_PENDING",
+        "APPROVED",
+        "AUTHORISING",
+        "WRITE_RESULT_UNKNOWN",
+        "AUTHORISED_READBACK_VERIFIED",
+      ].includes(posting.state)) {
+        throw new AppError("APPROVAL_REQUIRED", `Posting request cannot be approved from ${posting.state}.`, {
+          httpStatus: 409,
+        });
+      }
+      if (posting.providerPayloadHash !== input.approvedPayloadHash) {
+        throw new AppError("APPROVAL_INVALID", "Review approval is bound to another payload.", { httpStatus: 409 });
+      }
+
+      let mode: BeginAuthoriseResult["mode"];
+      if (posting.state === "AUTHORISED_READBACK_VERIFIED") {
+        this.#assertReviewResumeBinding(posting, input);
+        mode = "ALREADY_COMPLETE";
+      } else if (posting.state === "AUTHORISING" || posting.state === "WRITE_RESULT_UNKNOWN") {
+        this.#assertReviewResumeBinding(posting, input);
+        mode = "RESUME_READBACK_ONLY";
+      } else {
+        if (posting.state === "APPROVED" && (
+          posting.approvedBy !== input.actorId ||
+          posting.approvalConsumedAt ||
+          !posting.approvalRefHash ||
+          !posting.approvalExpiresAt ||
+          posting.approvalExpiresAt <= input.now
+        )) {
+          throw new AppError("APPROVAL_INVALID", "Existing approval cannot be resumed by this reviewer.", {
+            httpStatus: 409,
+          });
+        }
+        mode = "CALL_PROVIDER";
+      }
+
+      const consumed = await client.query(
+        `UPDATE review_csrf_tokens SET consumed_at = $5
+         WHERE csrf_hash = $1 AND session_hash = $2 AND actor_id = $3
+           AND posting_request_id = $4 AND consumed_at IS NULL AND expires_at > $5
+         RETURNING csrf_hash`,
+        [input.csrfHash, input.sessionHash, input.actorId, input.postingRequestId, input.now],
+      );
+      if (consumed.rowCount !== 1) {
+        throw new AppError("FORBIDDEN", "Review CSRF token is invalid, expired, or already used.", { httpStatus: 403 });
+      }
+
+      if (mode !== "CALL_PROVIDER") {
+        await client.query("COMMIT");
+        return { posting, mode };
+      }
+      const approvalRefHash = posting.state === "APPROVED"
+        ? posting.approvalRefHash as string
+        : input.approvalRefHash;
+      const updated = await client.query(
+        `UPDATE posting_requests SET
+           state = 'AUTHORISING', authorise_request_id = $2, authorise_operation = 'AUTHORISE',
+           authorise_idempotency_key = $3, approval_ref_hash = $4, approved_by = $5,
+           approved_at = COALESCE(approved_at, $6), approval_expires_at = $7,
+           approval_consumed_at = $6, updated_at = $6
+         WHERE posting_request_id = $1
+         RETURNING *`,
+        [
+          input.postingRequestId,
+          input.requestId,
+          input.idempotencyKey,
+          approvalRefHash,
+          input.actorId,
+          input.now,
+          input.approvalExpiresAt,
+        ],
+      );
+      await client.query("COMMIT");
+      return { posting: mapPosting(updated.rows[0] as Row), mode };
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async rejectPostingFromReview(input: RejectReviewInput): Promise<PostingRequest> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selected = await client.query(
+        "SELECT * FROM posting_requests WHERE posting_request_id = $1 FOR UPDATE",
+        [input.postingRequestId],
+      );
+      if (!selected.rows[0]) throw new AppError("NOT_FOUND", "Posting request was not found.", { httpStatus: 404 });
+      const posting = mapPosting(selected.rows[0]);
+      if (posting.actorId !== input.actorId) {
+        throw new AppError("FORBIDDEN", "Posting request belongs to another actor.", { httpStatus: 403 });
+      }
+      if (posting.state !== "APPROVAL_PENDING") {
+        throw new AppError("CONFLICT", `Posting request cannot be rejected from ${posting.state}.`, { httpStatus: 409 });
+      }
+      const consumed = await client.query(
+        `UPDATE review_csrf_tokens SET consumed_at = $5
+         WHERE csrf_hash = $1 AND session_hash = $2 AND actor_id = $3
+           AND posting_request_id = $4 AND consumed_at IS NULL AND expires_at > $5
+         RETURNING csrf_hash`,
+        [input.csrfHash, input.sessionHash, input.actorId, input.postingRequestId, input.now],
+      );
+      if (consumed.rowCount !== 1) {
+        throw new AppError("FORBIDDEN", "Review CSRF token is invalid, expired, or already used.", { httpStatus: 403 });
+      }
+      const rejected = await client.query(
+        `UPDATE posting_requests SET state = 'REJECTED', approved_by = $2, updated_at = $3
+         WHERE posting_request_id = $1
+         RETURNING *`,
+        [input.postingRequestId, input.actorId, input.now],
+      );
+      await client.query("COMMIT");
+      return mapPosting(rejected.rows[0] as Row);
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async completeAuthorise(
+    postingRequestId: string,
+    writeReceipt: Record<string, unknown>,
+    readbackSnapshot: Record<string, unknown>,
+  ): Promise<PostingRequest> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selected = await client.query(
+        "SELECT * FROM posting_requests WHERE posting_request_id = $1 FOR UPDATE",
+        [postingRequestId],
+      );
+      if (!selected.rows[0]) throw new AppError("NOT_FOUND", "Posting request was not found.", { httpStatus: 404 });
+      const posting = mapPosting(selected.rows[0]);
+      const readbackInvoiceId = readbackSnapshot.invoiceId;
+      if (typeof readbackInvoiceId !== "string" || posting.xeroInvoiceId !== readbackInvoiceId) {
+        throw new AppError("READBACK_MISMATCH", "Authorisation readback does not match the posting Xero InvoiceID.", {
+          httpStatus: 409,
+        });
+      }
+      if (posting.state === "AUTHORISED_READBACK_VERIFIED") {
+        await client.query("COMMIT");
+        return posting;
+      }
+      if (posting.state !== "AUTHORISING" && posting.state !== "WRITE_RESULT_UNKNOWN") {
+        throw new AppError("CONFLICT", "Posting request cannot be completed from its current state.", { httpStatus: 409 });
+      }
+      const result = await client.query(
+        `UPDATE posting_requests SET
+           state = 'AUTHORISED_READBACK_VERIFIED', write_receipt = $2,
+           readback_snapshot = $3,
+           draft_write_receipt = COALESCE(draft_write_receipt, write_receipt),
+           draft_readback_snapshot = COALESCE(draft_readback_snapshot, readback_snapshot),
+           authorise_write_receipt = $2,
+           authorise_readback_snapshot = $3, updated_at = now()
+         WHERE posting_request_id = $1
+         RETURNING *`,
+        [postingRequestId, writeReceipt, readbackSnapshot],
+      );
+      await client.query("COMMIT");
+      return mapPosting(result.rows[0] as Row);
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async markAuthoriseFailure(
+    postingRequestId: string,
+    state: "WRITE_RESULT_UNKNOWN" | "READBACK_MISMATCH" | "BLOCKED_VALIDATION",
+  ): Promise<void> {
+    const result = await this.pool.query(
+      `UPDATE posting_requests SET state = $2, updated_at = now()
+       WHERE posting_request_id = $1 AND state IN ('AUTHORISING', 'WRITE_RESULT_UNKNOWN')
+       RETURNING state`,
+      [postingRequestId, state],
+    );
+    if (result.rowCount === 1) return;
+
+    const existing = await this.pool.query<{ state: PostingState }>(
+      "SELECT state FROM posting_requests WHERE posting_request_id = $1",
+      [postingRequestId],
+    );
+    const posting = existing.rows[0];
+    if (!posting) {
+      throw new AppError("NOT_FOUND", "Posting request was not found.", { httpStatus: 404 });
+    }
+    if (posting.state === "AUTHORISED_READBACK_VERIFIED") return;
+    throw new AppError("CONFLICT", `Authorisation failure cannot be recorded from ${posting.state}.`, {
+      httpStatus: 409,
+    });
+  }
+
+  async createXeroMutationPreparation(
+    input: CreateXeroMutationPreparationInput,
+  ): Promise<XeroMutationPreparation> {
+    const result = await this.pool.query(
+      `INSERT INTO xero_mutation_preparations(
+         preparation_id, actor_id, workspace_id, tenant_id, oauth_installation_id,
+         binding_id, connection_id, object_type, operation, target_xero_object_id, canonical_payload,
+         canonical_payload_hash, source_ref, source_unit_key, source_sha256, source_evidence_type,
+         confirmation_summary_hash, confirmation_phrase_hash, state, expires_at, created_at, updated_at
+       ) VALUES (
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'PREPARED',$19,$20,$20
+       )
+       RETURNING *`,
+      [
+        input.preparationId,
+        input.actorId,
+        input.workspaceId,
+        input.tenantId,
+        input.installationId,
+        input.bindingId,
+        input.connectionId,
+        input.objectType,
+        input.operation,
+        input.targetXeroObjectId ?? null,
+        input.canonicalPayload,
+        input.canonicalPayloadHash,
+        input.sourceRef ?? null,
+        input.sourceUnitKey,
+        input.sourceSha256,
+        input.sourceEvidenceType,
+        input.confirmationSummaryHash,
+        input.confirmationPhraseHash,
+        input.expiresAt,
+        input.now,
+      ],
+    );
+    return mapXeroMutationPreparation(result.rows[0] as Row);
+  }
+
+  async getXeroMutationPreparation(preparationId: string): Promise<XeroMutationPreparation | undefined> {
+    const result = await this.pool.query(
+      "SELECT * FROM xero_mutation_preparations WHERE preparation_id = $1",
+      [preparationId],
+    );
+    return result.rows[0] ? mapXeroMutationPreparation(result.rows[0]) : undefined;
+  }
+
+  async confirmXeroMutationPreparation(
+    input: ConfirmXeroMutationPreparationInput,
+  ): Promise<ConfirmXeroMutationPreparationResult | undefined> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selected = await client.query(
+        `SELECT * FROM xero_mutation_preparations
+         WHERE preparation_id = $1
+           AND actor_id = $2 AND workspace_id = $3 AND tenant_id = $4
+           AND oauth_installation_id = $5 AND binding_id = $6 AND connection_id = $7
+           AND object_type = $8 AND operation = $9
+           AND target_xero_object_id IS NOT DISTINCT FROM $10::text
+           AND canonical_payload = $11::jsonb AND canonical_payload_hash = $12
+           AND source_ref IS NOT DISTINCT FROM $13::text
+           AND source_unit_key = $14
+           AND source_sha256 = $15 AND source_evidence_type = $16
+           AND confirmation_summary_hash = $17 AND confirmation_phrase_hash = $18
+         FOR UPDATE`,
+        [
+          input.preparationId,
+          input.actorId,
+          input.workspaceId,
+          input.tenantId,
+          input.installationId,
+          input.bindingId,
+          input.connectionId,
+          input.objectType,
+          input.operation,
+          input.targetXeroObjectId ?? null,
+          input.canonicalPayload,
+          input.canonicalPayloadHash,
+          input.sourceRef ?? null,
+          input.sourceUnitKey,
+          input.sourceSha256,
+          input.sourceEvidenceType,
+          input.confirmationSummaryHash,
+          input.confirmationPhraseHash,
+        ],
+      );
+      const row = selected.rows[0] as Row | undefined;
+      if (!row) {
+        await client.query("COMMIT");
+        return undefined;
+      }
+      const preparation = mapXeroMutationPreparation(row);
+      if (preparation.state === "CONSUMED") {
+        const existing = await client.query(
+          `SELECT * FROM xero_mutation_requests
+           WHERE preparation_id = $1 AND mutation_request_id = $2 AND request_id = $3
+             AND actor_id = $4 AND tenant_id = $5 AND object_type = $6 AND operation = $7
+             AND target_xero_object_id IS NOT DISTINCT FROM $8::text
+             AND canonical_payload = $9::jsonb AND canonical_payload_hash = $10
+             AND source_ref IS NOT DISTINCT FROM $11::text
+             AND source_unit_key = $12
+             AND source_sha256 = $13 AND source_evidence_type = $14
+             AND confirmation_summary_hash = $15`,
+          [
+            input.preparationId,
+            input.mutationRequestId,
+            input.requestId,
+            input.actorId,
+            input.tenantId,
+            input.objectType,
+            input.operation,
+            input.targetXeroObjectId ?? null,
+            input.canonicalPayload,
+            input.canonicalPayloadHash,
+            input.sourceRef ?? null,
+            input.sourceUnitKey,
+            input.sourceSha256,
+            input.sourceEvidenceType,
+            input.confirmationSummaryHash,
+          ],
+        );
+        await client.query("COMMIT");
+        return existing.rows[0]
+          ? { request: mapXeroMutationRequest(existing.rows[0]), created: false }
+          : undefined;
+      }
+      if (preparation.state !== "PREPARED") {
+        await client.query("COMMIT");
+        return undefined;
+      }
+      if (preparation.expiresAt <= input.now) {
+        await client.query(
+          `UPDATE xero_mutation_preparations
+           SET state = 'EXPIRED', updated_at = $2
+           WHERE preparation_id = $1 AND state = 'PREPARED'`,
+          [input.preparationId, input.now],
+        );
+        await client.query("COMMIT");
+        return undefined;
+      }
+
+      const inserted = await client.query(
+        `INSERT INTO xero_mutation_requests(
+           mutation_request_id, preparation_id, request_id,
+           actor_id, workspace_id, tenant_id, oauth_installation_id, binding_id, connection_id,
+           object_type, operation, target_xero_object_id, canonical_payload, canonical_payload_hash,
+           source_ref, source_unit_key, source_sha256, source_evidence_type, confirmation_summary_hash,
+           state, confirmed_at, created_at, updated_at
+         ) VALUES (
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'CONFIRMED',$20,$20,$20
+         )
+         RETURNING *`,
+        [
+          input.mutationRequestId,
+          input.preparationId,
+          input.requestId,
+          input.actorId,
+          input.workspaceId,
+          input.tenantId,
+          input.installationId,
+          input.bindingId,
+          input.connectionId,
+          input.objectType,
+          input.operation,
+          input.targetXeroObjectId ?? null,
+          input.canonicalPayload,
+          input.canonicalPayloadHash,
+          input.sourceRef ?? null,
+          input.sourceUnitKey,
+          input.sourceSha256,
+          input.sourceEvidenceType,
+          input.confirmationSummaryHash,
+          input.now,
+        ],
+      );
+      const consumed = await client.query(
+        `UPDATE xero_mutation_preparations
+         SET state = 'CONSUMED', consumed_at = $2, updated_at = $2
+         WHERE preparation_id = $1 AND state = 'PREPARED'
+         RETURNING preparation_id`,
+        [input.preparationId, input.now],
+      );
+      if (consumed.rowCount !== 1) {
+        throw new AppError("CONFLICT", "Mutation preparation could not be consumed atomically.", { httpStatus: 409 });
+      }
+      await client.query("COMMIT");
+      return { request: mapXeroMutationRequest(inserted.rows[0] as Row), created: true };
+    } catch (error) {
+      await this.#safeRollback(client);
+      if (isPostgresUniqueViolation(error)) {
+        throw new AppError("CONFLICT", "Mutation request conflicts with an active idempotency or source guard.", {
+          httpStatus: 409,
+          cause: error,
+        });
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getXeroMutationRequest(mutationRequestId: string): Promise<XeroMutationRequest | undefined> {
+    const result = await this.pool.query(
+      "SELECT * FROM xero_mutation_requests WHERE mutation_request_id = $1",
+      [mutationRequestId],
+    );
+    return result.rows[0] ? mapXeroMutationRequest(result.rows[0]) : undefined;
+  }
+
+  async beginXeroMutationWrite(input: BeginXeroMutationWriteInput): Promise<BeginXeroMutationWriteResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const request = await this.#selectBoundXeroMutationRequest(client, input, true);
+      if (request.state === "READBACK_VERIFIED") {
+        await client.query("COMMIT");
+        return { request, mode: "ALREADY_VERIFIED" };
+      }
+      if (["WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH"].includes(request.state)) {
+        await client.query("COMMIT");
+        return { request, mode: "RECOVER_ONLY" };
+      }
+      if (request.state !== "CONFIRMED") {
+        throw new AppError("CONFLICT", `Mutation cannot start from ${request.state}.`, { httpStatus: 409 });
+      }
+      const targetXeroObjectId = request.operation === "UPDATE" ? request.targetXeroObjectId : undefined;
+      if (request.operation === "UPDATE" && !targetXeroObjectId) {
+        throw new AppError("CONFLICT", "UPDATE mutation has no immutable Xero target identifier.", {
+          httpStatus: 409,
+        });
+      }
+      const updated = await client.query(
+        `UPDATE xero_mutation_requests SET
+           state = 'WRITE_IN_FLIGHT', xero_object_id = COALESCE(xero_object_id, $2),
+           write_started_at = $3, updated_at = $3
+         WHERE mutation_request_id = $1
+         RETURNING *`,
+        [input.mutationRequestId, targetXeroObjectId ?? null, input.now],
+      );
+      await client.query("COMMIT");
+      return { request: mapXeroMutationRequest(updated.rows[0] as Row), mode: "CALL_PROVIDER" };
+    } catch (error) {
+      await this.#safeRollback(client);
+      if (isPostgresUniqueViolation(error)) {
+        throw new AppError("CONFLICT", "The exact Xero object is already bound to another active mutation.", {
+          httpStatus: 409,
+          cause: error,
+        });
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async recordXeroMutationWriteEvidence(
+    input: RecordXeroMutationWriteEvidenceInput,
+  ): Promise<XeroMutationRequest> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const request = await this.#selectBoundXeroMutationRequest(client, input, true);
+      if (request.state !== "WRITE_IN_FLIGHT") {
+        throw new AppError("CONFLICT", `Mutation write evidence cannot be recorded from ${request.state}.`, {
+          httpStatus: 409,
+        });
+      }
+      this.#assertCompatibleMutationEvidence(request, input.xeroObjectId, input.writeReceipt);
+      const updated = await client.query(
+        `UPDATE xero_mutation_requests SET
+           xero_object_id = $2, write_receipt = $3, updated_at = $4
+         WHERE mutation_request_id = $1
+         RETURNING *`,
+        [input.mutationRequestId, input.xeroObjectId, input.writeReceipt, input.now],
+      );
+      await client.query("COMMIT");
+      return mapXeroMutationRequest(updated.rows[0] as Row);
+    } catch (error) {
+      await this.#safeRollback(client);
+      if (isPostgresUniqueViolation(error)) {
+        throw new AppError("CONFLICT", "The exact Xero object is already bound to another active mutation.", {
+          httpStatus: 409,
+          cause: error,
+        });
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async markXeroMutationWriteUnknown(
+    input: MarkXeroMutationWriteUnknownInput,
+  ): Promise<XeroMutationRequest> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const request = await this.#selectBoundXeroMutationRequest(client, input, true);
+      if (request.state !== "WRITE_IN_FLIGHT" && request.state !== "WRITE_UNCERTAIN") {
+        throw new AppError("CONFLICT", `Mutation uncertainty cannot be recorded from ${request.state}.`, {
+          httpStatus: 409,
+        });
+      }
+      this.#assertCompatibleMutationEvidence(request, input.xeroObjectId, input.writeReceipt);
+      const updated = await client.query(
+        `UPDATE xero_mutation_requests SET
+           state = 'WRITE_UNCERTAIN',
+           xero_object_id = COALESCE(xero_object_id, $2),
+           write_receipt = COALESCE(write_receipt, $3::jsonb),
+           write_unknown_at = COALESCE(write_unknown_at, $4),
+           updated_at = $4
+         WHERE mutation_request_id = $1
+         RETURNING *`,
+        [input.mutationRequestId, input.xeroObjectId ?? null, input.writeReceipt ?? null, input.now],
+      );
+      await client.query("COMMIT");
+      return mapXeroMutationRequest(updated.rows[0] as Row);
+    } catch (error) {
+      await this.#safeRollback(client);
+      if (isPostgresUniqueViolation(error)) {
+        throw new AppError("CONFLICT", "The exact Xero object is already bound to another active mutation.", {
+          httpStatus: 409,
+          cause: error,
+        });
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async markXeroMutationReadbackVerified(
+    input: CompleteXeroMutationReadbackInput,
+  ): Promise<XeroMutationRequest> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const request = await this.#selectBoundXeroMutationRequest(client, input, true);
+      if (
+        input.readbackPayloadHash !== request.canonicalPayloadHash ||
+        input.readbackStatus !== XERO_MUTATION_EXPECTED_READBACK_STATUS[request.objectType]
+      ) {
+        throw new AppError("READBACK_MISMATCH", "Verified readback hash does not match the confirmed payload.", {
+          httpStatus: 409,
+        });
+      }
+      if (!request.xeroObjectId || !request.writeReceipt) {
+        throw new AppError("CONFLICT", "Mutation write evidence must be persisted before readback completion.", {
+          httpStatus: 409,
+        });
+      }
+      if (request.state === "READBACK_VERIFIED") {
+        this.#assertExactCompletedMutation(request, input);
+        await client.query("COMMIT");
+        return request;
+      }
+      if (!["WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH"].includes(request.state)) {
+        throw new AppError("CONFLICT", `Mutation readback cannot complete from ${request.state}.`, {
+          httpStatus: 409,
+        });
+      }
+      this.#assertCompatibleMutationEvidence(request, input.xeroObjectId, input.writeReceipt);
+      const updated = await client.query(
+        `UPDATE xero_mutation_requests SET
+           state = 'READBACK_VERIFIED', xero_object_id = $2,
+           write_receipt = $3, readback_snapshot = $4, readback_snapshot_hash = $5,
+           readback_canonical_payload = $6, readback_payload_hash = $7, readback_status = $8,
+           verified_at = $9, updated_at = $9
+         WHERE mutation_request_id = $1
+         RETURNING *`,
+        [
+          input.mutationRequestId,
+          input.xeroObjectId,
+          input.writeReceipt,
+          input.readbackSnapshot,
+          input.readbackSnapshotHash,
+          input.readbackCanonicalPayload,
+          input.readbackPayloadHash,
+          input.readbackStatus,
+          input.now,
+        ],
+      );
+      await client.query("COMMIT");
+      return mapXeroMutationRequest(updated.rows[0] as Row);
+    } catch (error) {
+      await this.#safeRollback(client);
+      if (isPostgresUniqueViolation(error)) {
+        throw new AppError("CONFLICT", "The exact Xero object is already bound to another mutation.", {
+          httpStatus: 409,
+          cause: error,
+        });
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async markXeroMutationReadbackMismatch(
+    input: CompleteXeroMutationReadbackInput,
+  ): Promise<XeroMutationRequest> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const request = await this.#selectBoundXeroMutationRequest(client, input, true);
+      if (
+        input.readbackPayloadHash === request.canonicalPayloadHash &&
+        input.readbackStatus === XERO_MUTATION_EXPECTED_READBACK_STATUS[request.objectType]
+      ) {
+        throw new AppError("CONFLICT", "Matching readback cannot be recorded as a mismatch.", { httpStatus: 409 });
+      }
+      if (!request.xeroObjectId || !request.writeReceipt) {
+        throw new AppError("CONFLICT", "Mutation write evidence must be persisted before readback completion.", {
+          httpStatus: 409,
+        });
+      }
+      if (!["WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH"].includes(request.state)) {
+        throw new AppError("CONFLICT", `Mutation mismatch cannot be recorded from ${request.state}.`, {
+          httpStatus: 409,
+        });
+      }
+      this.#assertCompatibleMutationEvidence(request, input.xeroObjectId, input.writeReceipt);
+      if (request.state === "READBACK_MISMATCH") {
+        this.#assertExactMismatchEvidence(request, input);
+        await client.query("COMMIT");
+        return request;
+      }
+      const updated = await client.query(
+        `UPDATE xero_mutation_requests SET
+           state = 'READBACK_MISMATCH', xero_object_id = $2,
+           write_receipt = $3, readback_snapshot = $4, readback_snapshot_hash = $5,
+           readback_canonical_payload = $6, readback_payload_hash = $7, readback_status = $8,
+           verified_at = NULL, updated_at = $9
+         WHERE mutation_request_id = $1
+         RETURNING *`,
+        [
+          input.mutationRequestId,
+          input.xeroObjectId,
+          input.writeReceipt,
+          input.readbackSnapshot,
+          input.readbackSnapshotHash,
+          input.readbackCanonicalPayload,
+          input.readbackPayloadHash,
+          input.readbackStatus,
+          input.now,
+        ],
+      );
+      await client.query("COMMIT");
+      return mapXeroMutationRequest(updated.rows[0] as Row);
+    } catch (error) {
+      await this.#safeRollback(client);
+      if (isPostgresUniqueViolation(error)) {
+        throw new AppError("CONFLICT", "The exact Xero object is already bound to another mutation.", {
+          httpStatus: 409,
+          cause: error,
+        });
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async failXeroMutationValidation(input: FailXeroMutationValidationInput): Promise<XeroMutationRequest> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const request = await this.#selectBoundXeroMutationRequest(client, input, true);
+      if (request.state === "FAILED_VALIDATION") {
+        if (!sameOptionalJson(request.validationReceipt, input.validationReceipt)) {
+          throw new AppError("CONFLICT", "Validation failure evidence cannot be replaced.", { httpStatus: 409 });
+        }
+        await client.query("COMMIT");
+        return request;
+      }
+      if (request.state !== "CONFIRMED") {
+        throw new AppError("CONFLICT", `Mutation validation cannot fail from ${request.state}.`, {
+          httpStatus: 409,
+        });
+      }
+      const updated = await client.query(
+        `UPDATE xero_mutation_requests SET
+           state = 'FAILED_VALIDATION', validation_receipt = $2,
+           validation_failed_at = $3, updated_at = $3
+         WHERE mutation_request_id = $1
+         RETURNING *`,
+        [input.mutationRequestId, input.validationReceipt ?? null, input.now],
+      );
+      await client.query("COMMIT");
+      return mapXeroMutationRequest(updated.rows[0] as Row);
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async rejectXeroMutationProvider(input: RejectXeroMutationProviderInput): Promise<XeroMutationRequest> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const request = await this.#selectBoundXeroMutationRequest(client, input, true);
+      if (request.state === "PROVIDER_REJECTED") {
+        if (!sameOptionalJson(request.providerRejectionReceipt, input.providerRejectionReceipt)) {
+          throw new AppError("CONFLICT", "Provider rejection evidence cannot be replaced.", { httpStatus: 409 });
+        }
+        await client.query("COMMIT");
+        return request;
+      }
+      if (request.state !== "WRITE_IN_FLIGHT") {
+        throw new AppError("CONFLICT", `Provider rejection cannot be recorded from ${request.state}.`, {
+          httpStatus: 409,
+        });
+      }
+      const updated = await client.query(
+        `UPDATE xero_mutation_requests SET
+           state = 'PROVIDER_REJECTED', provider_rejection_receipt = $2,
+           provider_rejected_at = $3, updated_at = $3
+         WHERE mutation_request_id = $1
+         RETURNING *`,
+        [input.mutationRequestId, input.providerRejectionReceipt, input.now],
+      );
+      await client.query("COMMIT");
+      return mapXeroMutationRequest(updated.rows[0] as Row);
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async appendAudit(record: AuditRecord): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO tool_audit_logs(
+         call_id, actor_id, tenant_id, tool_name, request_hash, result_status,
+         provider_request_id, record_id, error_class, started_at, finished_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        record.callId,
+        record.actorId,
+        record.tenantId ?? null,
+        record.toolName,
+        record.requestHash,
+        record.resultStatus,
+        record.providerRequestId ?? null,
+        record.recordId ?? null,
+        record.errorClass ?? null,
+        record.startedAt,
+        record.finishedAt,
+      ],
+    );
+  }
+
+  async beginAudit(intent: AuditIntent): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO tool_audit_logs(
+         call_id, actor_id, tenant_id, tool_name, request_hash, result_status,
+         started_at, finished_at
+       ) VALUES ($1,$2,$3,$4,$5,'IN_PROGRESS',$6,NULL)`,
+      [
+        intent.callId,
+        intent.actorId,
+        intent.tenantId ?? null,
+        intent.toolName,
+        intent.requestHash,
+        intent.startedAt,
+      ],
+    );
+  }
+
+  async completeAudit(callId: string, completion: AuditCompletion): Promise<void> {
+    const result = await this.pool.query(
+      `UPDATE tool_audit_logs
+       SET result_status = $2,
+           provider_request_id = $3,
+           record_id = $4,
+           error_class = $5,
+           finished_at = $6
+       WHERE call_id = $1 AND result_status = 'IN_PROGRESS'
+       RETURNING call_id`,
+      [
+        callId,
+        completion.resultStatus,
+        completion.providerRequestId ?? null,
+        completion.recordId ?? null,
+        completion.errorClass ?? null,
+        completion.finishedAt,
+      ],
+    );
+    if (result.rowCount === 1) return;
+
+    const existing = await this.pool.query<{ result_status: string }>(
+      "SELECT result_status FROM tool_audit_logs WHERE call_id = $1",
+      [callId],
+    );
+    if (existing.rowCount === 0) {
+      throw new AppError("NOT_FOUND", "Audit intent was not found.", { httpStatus: 404 });
+    }
+    throw new AppError("CONFLICT", "Audit intent is already complete.", { httpStatus: 409 });
+  }
+
+  async #selectBoundXeroMutationRequest(
+    client: PoolClient,
+    input: BoundXeroMutationRequestInput,
+    forUpdate: boolean,
+  ): Promise<XeroMutationRequest> {
+    const result = await client.query(
+      `SELECT * FROM xero_mutation_requests
+       WHERE mutation_request_id = $1
+         AND actor_id = $2 AND workspace_id = $3 AND tenant_id = $4
+         AND oauth_installation_id = $5 AND binding_id = $6 AND connection_id = $7
+         AND object_type = $8 AND operation = $9
+         AND target_xero_object_id IS NOT DISTINCT FROM $10::text
+         AND canonical_payload_hash = $11
+         AND source_ref IS NOT DISTINCT FROM $12::text
+         AND source_unit_key = $13
+         AND source_sha256 = $14 AND source_evidence_type = $15
+       ${forUpdate ? "FOR UPDATE" : ""}`,
+      [
+        input.mutationRequestId,
+        input.actorId,
+        input.workspaceId,
+        input.tenantId,
+        input.installationId,
+        input.bindingId,
+        input.connectionId,
+        input.objectType,
+        input.operation,
+        input.targetXeroObjectId ?? null,
+        input.canonicalPayloadHash,
+        input.sourceRef ?? null,
+        input.sourceUnitKey,
+        input.sourceSha256,
+        input.sourceEvidenceType,
+      ],
+    );
+    if (!result.rows[0]) {
+      throw new AppError("NOT_FOUND", "Mutation request is unavailable for this OAuth binding.", {
+        httpStatus: 404,
+      });
+    }
+    return mapXeroMutationRequest(result.rows[0]);
+  }
+
+  #assertCompatibleMutationEvidence(
+    request: XeroMutationRequest,
+    xeroObjectId?: string,
+    writeReceipt?: Record<string, unknown>,
+  ): void {
+    if (
+      request.operation === "UPDATE" &&
+      xeroObjectId &&
+      request.targetXeroObjectId !== xeroObjectId
+    ) {
+      throw new AppError("CONFLICT", "UPDATE result does not match its immutable Xero target.", {
+        httpStatus: 409,
+      });
+    }
+    if (xeroObjectId && request.xeroObjectId && request.xeroObjectId !== xeroObjectId) {
+      throw new AppError("CONFLICT", "Mutation cannot replace its exact Xero object identifier.", {
+        httpStatus: 409,
+      });
+    }
+    if (writeReceipt && request.writeReceipt && !sameJson(request.writeReceipt, writeReceipt)) {
+      throw new AppError("CONFLICT", "Mutation cannot replace previously recorded write evidence.", {
+        httpStatus: 409,
+      });
+    }
+  }
+
+  #assertExactCompletedMutation(
+    request: XeroMutationRequest,
+    input: CompleteXeroMutationReadbackInput,
+  ): void {
+    if (
+      request.xeroObjectId !== input.xeroObjectId ||
+      request.readbackStatus !== input.readbackStatus ||
+      request.readbackSnapshotHash !== input.readbackSnapshotHash ||
+      request.readbackPayloadHash !== input.readbackPayloadHash ||
+      !request.writeReceipt ||
+      !request.readbackSnapshot ||
+      !request.readbackCanonicalPayload ||
+      !sameJson(request.writeReceipt, input.writeReceipt) ||
+      !sameJson(request.readbackSnapshot, input.readbackSnapshot) ||
+      !sameJson(request.readbackCanonicalPayload, input.readbackCanonicalPayload)
+    ) {
+      throw new AppError("CONFLICT", "Completed mutation evidence cannot be replaced.", { httpStatus: 409 });
+    }
+  }
+
+  #assertExactMismatchEvidence(
+    request: XeroMutationRequest,
+    input: CompleteXeroMutationReadbackInput,
+  ): void {
+    if (
+      request.xeroObjectId !== input.xeroObjectId ||
+      request.readbackStatus !== input.readbackStatus ||
+      request.readbackSnapshotHash !== input.readbackSnapshotHash ||
+      request.readbackPayloadHash !== input.readbackPayloadHash ||
+      !request.writeReceipt ||
+      !request.readbackSnapshot ||
+      !request.readbackCanonicalPayload ||
+      !sameJson(request.writeReceipt, input.writeReceipt) ||
+      !sameJson(request.readbackSnapshot, input.readbackSnapshot) ||
+      !sameJson(request.readbackCanonicalPayload, input.readbackCanonicalPayload)
+    ) {
+      throw new AppError("CONFLICT", "Mismatch evidence cannot be replaced without a verified recovery.", {
+        httpStatus: 409,
+      });
+    }
+  }
+
+  #assertAuthoriseIdentity(posting: PostingRequest, input: BeginAuthoriseInput): void {
+    if (
+      posting.actorId !== input.actorId ||
+      posting.tenantId !== input.tenantId ||
+      posting.xeroInvoiceId !== input.invoiceId
+    ) {
+      throw new AppError("FORBIDDEN", "Posting request does not match the selected actor, tenant, and invoice.", {
+        httpStatus: 403,
+      });
+    }
+  }
+
+  #assertReviewResumeBinding(posting: PostingRequest, input: BeginReviewAuthoriseInput): void {
+    if (
+      !posting.approvalRefHash ||
+      posting.authoriseRequestId !== input.requestId ||
+      posting.authoriseIdempotencyKey !== input.idempotencyKey
+    ) {
+      throw new AppError("CONFLICT", "Review recovery does not match the original authorisation attempt.", {
+        httpStatus: 409,
+      });
+    }
+  }
+
+  #assertApprovalBinding(posting: PostingRequest, input: BeginAuthoriseInput): void {
+    if (
+      posting.approvalRefHash !== input.approvalRefHash ||
+      posting.providerPayloadHash !== input.approvedPayloadHash
+    ) {
+      throw new AppError("APPROVAL_INVALID", "Approval is not bound to this payload and request.", {
+        httpStatus: 409,
+      });
+    }
+  }
+
+  async #revokeMcpRefreshFamily(
+    client: PoolClient,
+    familyId: string,
+    revokedAt: Date,
+    replayDetectedAt?: Date,
+  ): Promise<void> {
+    await client.query(
+      `UPDATE mcp_refresh_tokens SET revoked_at = COALESCE(revoked_at, $2)
+       WHERE family_id = $1`,
+      [familyId, revokedAt],
+    );
+    await client.query(
+      `UPDATE mcp_access_tokens SET revoked_at = COALESCE(revoked_at, $2)
+       WHERE refresh_family_id = $1`,
+      [familyId, revokedAt],
+    );
+    await client.query(
+      `UPDATE mcp_refresh_token_families SET
+         family_status = 'REVOKED',
+         revoked_at = COALESCE(revoked_at, $2),
+         replay_detected_at = COALESCE(replay_detected_at, $3),
+         updated_at = $2
+       WHERE family_id = $1`,
+      [familyId, revokedAt, replayDetectedAt ?? null],
+    );
+  }
+
+  /** Exact-family validation selects the installation-wide MCP grant boundary to disconnect. */
+  async #revokeMcpRefreshGrant(
+    client: PoolClient,
+    familyId: string,
+    installationId: string,
+    bindingId: string,
+    connectionId: string,
+    revokedAt: Date,
+    replayDetectedAt?: Date,
+  ): Promise<void> {
+    const exactFamily = await client.query(
+      `SELECT 1
+       FROM mcp_refresh_token_families
+       WHERE family_id = $1
+         AND oauth_installation_id = $2
+         AND binding_id = $3
+         AND connection_id = $4`,
+      [familyId, installationId, bindingId, connectionId],
+    );
+    if (exactFamily.rowCount !== 1) return;
+    await this.#revokeMcpInstallationGrant(
+      client,
+      installationId,
+      revokedAt,
+      familyId,
+      replayDetectedAt,
+    );
+  }
+
+  async #revokeMcpInstallationGrant(
+    client: PoolClient,
+    installationId: string,
+    revokedAt: Date,
+    replayFamilyId?: string,
+    replayDetectedAt?: Date,
+  ): Promise<void> {
+    await client.query(
+      `UPDATE mcp_refresh_tokens refresh_token SET
+         revoked_at = COALESCE(refresh_token.revoked_at, $2)
+       FROM mcp_refresh_token_families family
+       WHERE refresh_token.family_id = family.family_id
+         AND family.oauth_installation_id = $1`,
+      [installationId, revokedAt],
+    );
+    await client.query(
+      `UPDATE mcp_access_tokens SET
+         revoked_at = COALESCE(revoked_at, $2)
+       WHERE oauth_installation_id = $1`,
+      [installationId, revokedAt],
+    );
+    await client.query(
+      `UPDATE mcp_refresh_token_families SET
+         family_status = 'REVOKED',
+         revoked_at = COALESCE(revoked_at, $2),
+         replay_detected_at = CASE
+           WHEN family_id = $3 THEN COALESCE(replay_detected_at, $4)
+           ELSE replay_detected_at
+         END,
+         updated_at = $2
+       WHERE oauth_installation_id = $1`,
+      [installationId, revokedAt, replayFamilyId ?? null, replayDetectedAt ?? null],
+    );
+    await client.query(
+      `UPDATE agent_connection_bindings SET
+         binding_status = 'REVOKED',
+         revoked_at = COALESCE(revoked_at, $2),
+         updated_at = $2
+       WHERE oauth_installation_id = $1`,
+      [installationId, revokedAt],
+    );
+    await client.query(
+      `UPDATE oauth_installations SET
+         installation_status = 'REVOKED',
+         revoked_at = COALESCE(revoked_at, $2),
+         updated_at = $2
+       WHERE installation_id = $1`,
+      [installationId, revokedAt],
+    );
+  }
+
+  async #revokePendingBrokerGrant(client: PoolClient, flow: Row, revokedAt: Date): Promise<void> {
+    if (flow.flow_status !== "AWAITING_SELECTION" || !flow.authorization_id) return;
+    const exactPendingGrant = await client.query(
+      `SELECT installation.installation_id, provider_auth.authorization_id
+       FROM oauth_installations installation
+       JOIN provider_authorizations provider_auth ON provider_auth.authorization_id = $2
+       WHERE installation.installation_id = $1
+         AND installation.workspace_id = $3
+         AND installation.subject_type = $4
+         AND installation.subject_id = $5
+         AND installation.agent_id = $6
+         AND installation.oauth_client_id = $7
+         AND installation.installation_status = 'PENDING'
+         AND provider_auth.workspace_id = $3
+         AND provider_auth.authorized_by_subject = $5
+       FOR UPDATE OF installation, provider_auth`,
+      [
+        flow.oauth_installation_id,
+        flow.authorization_id,
+        flow.workspace_id,
+        flow.subject_type,
+        flow.subject_id,
+        flow.agent_id,
+        flow.oauth_client_id,
+      ],
+    );
+    if (exactPendingGrant.rowCount !== 1) return;
+
+    await client.query(
+      `UPDATE provider_connections SET
+         connection_status = 'REVOKED',
+         updated_at = $2
+       WHERE authorization_id = $1
+         AND connection_status <> 'REVOKED'`,
+      [flow.authorization_id, revokedAt],
+    );
+    await client.query(
+      `UPDATE provider_authorizations SET
+         authorization_status = 'REVOKED',
+         revoked_at = COALESCE(revoked_at, $2),
+         updated_at = $2
+       WHERE authorization_id = $1
+         AND workspace_id = $3
+         AND authorized_by_subject = $4
+         AND authorization_status <> 'REVOKED'`,
+      [flow.authorization_id, revokedAt, flow.workspace_id, flow.subject_id],
+    );
+    await client.query(
+      `UPDATE oauth_installations SET
+         installation_status = 'REVOKED',
+         revoked_at = COALESCE(revoked_at, $2),
+         updated_at = $2
+       WHERE installation_id = $1
+         AND workspace_id = $3
+         AND installation_status = 'PENDING'`,
+      [flow.oauth_installation_id, revokedAt, flow.workspace_id],
+    );
+  }
+
+  async #lockMcpRefreshFamily(client: PoolClient, familyId: string): Promise<void> {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1::text, $2::bigint))",
+      [familyId, MCP_REFRESH_FAMILY_ADVISORY_SALT],
+    );
+  }
+
+  async #safeRollback(client: PoolClient): Promise<void> {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // Connection cleanup will handle an already-closed transaction.
+    }
+  }
+}

@@ -1,0 +1,15 @@
+CURRENT SYNTHETIC XERO TEST-ORGANISATION BASELINE — RE-READ XERO; DO NOT TREAT THIS TEXT AS LEDGER TRUTH
+
+Evidence date: 2026-08-06
+Organisation baseline: zcloak
+Base currency baseline: HKD
+Synthetic supplier: zCloak Synthetic Supplier HK Limited
+Supplier ContactID: 14c4056e-97d3-4e7e-8285-60bf9860d100
+Exact historical supplier Bill InvoiceID: b4cbb8ee-d420-4343-bdd3-2a39af7cc756
+Historical bill baseline: ACCPAY, AUTHORISED, HKD 100.00, amount due HKD 100.00, not paid
+Supplier-credit baseline: zero ACCPAYCREDIT rows for this synthetic supplier
+AP-payment baseline: zero ACCPAYPAYMENT, APCREDITPAYMENT, APPREPAYMENTPAYMENT, and APOVERPAYMENTPAYMENT rows for this synthetic supplier
+
+These values come from the controlled Xero Trial evidence and Agent2 UAT notes. They are comparison hints only. Query the currently bound Xero organisation, disclose any drift, preserve pagination evidence, and never invent a CreditNoteID or PaymentID when Xero returns zero rows.
+
+Do not create, authorise, pay, allocate, reconcile, void, delete, or switch Xero tenants.
