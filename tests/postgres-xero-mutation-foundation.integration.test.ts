@@ -88,6 +88,10 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
     await repository.pool.query("DELETE FROM posting_requests WHERE tenant_id = $1", [tenantId]);
     await repository.pool.query("DELETE FROM xero_mutation_requests WHERE tenant_id = $1", [tenantId]);
     await repository.pool.query("DELETE FROM xero_mutation_preparations WHERE tenant_id = $1", [tenantId]);
+    await repository.pool.query(
+      "DELETE FROM oauth_installation_active_bindings WHERE oauth_installation_id = $1",
+      [installationId],
+    );
     await repository.pool.query("DELETE FROM agent_connection_bindings WHERE binding_id = $1", [bindingId]);
     await repository.pool.query("DELETE FROM oauth_installations WHERE installation_id = $1", [installationId]);
     await repository.pool.query("DELETE FROM provider_connections WHERE connection_id = $1", [connectionId]);

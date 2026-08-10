@@ -42,18 +42,17 @@ export interface ConnectionSummary {
   connectUrl?: string;
   connectUrlExpiresAt?: string;
   connectionLifecycle?: {
-    organisationBinding: "EXACTLY_ONE_ORGANISATION_PER_MCP_CONNECTION";
+    organisationBinding: "EXACTLY_ONE_CURRENT_ORGANISATION_PER_MCP_INSTALLATION";
     accessTokenRefresh: "AUTOMATIC_NO_USER_ACTION";
     organisationChange: {
       supported: true;
-      requiresFreshXeroOAuth: true;
+      requiresFreshXeroOAuth: "ONLY_IF_ORGANISATION_NOT_ALREADY_AUTHORISED";
       silentChatSwitchAllowed: false;
       hostSteps: readonly [
-        "REVOKE_CURRENT_MCP_AUTHORISATION",
-        "CONNECT_MCP_AGAIN",
-        "COMPLETE_XERO_LOGIN_OR_CONSENT",
+        "ASK_AGENT_TO_SWITCH_XERO_ORGANISATION",
+        "OPEN_SHORT_LIVED_CONFIRMATION_LINK",
         "SELECT_EXACTLY_ONE_XERO_ORGANISATION",
-        "RETURN_TO_HOST_AND_VERIFY_CONNECTION_STATUS",
+        "RETURN_TO_AGENT_AND_VERIFY_CONNECTION_STATUS",
       ];
     };
   };

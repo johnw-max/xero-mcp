@@ -16,6 +16,7 @@ export interface XeroToolAnnotationsContract {
 }
 
 const STATEFUL_PREPARATION_TOOL_NAMES: ReadonlySet<AccountingToolName> = new Set([
+  "xero_start_organisation_switch",
   "xero_prepare_quote_draft",
   "xero_prepare_purchase_order_draft",
   "xero_prepare_credit_note_draft",
@@ -56,6 +57,7 @@ export interface XeroToolCapabilityBinding {
  */
 export const XERO_TOOL_CAPABILITY_ACTION_IDS = {
   xero_connection_status: ["system.connection_status"],
+  xero_start_organisation_switch: ["system.organisation_switch_prepare"],
   xero_get_organisation: ["organisation.read_prepare"],
   xero_list_accounts: ["account.read_prepare"],
   xero_list_tax_rates: ["tax_rate.read_prepare"],

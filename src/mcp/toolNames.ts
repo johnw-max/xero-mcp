@@ -1,5 +1,6 @@
 export const TOOL_ALLOWLIST = [
   "xero_connection_status",
+  "xero_start_organisation_switch",
   "xero_get_organisation",
   "xero_list_accounts",
   "xero_list_tax_rates",

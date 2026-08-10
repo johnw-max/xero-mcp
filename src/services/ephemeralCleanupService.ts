@@ -105,6 +105,7 @@ export class EphemeralCleanupService {
         const context = {
           cleanupStatus: result.status,
           batches: result.batches,
+          deletedOrganisationSwitchSessions: result.deleted.organisationSwitchSessions,
           scrubbedOAuthBrokerFlows: result.deleted.oauthBrokerFlows,
           deletedOAuthStates: result.deleted.oauthStates,
           deletedConnectTickets: result.deleted.connectTickets,
@@ -147,6 +148,7 @@ export class EphemeralCleanupService {
         break;
       }
       deleted.mcpRefreshRetryResponses += batch.deleted.mcpRefreshRetryResponses;
+      deleted.organisationSwitchSessions += batch.deleted.organisationSwitchSessions;
       deleted.oauthBrokerFlows += batch.deleted.oauthBrokerFlows;
       deleted.oauthStates += batch.deleted.oauthStates;
       deleted.connectTickets += batch.deleted.connectTickets;
@@ -165,6 +167,7 @@ export class EphemeralCleanupService {
 function emptyCounts(): EphemeralCleanupCounts {
   return {
     mcpRefreshRetryResponses: 0,
+    organisationSwitchSessions: 0,
     oauthBrokerFlows: 0,
     oauthStates: 0,
     connectTickets: 0,

@@ -350,6 +350,10 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
   it.each([
     "018_xero_invoice_draft_one_time_confirmation.sql",
     "020_xero_runtime_readiness_compatibility.sql",
+    "021_xero_mcp_refresh_retry_grace.sql",
+    "022_xero_organisation_switch.sql",
+    "023_governance_audit_events.sql",
+    "024_allow_binding_history_per_installation.sql",
   ])("fails readiness when required migration provenance %s is missing", async (version) => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
     await repository.pool.query("DELETE FROM schema_migrations WHERE version = $1", [version]);

@@ -50,6 +50,7 @@ const TARGET_CASE_IDS = [
 
 const PINNED_TOOL_SURFACE = [
   "xero_connection_status",
+  "xero_start_organisation_switch",
   "xero_get_organisation",
   "xero_list_accounts",
   "xero_list_tax_rates",

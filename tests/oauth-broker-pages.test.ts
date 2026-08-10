@@ -25,8 +25,8 @@ describe("Xero broker organisation selection page", () => {
     expect(html).not.toContain("checked");
     expect(html).toContain("PERSONAL POC — HOST IDENTITY UNVERIFIED");
     expect(html).toContain('action="/oauth/xero/select"');
-    expect(html).toContain("revoke this MCP authorisation and connect again through Xero OAuth");
-    expect(html).toContain("A technical reconnect or page refresh does not change the ledger");
+    expect(html).toContain("ask the Agent to switch Xero organisation");
+    expect(html).toContain("Reconnect through Xero OAuth only when the organisation is not in the authorised list");
   });
 
   it("renders every organisation without leaking unsafe markup", () => {

@@ -21,6 +21,7 @@ import { XeroControlledMutationService } from "./services/xeroControlledMutation
 import { XeroCreditNoteManualJournalService } from "./services/xeroCreditNoteManualJournalService.js";
 import { XeroContactItemMutationService } from "./services/xeroContactItemMutationService.js";
 import { XeroMutationService } from "./services/xeroMutationService.js";
+import { OrganisationSwitchService } from "./services/organisationSwitchService.js";
 
 const XERO_CONTACT_NAMESPACE = "zcacct";
 
@@ -73,6 +74,14 @@ async function main(): Promise<void> {
   const reviewService = new ReviewService(repository);
   const oauthService = new XeroOAuthService({ repository, manager, cipher, config });
   const brokerConfig = config.mcpOAuthBroker;
+  const organisationSwitchService = brokerConfig?.enabled
+    ? new OrganisationSwitchService({
+        repository,
+        publicBaseUrl: config.publicBaseUrl,
+        // Domain-separated HMAC use; no confirmation token or raw ticket is persisted.
+        secret: config.xeroMutationConfirmationKey,
+      })
+    : undefined;
   const mcpOAuthProvider = brokerConfig?.enabled
     ? new McpOAuthBrokerProvider({
         config,
@@ -92,6 +101,7 @@ async function main(): Promise<void> {
     connectionTickets,
     logger,
     ...(mcpOAuthProvider ? { mcpOAuthProvider } : {}),
+    ...(organisationSwitchService ? { organisationSwitchService } : {}),
   });
 
   const server = await new Promise<Server>((resolve, reject) => {

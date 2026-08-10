@@ -13,6 +13,8 @@ import type {
   BrokerSelectionContext,
   CompleteBrokerOrganisationSelectionInput,
   CompleteBrokerOrganisationSelectionResult,
+  CompleteOrganisationSwitchInput,
+  CompleteOrganisationSwitchResult,
   CompleteBrokerXeroExchangeInput,
   ConsumeOAuthAuthorizationCodeInput,
   ConsumeOAuthBrokerFlowInput,
@@ -32,6 +34,8 @@ import type {
   OAuthBrokerAuthorizationFlow,
   OAuthBrokerFlow,
   OAuthInstallation,
+  OrganisationSwitchContext,
+  OrganisationSwitchSession,
   PostingRequest,
   PostingState,
   PeekMcpRefreshTokenContextInput,
@@ -52,6 +56,8 @@ import type {
   TerminateBrokerAuthorizationFlowInput,
   TerminateBrokerAuthorizationFlowResult,
   GetBrokerSelectionInput,
+  GovernanceAuditEvent,
+  GovernanceAuditEventInput,
 } from "../domain/models.js";
 import { MCP_OAUTH_REFRESH_RETRY_GRACE_MS } from "../domain/models.js";
 import type {
@@ -71,6 +77,7 @@ import type {
 } from "../domain/xeroMutation.js";
 import { XERO_MUTATION_EXPECTED_READBACK_STATUS } from "../domain/xeroMutation.js";
 import { stableStringify } from "../security/hash.js";
+import { governanceAuditEventHash } from "../governance/governanceAudit.js";
 import type {
   AccountingRepository,
   EphemeralCleanupBatchResult,
@@ -91,6 +98,7 @@ const EPHEMERAL_CLEANUP_ADVISORY_LOCK_KEY = "2026080401";
 function emptyEphemeralCleanupCounts(): EphemeralCleanupCounts {
   return {
     mcpRefreshRetryResponses: 0,
+    organisationSwitchSessions: 0,
     oauthBrokerFlows: 0,
     oauthStates: 0,
     connectTickets: 0,
@@ -281,6 +289,66 @@ function mapAgentConnectionBinding(row: Row): AgentConnectionBinding {
   };
   if (row.revoked_at) binding.revokedAt = date(row.revoked_at);
   return binding;
+}
+
+function mapOrganisationSwitchSession(row: Row): OrganisationSwitchSession {
+  const session: OrganisationSwitchSession = {
+    sessionHash: String(row.session_hash),
+    installationId: String(row.oauth_installation_id),
+    workspaceId: String(row.workspace_id),
+    subjectType: row.subject_type as OrganisationSwitchSession["subjectType"],
+    subjectId: String(row.subject_id),
+    agentId: String(row.agent_id),
+    authorizationId: String(row.authorization_id),
+    sourceBindingId: String(row.source_binding_id),
+    sourceConnectionId: String(row.source_connection_id),
+    createdAt: date(row.created_at),
+    expiresAt: date(row.expires_at),
+  };
+  if (row.consumed_at) session.consumedAt = date(row.consumed_at);
+  return session;
+}
+
+function mapGovernanceAuditEvent(row: Row): GovernanceAuditEvent {
+  const evidence = typeof row.evidence === "string"
+    ? JSON.parse(row.evidence) as Record<string, unknown>
+    : structuredClone((row.evidence ?? {}) as Record<string, unknown>);
+  const event: GovernanceAuditEvent = {
+    eventId: String(row.event_id),
+    streamId: String(row.stream_id),
+    schemaVersion: row.schema_version as GovernanceAuditEvent["schemaVersion"],
+    eventType: String(row.event_type),
+    source: row.event_source as GovernanceAuditEvent["source"],
+    action: String(row.action),
+    actorId: String(row.actor_id),
+    correlationId: String(row.correlation_id),
+    disposition: row.disposition as GovernanceAuditEvent["disposition"],
+    outcome: row.outcome as GovernanceAuditEvent["outcome"],
+    evidence,
+    eventHash: String(row.event_hash),
+    occurredAt: date(row.occurred_at),
+    recordedAt: date(row.recorded_at),
+  };
+  const optionalStrings = {
+    workspaceId: row.workspace_id,
+    agentId: row.agent_id,
+    installationId: row.oauth_installation_id,
+    bindingId: row.binding_id,
+    connectionId: row.connection_id,
+    tenantId: row.tenant_id,
+    mandateId: row.mandate_id,
+    policyId: row.policy_id,
+    causationId: row.causation_id,
+    inputHash: row.input_hash,
+    outputHash: row.output_hash,
+    previousEventHash: row.previous_event_hash,
+  } as const;
+  for (const [key, value] of Object.entries(optionalStrings)) {
+    if (value !== null && value !== undefined) {
+      (event as unknown as Record<string, unknown>)[key] = String(value);
+    }
+  }
+  return event;
 }
 
 function mapOAuthBrokerFlow(row: Row): OAuthBrokerFlow {
@@ -558,6 +626,37 @@ export class PostgresAccountingRepository implements AccountingRepository {
           AND to_regclass('public.mcp_refresh_tokens') IS NOT NULL
           AND to_regclass('public.xero_mutation_preparations') IS NOT NULL
           AND to_regclass('public.xero_mutation_requests') IS NOT NULL
+          AND to_regclass('public.oauth_installation_active_bindings') IS NOT NULL
+          AND to_regclass('public.organisation_switch_sessions') IS NOT NULL
+          AND to_regclass('public.governance_audit_events') IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'agent_connection_bindings_oauth_installation_id_key'
+              AND conrelid = 'public.agent_connection_bindings'::regclass
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM pg_index indexes
+            JOIN pg_class index_class ON index_class.oid = indexes.indexrelid
+            WHERE index_class.relname = 'agent_connection_bindings_installation_status_idx'
+              AND index_class.relnamespace = 'public'::regnamespace
+              AND indexes.indrelid = 'public.agent_connection_bindings'::regclass
+              AND indexes.indisvalid
+              AND indexes.indisready
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'oauth_installation_active_binding_tuple_fk'
+              AND conrelid = 'public.oauth_installation_active_bindings'::regclass
+              AND convalidated
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgname = 'governance_audit_events_append_only'
+              AND tgrelid = 'public.governance_audit_events'::regclass
+              AND NOT tgisinternal
+              AND tgenabled IN ('O', 'A')
+          )
           AND EXISTS (
             SELECT 1
             FROM pg_index indexes
@@ -850,7 +949,11 @@ export class PostgresAccountingRepository implements AccountingRepository {
               ('017_xero_controlled_mutation_foundation.sql'),
               ('018_xero_invoice_draft_one_time_confirmation.sql'),
               ('019_xero_mcp_refresh_family_lifecycle.sql'),
-              ('020_xero_runtime_readiness_compatibility.sql')
+              ('020_xero_runtime_readiness_compatibility.sql'),
+              ('021_xero_mcp_refresh_retry_grace.sql'),
+              ('022_xero_organisation_switch.sql'),
+              ('023_governance_audit_events.sql'),
+              ('024_allow_binding_history_per_installation.sql')
             ) AS expected(version)
             WHERE NOT EXISTS (
               SELECT 1 FROM schema_migrations applied
@@ -1153,6 +1256,13 @@ export class PostgresAccountingRepository implements AccountingRepository {
         httpStatus: 403,
       });
     }
+    await this.pool.query(
+      `INSERT INTO oauth_installation_active_bindings(
+         oauth_installation_id, binding_id, connection_id, binding_revision, changed_at
+       ) VALUES ($1,$2,$3,1,$4)
+       ON CONFLICT (oauth_installation_id) DO NOTHING`,
+      [binding.installationId, binding.bindingId, binding.connectionId, binding.updatedAt],
+    );
     return mapAgentConnectionBinding(result.rows[0]);
   }
 
@@ -1165,6 +1275,10 @@ export class PostgresAccountingRepository implements AccountingRepository {
        FROM agent_connection_bindings binding
        JOIN oauth_installations installation
          ON installation.installation_id = binding.oauth_installation_id
+       JOIN oauth_installation_active_bindings active
+         ON active.oauth_installation_id = binding.oauth_installation_id
+        AND active.binding_id = binding.binding_id
+        AND active.connection_id = binding.connection_id
        JOIN provider_connections connection ON connection.connection_id = binding.connection_id
        JOIN provider_authorizations provider_auth
          ON provider_auth.authorization_id = connection.authorization_id
@@ -1195,6 +1309,277 @@ export class PostgresAccountingRepository implements AccountingRepository {
       ],
     );
     return result.rows[0] ? mapResolvedAgentBinding(result.rows[0]) : undefined;
+  }
+
+  async saveOrganisationSwitchSession(session: OrganisationSwitchSession): Promise<void> {
+    if (
+      !isHashedValue(session.sessionHash) ||
+      !isValidDate(session.createdAt) ||
+      !isValidDate(session.expiresAt) ||
+      session.expiresAt <= session.createdAt ||
+      session.expiresAt.getTime() - session.createdAt.getTime() > 15 * 60_000 ||
+      session.consumedAt
+    ) {
+      throw new AppError("VALIDATION_FAILED", "Organisation switch session is invalid.");
+    }
+    const result = await this.pool.query(
+      `INSERT INTO organisation_switch_sessions(
+         session_hash, oauth_installation_id, workspace_id, subject_type, subject_id,
+         agent_id, authorization_id, source_binding_id, source_connection_id,
+         created_at, expires_at, consumed_at
+       )
+       SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULL
+       FROM oauth_installation_active_bindings active
+       JOIN agent_connection_bindings binding
+         ON binding.binding_id = active.binding_id
+        AND binding.oauth_installation_id = active.oauth_installation_id
+        AND binding.connection_id = active.connection_id
+       JOIN oauth_installations installation
+         ON installation.installation_id = binding.oauth_installation_id
+       JOIN provider_connections connection ON connection.connection_id = binding.connection_id
+       JOIN provider_authorizations provider_auth
+         ON provider_auth.authorization_id = connection.authorization_id
+       WHERE active.oauth_installation_id = $2
+         AND active.binding_id = $8
+         AND active.connection_id = $9
+         AND binding.workspace_id = $3
+         AND binding.subject_type = $4
+         AND binding.subject_id = $5
+         AND binding.agent_id = $6
+         AND connection.authorization_id = $7
+         AND binding.binding_status = 'ACTIVE'
+         AND installation.installation_status = 'ACTIVE'
+         AND connection.connection_status = 'ACTIVE'
+         AND provider_auth.authorization_status = 'ACTIVE'
+         AND provider_auth.workspace_id = binding.workspace_id
+       ON CONFLICT DO NOTHING
+       RETURNING session_hash`,
+      [
+        session.sessionHash,
+        session.installationId,
+        session.workspaceId,
+        session.subjectType,
+        session.subjectId,
+        session.agentId,
+        session.authorizationId,
+        session.sourceBindingId,
+        session.sourceConnectionId,
+        session.createdAt,
+        session.expiresAt,
+      ],
+    );
+    if (result.rowCount !== 1) {
+      throw new AppError("FORBIDDEN", "Organisation switch source binding is no longer current.", {
+        httpStatus: 403,
+      });
+    }
+  }
+
+  async getOrganisationSwitchContext(
+    sessionHash: string,
+    now: Date,
+  ): Promise<OrganisationSwitchContext | undefined> {
+    if (!isValidDate(now)) return undefined;
+    const result = await this.pool.query(
+      `SELECT switch.*, binding.*, connection.authorization_id, connection.tenant_id,
+              connection.tenant_name, connection.provider_connection_id
+       FROM organisation_switch_sessions switch
+       JOIN oauth_installation_active_bindings active
+         ON active.oauth_installation_id = switch.oauth_installation_id
+        AND active.binding_id = switch.source_binding_id
+        AND active.connection_id = switch.source_connection_id
+       JOIN agent_connection_bindings binding
+         ON binding.binding_id = active.binding_id
+        AND binding.oauth_installation_id = active.oauth_installation_id
+        AND binding.connection_id = active.connection_id
+       JOIN oauth_installations installation
+         ON installation.installation_id = binding.oauth_installation_id
+       JOIN provider_connections connection ON connection.connection_id = binding.connection_id
+       JOIN provider_authorizations provider_auth
+         ON provider_auth.authorization_id = connection.authorization_id
+       WHERE switch.session_hash = $1
+         AND switch.consumed_at IS NULL
+         AND switch.expires_at > $2
+         AND binding.binding_status = 'ACTIVE'
+         AND installation.installation_status = 'ACTIVE'
+         AND connection.connection_status = 'ACTIVE'
+         AND provider_auth.authorization_status = 'ACTIVE'
+         AND connection.authorization_id = switch.authorization_id
+         AND provider_auth.workspace_id = switch.workspace_id`,
+      [sessionHash, now],
+    );
+    const row = result.rows[0] as Row | undefined;
+    if (!row) return undefined;
+    const session = mapOrganisationSwitchSession(row);
+    const connections = await this.listActiveConnectionsByAuthorization(
+      session.authorizationId,
+      session.workspaceId,
+    );
+    if (connections.length === 0) return undefined;
+    return {
+      session,
+      currentBinding: mapResolvedAgentBinding(row),
+      connections,
+    };
+  }
+
+  async completeOrganisationSwitch(
+    input: CompleteOrganisationSwitchInput,
+  ): Promise<CompleteOrganisationSwitchResult | undefined> {
+    if (!isValidDate(input.now) || !isNonEmpty(input.newBindingId)) return undefined;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const selected = await client.query(
+        `SELECT * FROM organisation_switch_sessions
+         WHERE session_hash = $1
+         FOR UPDATE`,
+        [input.sessionHash],
+      );
+      const sessionRow = selected.rows[0] as Row | undefined;
+      if (!sessionRow || sessionRow.consumed_at || date(sessionRow.expires_at) <= input.now) {
+        await client.query("COMMIT");
+        return undefined;
+      }
+      const activeResult = await client.query(
+        `SELECT active.*, binding.*, connection.authorization_id, connection.tenant_id,
+                connection.tenant_name, connection.provider_connection_id
+         FROM oauth_installation_active_bindings active
+         JOIN agent_connection_bindings binding
+           ON binding.binding_id = active.binding_id
+          AND binding.oauth_installation_id = active.oauth_installation_id
+          AND binding.connection_id = active.connection_id
+         JOIN oauth_installations installation
+           ON installation.installation_id = binding.oauth_installation_id
+         JOIN provider_connections connection ON connection.connection_id = binding.connection_id
+         JOIN provider_authorizations provider_auth
+           ON provider_auth.authorization_id = connection.authorization_id
+         WHERE active.oauth_installation_id = $1
+           AND active.binding_id = $2
+           AND active.connection_id = $3
+           AND binding.binding_status = 'ACTIVE'
+           AND installation.installation_status = 'ACTIVE'
+           AND connection.connection_status = 'ACTIVE'
+           AND provider_auth.authorization_status = 'ACTIVE'
+           AND provider_auth.workspace_id = binding.workspace_id
+         FOR UPDATE OF active, binding`,
+        [sessionRow.oauth_installation_id, sessionRow.source_binding_id, sessionRow.source_connection_id],
+      );
+      const previousRow = activeResult.rows[0] as Row | undefined;
+      if (!previousRow || previousRow.authorization_id !== sessionRow.authorization_id) {
+        await client.query("COMMIT");
+        return undefined;
+      }
+      const targetResult = await client.query(
+        `SELECT connection.*
+         FROM provider_connections connection
+         JOIN provider_authorizations provider_auth
+           ON provider_auth.authorization_id = connection.authorization_id
+         WHERE connection.connection_id = $1
+           AND connection.authorization_id = $2
+           AND connection.connection_status = 'ACTIVE'
+           AND provider_auth.authorization_status = 'ACTIVE'
+           AND provider_auth.workspace_id = $3
+         FOR UPDATE OF connection, provider_auth`,
+        [input.selectedConnectionId, sessionRow.authorization_id, sessionRow.workspace_id],
+      );
+      const targetConnection = targetResult.rows[0] as Row | undefined;
+      if (!targetConnection) {
+        await client.query("COMMIT");
+        return undefined;
+      }
+      let targetBindingResult = await client.query(
+        `SELECT binding.*, connection.authorization_id, connection.tenant_id,
+                connection.tenant_name, connection.provider_connection_id
+         FROM agent_connection_bindings binding
+         JOIN provider_connections connection ON connection.connection_id = binding.connection_id
+         WHERE binding.oauth_installation_id = $1
+           AND binding.connection_id = $2
+           AND binding.binding_status = 'ACTIVE'
+         ORDER BY binding.updated_at DESC, binding.binding_id DESC
+         LIMIT 1
+         FOR UPDATE OF binding`,
+        [sessionRow.oauth_installation_id, input.selectedConnectionId],
+      );
+      if (targetBindingResult.rowCount === 0) {
+        targetBindingResult = await client.query(
+          `INSERT INTO agent_connection_bindings(
+             binding_id, oauth_installation_id, workspace_id, subject_type, subject_id,
+             agent_id, connection_id, policy_id, binding_status, revoked_at, created_at, updated_at
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'ACTIVE',NULL,$9,$9)
+           ON CONFLICT DO NOTHING
+           RETURNING *,
+             $10::text AS authorization_id,
+             $11::text AS tenant_id,
+             $12::text AS tenant_name,
+             $13::text AS provider_connection_id`,
+          [
+            input.newBindingId,
+            sessionRow.oauth_installation_id,
+            sessionRow.workspace_id,
+            sessionRow.subject_type,
+            sessionRow.subject_id,
+            sessionRow.agent_id,
+            input.selectedConnectionId,
+            previousRow.policy_id,
+            input.now,
+            targetConnection.authorization_id,
+            targetConnection.tenant_id,
+            targetConnection.tenant_name,
+            targetConnection.provider_connection_id ?? null,
+          ],
+        );
+      }
+      const targetBindingRow = targetBindingResult.rows[0] as Row | undefined;
+      if (!targetBindingRow) {
+        await client.query("ROLLBACK");
+        return undefined;
+      }
+      const updatedActive = await client.query(
+        `UPDATE oauth_installation_active_bindings SET
+           binding_id = $2,
+           connection_id = $3,
+           binding_revision = binding_revision + 1,
+           changed_at = $4
+         WHERE oauth_installation_id = $1
+           AND binding_id = $5
+           AND connection_id = $6`,
+        [
+          sessionRow.oauth_installation_id,
+          targetBindingRow.binding_id,
+          targetBindingRow.connection_id,
+          input.now,
+          sessionRow.source_binding_id,
+          sessionRow.source_connection_id,
+        ],
+      );
+      if (updatedActive.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return undefined;
+      }
+      const consumed = await client.query(
+        `UPDATE organisation_switch_sessions SET consumed_at = $2
+         WHERE session_hash = $1 AND consumed_at IS NULL
+         RETURNING *`,
+        [input.sessionHash, input.now],
+      );
+      if (consumed.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return undefined;
+      }
+      await client.query("COMMIT");
+      return {
+        session: mapOrganisationSwitchSession(consumed.rows[0] as Row),
+        previousBinding: mapResolvedAgentBinding(previousRow),
+        currentBinding: mapResolvedAgentBinding(targetBindingRow),
+        changed: String(previousRow.connection_id) !== String(targetBindingRow.connection_id),
+      };
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async revokeOAuthInstallation(installationId: string, workspaceId: string, revokedAt: Date): Promise<boolean> {
@@ -1804,6 +2189,17 @@ export class PostgresAccountingRepository implements AccountingRepository {
         await client.query("ROLLBACK");
         return undefined;
       }
+      const insertedActiveBinding = await client.query(
+        `INSERT INTO oauth_installation_active_bindings(
+           oauth_installation_id, binding_id, connection_id, binding_revision, changed_at
+         ) VALUES ($1,$2,$3,1,$4)
+         ON CONFLICT DO NOTHING`,
+        [row.oauth_installation_id, input.bindingId, input.selectedConnectionId, input.now],
+      );
+      if (insertedActiveBinding.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return undefined;
+      }
       const insertedCode = await client.query(
         `INSERT INTO oauth_authorization_codes(
            code_hash, flow_hash, oauth_installation_id, binding_id, connection_id,
@@ -2288,10 +2684,16 @@ export class PostgresAccountingRepository implements AccountingRepository {
               binding.subject_type, binding.subject_id, binding.agent_id, binding.connection_id,
               binding.policy_id, connection.authorization_id, connection.tenant_id
        FROM mcp_access_tokens access_token
+       JOIN agent_connection_bindings source_binding
+         ON source_binding.binding_id = access_token.binding_id
+        AND source_binding.oauth_installation_id = access_token.oauth_installation_id
+        AND source_binding.connection_id = access_token.connection_id
+       LEFT JOIN oauth_installation_active_bindings active
+         ON active.oauth_installation_id = access_token.oauth_installation_id
        JOIN agent_connection_bindings binding
-         ON binding.binding_id = access_token.binding_id
+         ON binding.binding_id = COALESCE(active.binding_id, source_binding.binding_id)
         AND binding.oauth_installation_id = access_token.oauth_installation_id
-        AND binding.connection_id = access_token.connection_id
+        AND binding.connection_id = COALESCE(active.connection_id, source_binding.connection_id)
        JOIN oauth_installations installation
          ON installation.installation_id = binding.oauth_installation_id
        JOIN provider_connections connection ON connection.connection_id = binding.connection_id
@@ -2302,6 +2704,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
          AND access_token.audience = $3
          AND access_token.revoked_at IS NULL
          AND access_token.expires_at > $4
+         AND source_binding.binding_status = 'ACTIVE'
          AND binding.binding_status = 'ACTIVE'
          AND installation.installation_status = 'ACTIVE'
          AND connection.connection_status = 'ACTIVE'
@@ -3239,6 +3642,21 @@ export class PostgresAccountingRepository implements AccountingRepository {
         [brokerFlowCutoff, batchSize],
       );
 
+      const organisationSwitchSessions = await client.query(
+        `WITH targets AS (
+           SELECT switch.session_hash
+           FROM organisation_switch_sessions switch
+           WHERE switch.expires_at <= $1
+           ORDER BY switch.expires_at, switch.session_hash
+           LIMIT $2
+           FOR UPDATE OF switch SKIP LOCKED
+         )
+         DELETE FROM organisation_switch_sessions switch
+         USING targets
+         WHERE switch.session_hash = targets.session_hash`,
+        [brokerFlowCutoff, batchSize],
+      );
+
       const expiredBrokerFlows = await client.query(
         `SELECT flow.*
          FROM oauth_broker_flows flow
@@ -3349,6 +3767,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
         lockAcquired: true,
         deleted: {
           mcpRefreshRetryResponses: mcpRefreshRetryResponses.rowCount ?? 0,
+          organisationSwitchSessions: organisationSwitchSessions.rowCount ?? 0,
           oauthBrokerFlows: oauthBrokerFlows.rowCount ?? 0,
           oauthStates: oauthStates.rowCount ?? 0,
           connectTickets: connectTickets.rowCount ?? 0,
@@ -4738,6 +5157,71 @@ export class PostgresAccountingRepository implements AccountingRepository {
       throw new AppError("NOT_FOUND", "Audit intent was not found.", { httpStatus: 404 });
     }
     throw new AppError("CONFLICT", "Audit intent is already complete.", { httpStatus: 409 });
+  }
+
+  async appendGovernanceAuditEvent(input: GovernanceAuditEventInput): Promise<GovernanceAuditEvent> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [input.streamId]);
+      const previous = await client.query<{ event_hash: string }>(
+        `SELECT event_hash FROM governance_audit_events
+         WHERE stream_id = $1
+         ORDER BY event_sequence DESC
+         LIMIT 1`,
+        [input.streamId],
+      );
+      const previousEventHash = previous.rows[0]?.event_hash;
+      const recordedAt = new Date();
+      const eventHash = governanceAuditEventHash(input, previousEventHash, recordedAt);
+      const inserted = await client.query(
+        `INSERT INTO governance_audit_events(
+           event_id, stream_id, schema_version, event_type, event_source, action,
+           actor_id, workspace_id, agent_id, oauth_installation_id, binding_id,
+           connection_id, tenant_id, mandate_id, policy_id, correlation_id,
+           causation_id, disposition, outcome, input_hash, output_hash, evidence,
+           previous_event_hash, event_hash, occurred_at, recorded_at
+         ) VALUES (
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
+         )
+         RETURNING *`,
+        [
+          input.eventId,
+          input.streamId,
+          input.schemaVersion,
+          input.eventType,
+          input.source,
+          input.action,
+          input.actorId,
+          input.workspaceId ?? null,
+          input.agentId ?? null,
+          input.installationId ?? null,
+          input.bindingId ?? null,
+          input.connectionId ?? null,
+          input.tenantId ?? null,
+          input.mandateId ?? null,
+          input.policyId ?? null,
+          input.correlationId,
+          input.causationId ?? null,
+          input.disposition,
+          input.outcome,
+          input.inputHash ?? null,
+          input.outputHash ?? null,
+          input.evidence,
+          previousEventHash ?? null,
+          eventHash,
+          input.occurredAt,
+          recordedAt,
+        ],
+      );
+      await client.query("COMMIT");
+      return mapGovernanceAuditEvent(inserted.rows[0] as Row);
+    } catch (error) {
+      await this.#safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async #selectBoundXeroMutationRequest(

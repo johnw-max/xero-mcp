@@ -176,7 +176,7 @@ describe("security configuration contract", () => {
 });
 
 describe("fixed MCP tool contract", () => {
-  it("matches the reviewed forty-three-tool allowlist exactly", () => {
+  it("matches the reviewed forty-four-tool allowlist exactly", () => {
     const configured = JSON.parse(
       readFileSync(new URL("../config/tool-allowlist.json", import.meta.url), "utf8"),
     ).tools as string[];
@@ -184,7 +184,7 @@ describe("fixed MCP tool contract", () => {
       readFileSync(new URL("./contract/expected-tools.json", import.meta.url), "utf8"),
     ) as string[];
     expect([...new Set(configured)].sort()).toEqual([...expected].sort());
-    expect(configured).toHaveLength(43);
+    expect(configured).toHaveLength(44);
   });
 });
 

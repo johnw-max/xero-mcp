@@ -220,6 +220,15 @@ export const XERO_CAPABILITY_POLICIES = [
     releaseRationale: "This reports server-resolved connection identity without exposing credentials or mutating Xero.",
   },
   {
+    actionId: "system.organisation_switch_prepare",
+    object: "SYSTEM",
+    label: "Start a user-confirmed Xero organisation switch",
+    riskClass: "READ_PREPARE",
+    officialSupport: CONNECTION_STATUS_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "This creates only a short-lived confirmation capability. The ledger changes only after exact user selection on the MCP-hosted page, and Xero accounting data is not mutated.",
+  },
+  {
     actionId: "organisation.read_prepare",
     object: "ORGANISATION",
     label: "Read the server-bound Xero organisation",

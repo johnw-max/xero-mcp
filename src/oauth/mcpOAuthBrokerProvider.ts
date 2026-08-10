@@ -26,7 +26,7 @@ import {
   leastPrivilegeXeroScopesForBroker,
   type BrokerMcpScope,
 } from "../providers/xeroScopes.js";
-import { safeEqual } from "../security/hash.js";
+import { hashObject, safeEqual } from "../security/hash.js";
 import {
   generateOAuthSecret,
   keyedOAuthSecretHash,
@@ -581,6 +581,44 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
         details: { resultStatus: "SELECTION_COMPLETE_REJECTED" },
       });
     }
+
+    await this.#repository.appendGovernanceAuditEvent({
+      eventId: `event_${randomUUID()}`,
+      streamId: `installation:${result.installation.installationId}`,
+      schemaVersion: "zcloak.governance-event.v1",
+      eventType: "xero.authorization.connected",
+      source: "OAUTH",
+      action: "xero.authorization.connect",
+      actorId: `${result.binding.workspaceId}:${result.binding.subjectType.toLowerCase()}:${result.binding.subjectId}`,
+      workspaceId: result.binding.workspaceId,
+      agentId: result.binding.agentId,
+      installationId: result.binding.installationId,
+      bindingId: result.binding.bindingId,
+      connectionId: result.binding.connectionId,
+      tenantId: selectedConnection.tenantId,
+      policyId: result.binding.policyId,
+      correlationId: `oauth:${flowHash}`,
+      disposition: "AUTO_EXECUTE",
+      outcome: "SUCCEEDED",
+      inputHash: hashObject({
+        flowHash,
+        selectedConnectionId,
+        clientId: result.flow.clientId,
+      }),
+      outputHash: hashObject({
+        installationId: result.installation.installationId,
+        bindingId: result.binding.bindingId,
+        connectionId: result.binding.connectionId,
+      }),
+      evidence: {
+        provider: "xero",
+        userSelectedOrganisation: true,
+        grantedScopeCount: result.authorizationCode.grantedScopes.length,
+        personalPoc: result.flow.personalPoc,
+        providerMutation: false,
+      },
+      occurredAt: now,
+    });
 
     const outerState = this.#stateCipher.decrypt(result.outerStateCiphertext, flowHash);
     if (!safeEqual(this.#hash("host_state", outerState), result.flow.outerStateHash)) {

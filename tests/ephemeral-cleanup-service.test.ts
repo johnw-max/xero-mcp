@@ -28,6 +28,7 @@ function batch(
     lockAcquired,
     deleted: {
       mcpRefreshRetryResponses: deleted.mcpRefreshRetryResponses ?? 0,
+      organisationSwitchSessions: deleted.organisationSwitchSessions ?? 0,
       oauthBrokerFlows: deleted.oauthBrokerFlows ?? 0,
       oauthStates: deleted.oauthStates ?? 0,
       connectTickets: deleted.connectTickets ?? 0,
@@ -82,6 +83,7 @@ describe("EphemeralCleanupService", () => {
       batches: 2,
       deleted: {
         mcpRefreshRetryResponses: 0,
+        organisationSwitchSessions: 0,
         oauthBrokerFlows: 0,
         oauthStates: 1_003,
         connectTickets: 1_002,

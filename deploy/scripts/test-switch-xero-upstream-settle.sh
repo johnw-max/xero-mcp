@@ -95,7 +95,7 @@ next_count() {
 case "$url" in
   http://127.0.0.1:18004/healthz)
     test "$max_time" = "15" || exit 67
-    printf '%s' '{"status":"ok","version":"0.3.0","toolCount":43,"toolsetHash":"a76bf853dc4bc71bf33e5b42f936fbcc9d6593d67d23e40dedccc4d1e2ae5d65"}'
+    printf '%s' '{"status":"ok","version":"0.3.0","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
     ;;
   http://127.0.0.1:18004/readyz)
     test "$max_time" = "15" || exit 67
@@ -136,14 +136,14 @@ case "$url" in
         if test "$count" -eq 1; then
           printf '%s' '{"status":"ok","version":"0.2.13","toolCount":15}'
         else
-          printf '%s' '{"status":"ok","version":"0.3.0","toolCount":43,"toolsetHash":"a76bf853dc4bc71bf33e5b42f936fbcc9d6593d67d23e40dedccc4d1e2ae5d65"}'
+          printf '%s' '{"status":"ok","version":"0.3.0","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
         fi
         ;;
       target_always_wrong)
         printf '%s' '{"status":"ok","version":"0.2.13","toolCount":15}'
         ;;
       target_ready|quickbooks_always_wrong)
-        printf '%s' '{"status":"ok","version":"0.3.0","toolCount":43,"toolsetHash":"a76bf853dc4bc71bf33e5b42f936fbcc9d6593d67d23e40dedccc4d1e2ae5d65"}'
+        printf '%s' '{"status":"ok","version":"0.3.0","toolCount":44,"toolsetHash":"d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"}'
         ;;
       *) exit 65 ;;
     esac

@@ -203,6 +203,17 @@ server {
         proxy_set_header X-Request-ID $request_id;
     }
 
+    location = /xero/organisation-switch {
+        error_log /dev/null crit;
+        limit_req zone=auth_per_ip burst=10 nodelay;
+        proxy_pass http://accounting_mcp_upstream;
+        include /opt/xero-nginx/proxy_params;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Request-ID $request_id;
+    }
+
     location ^~ /review/ {
         limit_req zone=general_per_ip burst=20 nodelay;
         proxy_pass http://accounting_mcp_upstream;

@@ -5,6 +5,13 @@ export interface SelectableXeroOrganisation {
   tenantType?: string;
 }
 
+export interface SwitchableXeroOrganisation {
+  connectionId: string;
+  tenantId: string;
+  tenantName: string;
+  current: boolean;
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
     "&": "&amp;",
@@ -106,7 +113,7 @@ export function renderXeroOrganisationSelectionPage(options: {
 </head><body><main>
 <h1>Choose the Xero organisation for this Agent</h1>
 <p>Select exactly one ledger for this MCP connection. This choice is never taken from chat text or an uploaded file.</p>
-<p>To use another organisation later, revoke this MCP authorisation and connect again through Xero OAuth. A technical reconnect or page refresh does not change the ledger.</p>
+<p>To work on another already-authorised organisation later, ask the Agent to switch Xero organisation and use the short-lived confirmation link it provides. Reconnect through Xero OAuth only when the organisation is not in the authorised list.</p>
 ${pocNotice}
 <form method="post" action="/oauth/xero/select">
   <input type="hidden" name="csrf_token" value="${escapeHtml(options.csrfToken)}">
@@ -115,4 +122,45 @@ ${pocNotice}
   <button type="submit">Connect selected organisation</button>
 </form>
 </main></body></html>`;
+}
+
+export function renderOrganisationSwitchPage(options: {
+  ticket: string;
+  csrfToken: string;
+  currentOrganisation: SwitchableXeroOrganisation;
+  organisations: readonly SwitchableXeroOrganisation[];
+  expiresAt: Date;
+}): string {
+  if (options.organisations.length === 0 || !Number.isFinite(options.expiresAt.getTime())) {
+    throw new Error("A valid organisation switch page requires at least one organisation and expiry.");
+  }
+  const choices = options.organisations.map((organisation) => {
+    const current = organisation.current ? " <small>(Currently connected)</small>" : "";
+    return `<label><input type="radio" name="connection_id" value="${escapeHtml(organisation.connectionId)}" required> <strong>${escapeHtml(organisation.tenantName)}</strong>${current}</label>`;
+  }).join("<br>");
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Switch Xero organisation</title></head><body><main>
+<h1>Switch Xero organisation</h1>
+<p>The Agent is currently connected to <strong>${escapeHtml(options.currentOrganisation.tenantName)}</strong>.</p>
+<p>Choose exactly one organisation. This confirmation changes which ledger the Agent can access; chat text alone cannot make this change.</p>
+<form method="post" action="/xero/organisation-switch">
+  <input type="hidden" name="ticket" value="${escapeHtml(options.ticket)}">
+  <input type="hidden" name="csrf_token" value="${escapeHtml(options.csrfToken)}">
+  <fieldset><legend>Xero organisations</legend>${choices}</fieldset>
+  <p><button type="submit">Confirm organisation</button></p>
+</form>
+<p>This one-time link expires at ${escapeHtml(options.expiresAt.toISOString())}. If the organisation is not listed, reconnect Xero to refresh the authorised organisation list.</p>
+</main></body></html>`;
+}
+
+export function renderOrganisationSwitchResultPage(options: {
+  status: "SWITCHED" | "UNCHANGED";
+  tenantName: string;
+}): string {
+  const lead = options.status === "SWITCHED"
+    ? "The Xero organisation has been switched"
+    : "This Xero organisation was already selected";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Xero organisation ready</title></head>
+<body><main><h1>${lead}</h1><p>Current organisation: <strong>${escapeHtml(options.tenantName)}</strong>.</p><p>You can now return to the Agent. It will re-read the connection status before continuing any accounting work.</p></main></body></html>`;
 }

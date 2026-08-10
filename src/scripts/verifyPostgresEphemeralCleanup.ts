@@ -25,6 +25,7 @@ const { Pool } = pg;
 function emptyCounts(): EphemeralCleanupCounts {
   return {
     mcpRefreshRetryResponses: 0,
+    organisationSwitchSessions: 0,
     oauthBrokerFlows: 0,
     oauthStates: 0,
     connectTickets: 0,

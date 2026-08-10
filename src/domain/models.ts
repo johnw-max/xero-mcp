@@ -117,6 +117,46 @@ export interface ResolvedAgentConnectionBinding {
   policyId: string;
 }
 
+/**
+ * One short-lived, one-time browser capability created from an authenticated
+ * MCP conversation. Only its keyed hash is persisted; the raw ticket remains
+ * in the user-facing URL and is never logged or stored.
+ */
+export interface OrganisationSwitchSession {
+  sessionHash: string;
+  installationId: string;
+  workspaceId: string;
+  subjectType: BindingSubjectType;
+  subjectId: string;
+  agentId: string;
+  authorizationId: string;
+  sourceBindingId: string;
+  sourceConnectionId: string;
+  createdAt: Date;
+  expiresAt: Date;
+  consumedAt?: Date;
+}
+
+export interface OrganisationSwitchContext {
+  session: OrganisationSwitchSession;
+  currentBinding: ResolvedAgentConnectionBinding;
+  connections: AuthorizedProviderConnection[];
+}
+
+export interface CompleteOrganisationSwitchInput {
+  sessionHash: string;
+  selectedConnectionId: string;
+  newBindingId: string;
+  now: Date;
+}
+
+export interface CompleteOrganisationSwitchResult {
+  session: OrganisationSwitchSession;
+  previousBinding: ResolvedAgentConnectionBinding;
+  currentBinding: ResolvedAgentConnectionBinding;
+  changed: boolean;
+}
+
 export interface OAuthBrokerFlow {
   flowHash: string;
   browserSessionHash: string;
@@ -584,6 +624,46 @@ export interface AuditCompletion {
 }
 
 export type AuditLog = AuditIntent | AuditRecord;
+
+export type GovernanceAuditSource = "MCP" | "USER_UI" | "OAUTH" | "SYSTEM";
+export type GovernanceDisposition = "NOT_EVALUATED" | "OBSERVE" | "AUTO_EXECUTE" | "ESCALATE" | "DENY";
+export type GovernanceOutcome = "PROPOSED" | "SUCCEEDED" | "REJECTED" | "FAILED";
+
+/**
+ * Portable, provider-neutral evidence envelope. It intentionally records
+ * decisions and receipts rather than prompts or hidden model reasoning.
+ */
+export interface GovernanceAuditEventInput {
+  eventId: string;
+  streamId: string;
+  schemaVersion: "zcloak.governance-event.v1";
+  eventType: string;
+  source: GovernanceAuditSource;
+  action: string;
+  actorId: string;
+  workspaceId?: string;
+  agentId?: string;
+  installationId?: string;
+  bindingId?: string;
+  connectionId?: string;
+  tenantId?: string;
+  mandateId?: string;
+  policyId?: string;
+  correlationId: string;
+  causationId?: string;
+  disposition: GovernanceDisposition;
+  outcome: GovernanceOutcome;
+  inputHash?: string;
+  outputHash?: string;
+  evidence: Record<string, unknown>;
+  occurredAt: Date;
+}
+
+export interface GovernanceAuditEvent extends GovernanceAuditEventInput {
+  previousEventHash?: string;
+  eventHash: string;
+  recordedAt: Date;
+}
 
 export interface CreatePostingInput {
   postingRequestId: string;

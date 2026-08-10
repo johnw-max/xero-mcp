@@ -22,7 +22,41 @@ describe("MCP tool surface", () => {
     await Promise.all(closeables.splice(0).map((closeable) => closeable.close()));
   });
 
-  it("advertises only the reviewed forty-three Xero tools", async () => {
+  it("returns a user-confirmed organisation switch link without treating chat text as authority", async () => {
+    const context = createLegacySharedBearerRequestContext({
+      actorId: "actor-switch",
+      audience: "https://mcp.example.test/mcp",
+      scopes: ["xero.read"],
+    });
+    const withAudit = vi.fn().mockImplementation(async ({ action }: { action: () => Promise<unknown> }) => action());
+    const service = { withAudit } as unknown as AccountingService;
+    const start = vi.fn().mockResolvedValue({
+      status: "USER_CONFIRMATION_REQUIRED",
+      switchUrl: "https://xero-mcp.example.test/xero/organisation-switch?ticket=opaque",
+    });
+    const server = createAccountingMcpServer(service, context, { start } as never);
+    const client = new Client({ name: "organisation-switch-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    closeables.push(client, server);
+
+    await server.connect(serverTransport as unknown as Transport);
+    await client.connect(clientTransport);
+    const result = await client.callTool({ name: "xero_start_organisation_switch", arguments: {} });
+
+    expect(result.structuredContent).toEqual({
+      result: {
+        status: "USER_CONFIRMATION_REQUIRED",
+        switchUrl: "https://xero-mcp.example.test/xero/organisation-switch?ticket=opaque",
+      },
+    });
+    expect(start).toHaveBeenCalledWith(context);
+    expect(withAudit).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: "xero_start_organisation_switch",
+      principal: context,
+    }));
+  });
+
+  it("advertises only the reviewed forty-four Xero tools", async () => {
     const service = {} as AccountingService;
     const server = createAccountingMcpServer(service, testContext());
     const client = new Client({ name: "contract-test", version: "0.1.0" });
@@ -34,7 +68,7 @@ describe("MCP tool surface", () => {
     const tools = await client.listTools();
 
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([...TOOL_ALLOWLIST].sort());
-    expect(tools.tools).toHaveLength(43);
+    expect(tools.tools).toHaveLength(44);
   });
 
   it("advertises connection status as a read-only idempotent production tool", async () => {
@@ -50,7 +84,7 @@ describe("MCP tool surface", () => {
     const statusTool = tools.tools.find((tool) => tool.name === "xero_connection_status");
 
     expect(statusTool).toMatchObject({
-      description: "Returns the exact connected Xero organisation and the safe user-driven organisation-change flow without exposing OAuth tokens. One MCP connection binds exactly one organisation; changing it requires fresh Xero OAuth and cannot happen silently from chat.",
+      description: "Returns the exact Xero organisation currently bound to this Agent. Organisation changes require a separate short-lived user confirmation page and never happen silently from chat text.",
       annotations: {
         readOnlyHint: true,
         idempotentHint: true,

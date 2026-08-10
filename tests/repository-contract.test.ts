@@ -321,6 +321,7 @@ describe("OAuth and review browser capabilities", () => {
       lockAcquired: true,
       deleted: {
         mcpRefreshRetryResponses: 0,
+        organisationSwitchSessions: 0,
         oauthBrokerFlows: 0,
         oauthStates: 1,
         connectTickets: 2,
@@ -338,6 +339,7 @@ describe("OAuth and review browser capabilities", () => {
     const third = await repository.cleanupExpiredEphemeral(now, 2);
     expect(third.deleted).toEqual({
       mcpRefreshRetryResponses: 0,
+      organisationSwitchSessions: 0,
       oauthBrokerFlows: 0,
       oauthStates: 0,
       connectTickets: 0,

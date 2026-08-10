@@ -13,6 +13,10 @@ import { TOOL_ALLOWLIST } from "../mcp/toolNames.js";
 import type { XeroOAuthService } from "../oauth/xeroOAuthService.js";
 import { createMcpOAuthRouter } from "../oauth/mcpOAuthRouter.js";
 import type { McpOAuthBrokerProvider } from "../oauth/mcpOAuthBrokerProvider.js";
+import {
+  renderOrganisationSwitchPage,
+  renderOrganisationSwitchResultPage,
+} from "../oauth/brokerPages.js";
 import { hashObject, safeEqual } from "../security/hash.js";
 import {
   createLegacySharedBearerRequestContext,
@@ -21,6 +25,7 @@ import {
 } from "../security/requestContext.js";
 import type { AccountingService } from "../services/accountingService.js";
 import type { ConnectionTicketService } from "../services/connectionTicketService.js";
+import type { OrganisationSwitchService } from "../services/organisationSwitchService.js";
 import type { ReviewAction, ReviewService } from "../services/reviewService.js";
 import type { SupplierBillSnapshot } from "../providers/types.js";
 import { xeroBillDeepLink } from "../providers/xeroDeepLinks.js";
@@ -469,6 +474,7 @@ export function createHttpApp(options: {
   connectionTickets: ConnectionTicketService;
   logger: Logger;
   mcpOAuthProvider?: McpOAuthBrokerProvider;
+  organisationSwitchService?: OrganisationSwitchService;
 }) {
   const {
     config,
@@ -479,6 +485,7 @@ export function createHttpApp(options: {
     connectionTickets,
     logger,
     mcpOAuthProvider,
+    organisationSwitchService,
   } = options;
   const brokerConfig = config.mcpOAuthBroker;
   if (brokerConfig?.enabled && !mcpOAuthProvider) {
@@ -558,6 +565,7 @@ export function createHttpApp(options: {
     const server = createAccountingMcpServer(
       accountingService,
       response.locals.requestContext as RequestContext,
+      organisationSwitchService,
     );
     const transport = new StreamableHTTPServerTransport();
     try {
@@ -634,6 +642,43 @@ export function createHttpApp(options: {
       return;
     }
     response.json(payload);
+    });
+  }
+
+  if (organisationSwitchService) {
+    app.get("/xero/organisation-switch", async (request, response) => {
+      const ticket = typeof request.query.ticket === "string" ? request.query.ticket : undefined;
+      if (!ticket) {
+        throw new AppError("VALIDATION_FAILED", "Organisation switch ticket is required.", { httpStatus: 400 });
+      }
+      const page = await organisationSwitchService.getPage(ticket);
+      setPrivateHtmlHeaders(response);
+      response.type("html").send(renderOrganisationSwitchPage({
+        ticket,
+        csrfToken: page.csrfToken,
+        currentOrganisation: page.currentOrganisation,
+        organisations: page.organisations,
+        expiresAt: page.expiresAt,
+      }));
+    });
+
+    app.post("/xero/organisation-switch", reviewOrigin, async (request, response) => {
+      const ticket = typeof request.body?.ticket === "string" ? request.body.ticket : undefined;
+      const csrfToken = typeof request.body?.csrf_token === "string" ? request.body.csrf_token : undefined;
+      const selectedConnectionId = typeof request.body?.connection_id === "string"
+        ? request.body.connection_id
+        : undefined;
+      if (!ticket || !csrfToken || !selectedConnectionId) {
+        throw new AppError("VALIDATION_FAILED", "Organisation switch confirmation is incomplete.", {
+          httpStatus: 400,
+        });
+      }
+      const result = await organisationSwitchService.confirm({ ticket, csrfToken, selectedConnectionId });
+      setPrivateHtmlHeaders(response);
+      response.type("html").send(renderOrganisationSwitchResultPage({
+        status: result.status,
+        tenantName: result.currentOrganisation.tenantName,
+      }));
     });
   }
 

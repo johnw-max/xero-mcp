@@ -8,7 +8,7 @@ import {
   canonicalSalesInvoiceDraftExtractionFingerprint,
   canonicalSalesInvoiceDraftRequest,
 } from "../domain/canonical.js";
-import type { AuditCompletion, AuditIntent, PostingRequest } from "../domain/models.js";
+import type { AuditCompletion, AuditIntent, GovernanceDisposition, PostingRequest } from "../domain/models.js";
 import type {
   AuthoriseSupplierBillInput,
   CreateDraftSalesInvoiceInput,
@@ -330,18 +330,17 @@ export class AccountingService {
       return {
         ...status,
         connectionLifecycle: {
-          organisationBinding: "EXACTLY_ONE_ORGANISATION_PER_MCP_CONNECTION" as const,
+          organisationBinding: "EXACTLY_ONE_CURRENT_ORGANISATION_PER_MCP_INSTALLATION" as const,
           accessTokenRefresh: "AUTOMATIC_NO_USER_ACTION" as const,
           organisationChange: {
             supported: true as const,
-            requiresFreshXeroOAuth: true as const,
+            requiresFreshXeroOAuth: "ONLY_IF_ORGANISATION_NOT_ALREADY_AUTHORISED" as const,
             silentChatSwitchAllowed: false as const,
             hostSteps: [
-              "REVOKE_CURRENT_MCP_AUTHORISATION",
-              "CONNECT_MCP_AGAIN",
-              "COMPLETE_XERO_LOGIN_OR_CONSENT",
+              "ASK_AGENT_TO_SWITCH_XERO_ORGANISATION",
+              "OPEN_SHORT_LIVED_CONFIRMATION_LINK",
               "SELECT_EXACTLY_ONE_XERO_ORGANISATION",
-              "RETURN_TO_HOST_AND_VERIFY_CONNECTION_STATUS",
+              "RETURN_TO_AGENT_AND_VERIFY_CONNECTION_STATUS",
             ] as const,
           },
         },
@@ -1812,6 +1811,7 @@ export class AccountingService {
     input: unknown;
     action: () => Promise<T>;
     recordId?: (result: T) => string | undefined;
+    governanceDisposition?: GovernanceDisposition;
   }): Promise<T> {
     const callId = options.callId ?? `call_${randomUUID()}`;
     const startedAt = new Date();
@@ -1834,6 +1834,56 @@ export class AccountingService {
     if (tenantId) intent.tenantId = tenantId;
     await this.#beginAudit(intent);
 
+    const principal = typeof options.principal === "object" ? options.principal : undefined;
+    const streamId = principal?.oauthInstallationId
+      ? `installation:${principal.oauthInstallationId}`
+      : `actor:${options.actorId}`;
+    const governanceBase = {
+      streamId,
+      schemaVersion: "zcloak.governance-event.v1" as const,
+      source: principal ? "MCP" as const : "USER_UI" as const,
+      action: options.toolName,
+      actorId: options.actorId,
+      ...(principal?.workspaceId ? { workspaceId: principal.workspaceId } : {}),
+      ...(principal?.agentId ? { agentId: principal.agentId } : {}),
+      ...(principal?.oauthInstallationId ? { installationId: principal.oauthInstallationId } : {}),
+      ...(principal?.bindingId ? { bindingId: principal.bindingId } : {}),
+      ...(principal?.connectionId ? { connectionId: principal.connectionId } : {}),
+      ...(tenantId ? { tenantId } : {}),
+      correlationId: callId,
+      inputHash: requestHash,
+    };
+    try {
+      await this.#repository.appendGovernanceAuditEvent({
+        ...governanceBase,
+        eventId: `${callId}:proposed`,
+        eventType: principal ? "mcp.tool.proposed" : "user.action.proposed",
+        disposition: options.governanceDisposition ?? "NOT_EVALUATED",
+        outcome: "PROPOSED",
+        evidence: {
+          toolName: options.toolName,
+          legacyDemo: principal?.legacyDemo ?? false,
+          credentialMode: principal?.legacyDemo ? "LEGACY_DEMO" : principal ? "MCP_OAUTH" : "USER_SESSION",
+        },
+        occurredAt: startedAt,
+      });
+    } catch (error) {
+      await this.#completeAudit(callId, options.toolName, {
+        resultStatus: "FAILED",
+        errorClass: "GOVERNANCE_AUDIT_UNAVAILABLE",
+        finishedAt: new Date(),
+      });
+      this.#logger.error("Governance audit proposal persistence failed.", {
+        callId,
+        toolName: options.toolName,
+        errorClass: error instanceof Error ? error.name : "UnknownError",
+      });
+      throw new AppError("CONFIGURATION_ERROR", "Governance audit evidence could not be persisted; the tool was not run.", {
+        httpStatus: 503,
+        cause: error,
+      });
+    }
+
     let result: T;
     try {
       result = await options.action();
@@ -1845,6 +1895,29 @@ export class AccountingService {
         finishedAt: new Date(),
       };
       await this.#completeAudit(callId, options.toolName, completion, safe);
+      try {
+        await this.#repository.appendGovernanceAuditEvent({
+          ...governanceBase,
+          eventId: `${callId}:completed`,
+          eventType: principal ? "mcp.tool.completed" : "user.action.completed",
+          disposition: "DENY",
+          outcome: completion.resultStatus === "REJECTED" ? "REJECTED" : "FAILED",
+          outputHash: hashObject({ code: safe.code, httpStatus: safe.httpStatus }),
+          evidence: {
+            toolName: options.toolName,
+            errorClass: safe.code,
+            providerMutationCompletion: safe.code === "WRITE_RESULT_UNKNOWN" ? "UNKNOWN" : "NOT_REPORTED",
+          },
+          occurredAt: completion.finishedAt,
+        });
+      } catch (governanceError) {
+        this.#logger.error("Governance audit rejection persistence failed.", {
+          callId,
+          toolName: options.toolName,
+          originalErrorCode: safe.code,
+          errorClass: governanceError instanceof Error ? governanceError.name : "UnknownError",
+        });
+      }
       throw safe;
     }
 
@@ -1855,6 +1928,33 @@ export class AccountingService {
     const recordId = options.recordId?.(result);
     if (recordId) completion.recordId = recordId;
     await this.#completeAudit(callId, options.toolName, completion);
+    try {
+      await this.#repository.appendGovernanceAuditEvent({
+        ...governanceBase,
+        eventId: `${callId}:completed`,
+        eventType: principal ? "mcp.tool.completed" : "user.action.completed",
+        disposition: options.governanceDisposition ?? "NOT_EVALUATED",
+        outcome: "SUCCEEDED",
+        outputHash: hashObject(result),
+        evidence: {
+          toolName: options.toolName,
+          policyEvaluation: "RECORDED_BY_EXISTING_CAPABILITY_AND_WRITE_GATES",
+          providerMutationCompletion: "SEE_TOOL_RECEIPT_AND_READBACK_EVIDENCE",
+        },
+        occurredAt: completion.finishedAt,
+      });
+    } catch (error) {
+      this.#logger.error("Governance audit completion persistence failed.", {
+        callId,
+        toolName: options.toolName,
+        errorClass: error instanceof Error ? error.name : "UnknownError",
+      });
+      throw new AppError("CONFIGURATION_ERROR", "Governance audit completion failed; the tool result was withheld.", {
+        httpStatus: 503,
+        details: { auditCallId: callId, governanceAuditCompletionStatus: "UNKNOWN" },
+        cause: error,
+      });
+    }
     return result;
   }
 

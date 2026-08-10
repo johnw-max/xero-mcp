@@ -45,6 +45,7 @@ import {
   prepareItemUpdateMutationSchema,
 } from "../domain/xeroContactItemMutationSchemas.js";
 import type { AccountingService } from "../services/accountingService.js";
+import type { OrganisationSwitchService } from "../services/organisationSwitchService.js";
 import { createXeroTrialBalanceCallToolResult } from "../services/xeroTrialBalanceBounds.js";
 import type { RequestContext } from "../security/requestContext.js";
 import { XERO_RELEASE_VERSION } from "../xeroRelease.js";
@@ -100,6 +101,11 @@ async function audited<T>(options: {
       principal: options.context,
       toolName: options.toolName,
       input: options.input,
+      governanceDisposition: options.toolName === "xero_start_organisation_switch" || options.toolName.startsWith("xero_prepare_")
+        ? "ESCALATE"
+        : options.requiredScope === "xero.draft.write"
+          ? "AUTO_EXECUTE"
+          : "OBSERVE",
       action: () => {
         if (!options.context.scopes.includes(options.requiredScope)) {
           throw new AppError(
@@ -118,7 +124,11 @@ async function audited<T>(options: {
   }
 }
 
-export function createAccountingMcpServer(service: AccountingService, context: RequestContext): McpServer {
+export function createAccountingMcpServer(
+  service: AccountingService,
+  context: RequestContext,
+  organisationSwitch?: Pick<OrganisationSwitchService, "start">,
+): McpServer {
   const actorId = context.actorId;
   const server = new McpServer(
     { name: "zcloak-xero-accounting-mcp-demo", version: XERO_RELEASE_VERSION },
@@ -129,7 +139,7 @@ export function createAccountingMcpServer(service: AccountingService, context: R
     "xero_connection_status",
     {
       title: "Xero connection status",
-      description: "Returns the exact connected Xero organisation and the safe user-driven organisation-change flow without exposing OAuth tokens. One MCP connection binds exactly one organisation; changing it requires fresh Xero OAuth and cannot happen silently from chat.",
+      description: "Returns the exact Xero organisation currently bound to this Agent. Organisation changes require a separate short-lived user confirmation page and never happen silently from chat text.",
       inputSchema: noInputSchema,
       annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false },
     },
@@ -141,6 +151,32 @@ export function createAccountingMcpServer(service: AccountingService, context: R
       toolName: "xero_connection_status",
       input,
       action: () => service.connectionStatus(context),
+    }),
+  );
+
+  server.registerTool(
+    "xero_start_organisation_switch",
+    {
+      title: "Switch Xero organisation",
+      description: "Creates a short-lived one-time link where the user can explicitly choose another Xero organisation already covered by the current Xero authorization. This tool only starts the confirmation flow; it does not switch from chat text alone.",
+      inputSchema: noInputSchema,
+      annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => audited({
+      service,
+      context,
+      requiredScope: "xero.read",
+      actorId,
+      toolName: "xero_start_organisation_switch",
+      input,
+      action: () => {
+        if (!organisationSwitch) {
+          throw new AppError("CONFIGURATION_ERROR", "Organisation switching is not configured.", {
+            httpStatus: 503,
+          });
+        }
+        return organisationSwitch.start(context);
+      },
     }),
   );
 

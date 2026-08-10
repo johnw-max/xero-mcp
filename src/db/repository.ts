@@ -11,6 +11,8 @@ import type {
   BrokerSelectionContext,
   CompleteBrokerOrganisationSelectionInput,
   CompleteBrokerOrganisationSelectionResult,
+  CompleteOrganisationSwitchInput,
+  CompleteOrganisationSwitchResult,
   CompleteBrokerXeroExchangeInput,
   ConsumeOAuthAuthorizationCodeInput,
   ConsumeOAuthBrokerFlowInput,
@@ -29,6 +31,8 @@ import type {
   OAuthBrokerAuthorizationFlow,
   OAuthBrokerFlow,
   OAuthInstallation,
+  OrganisationSwitchContext,
+  OrganisationSwitchSession,
   PostingRequest,
   PostingState,
   PeekMcpRefreshTokenContextInput,
@@ -49,6 +53,8 @@ import type {
   TerminateBrokerAuthorizationFlowInput,
   TerminateBrokerAuthorizationFlowResult,
   GetBrokerSelectionInput,
+  GovernanceAuditEvent,
+  GovernanceAuditEventInput,
   XeroPostingDocumentType,
 } from "../domain/models.js";
 import type {
@@ -68,6 +74,7 @@ import type {
 
 export interface EphemeralCleanupCounts {
   mcpRefreshRetryResponses: number;
+  organisationSwitchSessions: number;
   oauthBrokerFlows: number;
   oauthStates: number;
   connectTickets: number;
@@ -126,6 +133,14 @@ export interface AccountingRepository {
   resolveAgentConnectionBinding(
     input: ResolveAgentConnectionBindingInput,
   ): Promise<ResolvedAgentConnectionBinding | undefined>;
+  saveOrganisationSwitchSession(session: OrganisationSwitchSession): Promise<void>;
+  getOrganisationSwitchContext(
+    sessionHash: string,
+    now: Date,
+  ): Promise<OrganisationSwitchContext | undefined>;
+  completeOrganisationSwitch(
+    input: CompleteOrganisationSwitchInput,
+  ): Promise<CompleteOrganisationSwitchResult | undefined>;
   revokeOAuthInstallation(installationId: string, workspaceId: string, revokedAt: Date): Promise<boolean>;
 
   saveOAuthBrokerFlow(flow: OAuthBrokerFlow): Promise<void>;
@@ -283,4 +298,5 @@ export interface AccountingRepository {
   beginAudit(intent: AuditIntent): Promise<void>;
   completeAudit(callId: string, completion: AuditCompletion): Promise<void>;
   appendAudit(record: AuditRecord): Promise<void>;
+  appendGovernanceAuditEvent(input: GovernanceAuditEventInput): Promise<GovernanceAuditEvent>;
 }

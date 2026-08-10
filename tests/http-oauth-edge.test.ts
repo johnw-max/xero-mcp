@@ -12,6 +12,7 @@ import type { XeroOAuthService } from "../src/oauth/xeroOAuthService.js";
 import type { AccountingService } from "../src/services/accountingService.js";
 import type { ConnectionTicketService } from "../src/services/connectionTicketService.js";
 import type { ReviewService } from "../src/services/reviewService.js";
+import type { OrganisationSwitchService } from "../src/services/organisationSwitchService.js";
 import { XERO_RELEASE_VERSION } from "../src/xeroRelease.js";
 
 const issuer = "https://xero-mcp.example.test";
@@ -87,6 +88,87 @@ describe("HTTP OAuth edge", () => {
   });
 
   const loopbackIt = process.env.TEST_HTTP_LOOPBACK === "true" ? it : it.skip;
+  loopbackIt("serves a private organisation picker and requires exact same-origin confirmation", async () => {
+    const baseConfig = config();
+    const { mcpOAuthBroker: _mcpOAuthBroker, ...withoutBroker } = baseConfig;
+    const appConfig: AppConfig = {
+      ...withoutBroker,
+      allowedHosts: ["127.0.0.1", "localhost"],
+    };
+    const getPage = vi.fn().mockResolvedValue({
+      currentOrganisation: {
+        connectionId: "connection-a",
+        tenantId: "tenant-a",
+        tenantName: "Company A",
+        current: true,
+      },
+      organisations: [{
+        connectionId: "connection-b",
+        tenantId: "tenant-b",
+        tenantName: "Company B",
+        current: false,
+      }],
+      csrfToken: "csrf-switch",
+      expiresAt: new Date("2026-08-10T05:10:00.000Z"),
+    });
+    const confirm = vi.fn().mockResolvedValue({
+      status: "SWITCHED",
+      currentOrganisation: {
+        connectionId: "connection-b",
+        tenantId: "tenant-b",
+        tenantName: "Company B",
+        current: true,
+      },
+    });
+    const app = createHttpApp({
+      config: appConfig,
+      repository: { readiness: vi.fn().mockResolvedValue(true) } as unknown as AccountingRepository,
+      accountingService: {} as AccountingService,
+      oauthService: {} as XeroOAuthService,
+      reviewService: {} as ReviewService,
+      connectionTickets: {} as ConnectionTicketService,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger,
+      organisationSwitchService: { getPage, confirm } as unknown as OrganisationSwitchService,
+    });
+    server = await new Promise<Server>((resolve, reject) => {
+      const listening = app.listen(0, "127.0.0.1");
+      listening.once("listening", () => resolve(listening));
+      listening.once("error", reject);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server has no TCP address");
+    const local = `http://127.0.0.1:${address.port}`;
+
+    const page = await fetch(`${local}/xero/organisation-switch?ticket=${"t".repeat(43)}`);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("cache-control")).toContain("no-store");
+    expect(page.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(page.headers.get("content-security-policy")).toContain("form-action 'self'");
+    expect(await page.text()).toContain("Company B");
+
+    const wrongOrigin = await fetch(`${local}/xero/organisation-switch`, {
+      method: "POST",
+      headers: { Origin: "https://agent2.zcloak.ai", "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ ticket: "t".repeat(43), csrf_token: "csrf-switch", connection_id: "connection-b" }),
+    });
+    expect(wrongOrigin.status).toBe(403);
+    expect(confirm).not.toHaveBeenCalled();
+
+    const confirmed = await fetch(`${local}/xero/organisation-switch`, {
+      method: "POST",
+      headers: { Origin: issuer, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ ticket: "t".repeat(43), csrf_token: "csrf-switch", connection_id: "connection-b" }),
+    });
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.headers.get("cache-control")).toContain("no-store");
+    expect(await confirmed.text()).toContain("Company B");
+    expect(confirm).toHaveBeenCalledWith({
+      ticket: "t".repeat(43),
+      csrfToken: "csrf-switch",
+      selectedConnectionId: "connection-b",
+    });
+  });
+
   loopbackIt("publishes exact discovery and challenges /mcp instead of accepting the legacy bearer", async () => {
     const clientsStore = new StaticOAuthClientsStore(hostClients, MCP_OAUTH_SCOPES);
     const provider = {

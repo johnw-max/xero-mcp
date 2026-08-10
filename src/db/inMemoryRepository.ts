@@ -13,6 +13,8 @@ import type {
   BrokerSelectionContext,
   CompleteBrokerOrganisationSelectionInput,
   CompleteBrokerOrganisationSelectionResult,
+  CompleteOrganisationSwitchInput,
+  CompleteOrganisationSwitchResult,
   CompleteBrokerXeroExchangeInput,
   ConsumeOAuthAuthorizationCodeInput,
   ConsumeOAuthBrokerFlowInput,
@@ -33,6 +35,8 @@ import type {
   OAuthBrokerAuthorizationFlow,
   OAuthBrokerFlow,
   OAuthInstallation,
+  OrganisationSwitchContext,
+  OrganisationSwitchSession,
   PostingRequest,
   PostingState,
   PeekMcpRefreshTokenContextInput,
@@ -53,6 +57,8 @@ import type {
   TerminateBrokerAuthorizationFlowInput,
   TerminateBrokerAuthorizationFlowResult,
   GetBrokerSelectionInput,
+  GovernanceAuditEvent,
+  GovernanceAuditEventInput,
 } from "../domain/models.js";
 import { MCP_OAUTH_REFRESH_RETRY_GRACE_MS } from "../domain/models.js";
 import type {
@@ -72,6 +78,7 @@ import type {
 } from "../domain/xeroMutation.js";
 import { XERO_MUTATION_EXPECTED_READBACK_STATUS } from "../domain/xeroMutation.js";
 import { stableStringify } from "../security/hash.js";
+import { governanceAuditEventHash } from "../governance/governanceAudit.js";
 import type {
   AccountingRepository,
   EphemeralCleanupBatchResult,
@@ -207,6 +214,7 @@ function validateInitialBrokerFlow(input: CreateBrokerAuthorizationFlowInput): v
 function emptyEphemeralCleanupCounts(): EphemeralCleanupCounts {
   return {
     mcpRefreshRetryResponses: 0,
+    organisationSwitchSessions: 0,
     oauthBrokerFlows: 0,
     oauthStates: 0,
     connectTickets: 0,
@@ -229,6 +237,8 @@ export class InMemoryAccountingRepository implements AccountingRepository {
   readonly #authorizedConnections = new Map<string, AuthorizedProviderConnection>();
   readonly #oauthInstallations = new Map<string, OAuthInstallation>();
   readonly #agentConnectionBindings = new Map<string, AgentConnectionBinding>();
+  readonly #activeBindingIds = new Map<string, string>();
+  readonly #organisationSwitchSessions = new Map<string, OrganisationSwitchSession>();
   readonly #oauthBrokerFlows = new Map<string, OAuthBrokerFlow>();
   readonly #oauthBrokerAuthorizationFlows = new Map<string, OAuthBrokerAuthorizationFlow>();
   readonly #oauthAuthorizationCodes = new Map<string, OAuthAuthorizationCode>();
@@ -258,6 +268,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
   readonly #xeroMutationRequests = new Map<string, XeroMutationRequest>();
   readonly #xeroMutationRequestKeys = new Map<string, string>();
   readonly audits: AuditLog[] = [];
+  readonly governanceAuditEvents: GovernanceAuditEvent[] = [];
 
   async readiness(): Promise<boolean> {
     return true;
@@ -433,14 +444,6 @@ export class InMemoryAccountingRepository implements AccountingRepository {
         httpStatus: 403,
       });
     }
-    const installationBinding = [...this.#agentConnectionBindings.values()].find(
-      (candidate) => candidate.installationId === binding.installationId && candidate.bindingId !== binding.bindingId,
-    );
-    if (installationBinding) {
-      throw new AppError("CONFLICT", "An OAuth installation can bind only one provider connection.", {
-        httpStatus: 409,
-      });
-    }
     const existing = this.#agentConnectionBindings.get(binding.bindingId);
     if (existing && (
       existing.status === "REVOKED" ||
@@ -457,13 +460,130 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     }
     const saved = existing ? { ...binding, createdAt: existing.createdAt } : binding;
     this.#agentConnectionBindings.set(saved.bindingId, clone(saved));
+    if (!this.#activeBindingIds.has(saved.installationId)) {
+      this.#activeBindingIds.set(saved.installationId, saved.bindingId);
+    }
     return clone(saved);
   }
 
   async resolveAgentConnectionBinding(
     input: ResolveAgentConnectionBindingInput,
   ): Promise<ResolvedAgentConnectionBinding | undefined> {
+    if (this.#currentBindingId(input.installationId) !== input.bindingId) return undefined;
     return this.#resolveActiveBinding(input);
+  }
+
+  async saveOrganisationSwitchSession(session: OrganisationSwitchSession): Promise<void> {
+    if (
+      !isHashedValue(session.sessionHash) ||
+      !isValidDate(session.createdAt) ||
+      !isValidDate(session.expiresAt) ||
+      session.expiresAt <= session.createdAt ||
+      session.expiresAt.getTime() - session.createdAt.getTime() > 15 * 60_000 ||
+      session.consumedAt ||
+      this.#organisationSwitchSessions.has(session.sessionHash)
+    ) {
+      throw new AppError("VALIDATION_FAILED", "Organisation switch session is invalid.");
+    }
+    const source = this.#resolveActiveBinding({
+      installationId: session.installationId,
+      bindingId: session.sourceBindingId,
+      workspaceId: session.workspaceId,
+      subjectType: session.subjectType,
+      subjectId: session.subjectId,
+      agentId: session.agentId,
+      connectionId: session.sourceConnectionId,
+    });
+    if (
+      !source ||
+      source.authorizationId !== session.authorizationId ||
+      this.#currentBindingId(session.installationId) !== session.sourceBindingId
+    ) {
+      throw new AppError("FORBIDDEN", "Organisation switch source binding is no longer current.", {
+        httpStatus: 403,
+      });
+    }
+    this.#organisationSwitchSessions.set(session.sessionHash, clone(session));
+  }
+
+  async getOrganisationSwitchContext(
+    sessionHash: string,
+    now: Date,
+  ): Promise<OrganisationSwitchContext | undefined> {
+    if (!isValidDate(now)) return undefined;
+    const session = this.#organisationSwitchSessions.get(sessionHash);
+    if (!session || session.consumedAt || session.expiresAt <= now) return undefined;
+    const currentBindingId = this.#currentBindingId(session.installationId);
+    if (currentBindingId !== session.sourceBindingId) return undefined;
+    const currentBinding = this.#resolveActiveBindingByTuple(
+      session.installationId,
+      session.sourceBindingId,
+      session.sourceConnectionId,
+    );
+    if (!currentBinding || currentBinding.authorizationId !== session.authorizationId) return undefined;
+    const connections = await this.listActiveConnectionsByAuthorization(
+      session.authorizationId,
+      session.workspaceId,
+    );
+    if (connections.length === 0) return undefined;
+    return {
+      session: clone(session),
+      currentBinding,
+      connections,
+    };
+  }
+
+  async completeOrganisationSwitch(
+    input: CompleteOrganisationSwitchInput,
+  ): Promise<CompleteOrganisationSwitchResult | undefined> {
+    if (!isValidDate(input.now) || !isNonEmpty(input.newBindingId)) return undefined;
+    const context = await this.getOrganisationSwitchContext(input.sessionHash, input.now);
+    if (!context) return undefined;
+    const targetConnection = context.connections.find(
+      (connection) => connection.connectionId === input.selectedConnectionId,
+    );
+    if (!targetConnection) return undefined;
+
+    let targetBinding = [...this.#agentConnectionBindings.values()].find((binding) =>
+      binding.installationId === context.session.installationId &&
+      binding.connectionId === targetConnection.connectionId &&
+      binding.status === "ACTIVE"
+    );
+    if (!targetBinding) {
+      if (this.#agentConnectionBindings.has(input.newBindingId)) return undefined;
+      targetBinding = {
+        bindingId: input.newBindingId,
+        installationId: context.session.installationId,
+        workspaceId: context.session.workspaceId,
+        subjectType: context.session.subjectType,
+        subjectId: context.session.subjectId,
+        agentId: context.session.agentId,
+        connectionId: targetConnection.connectionId,
+        policyId: context.currentBinding.policyId,
+        status: "ACTIVE",
+        createdAt: input.now,
+        updatedAt: input.now,
+      };
+      this.#agentConnectionBindings.set(targetBinding.bindingId, clone(targetBinding));
+    }
+    this.#activeBindingIds.set(context.session.installationId, targetBinding.bindingId);
+    const consumed: OrganisationSwitchSession = {
+      ...context.session,
+      consumedAt: input.now,
+    };
+    this.#organisationSwitchSessions.set(consumed.sessionHash, consumed);
+    const currentBinding = this.#resolveActiveBindingByTuple(
+      targetBinding.installationId,
+      targetBinding.bindingId,
+      targetBinding.connectionId,
+    );
+    if (!currentBinding) throw new Error("Completed organisation switch did not resolve its target binding.");
+    return {
+      session: clone(consumed),
+      previousBinding: clone(context.currentBinding),
+      currentBinding,
+      changed: currentBinding.connectionId !== context.currentBinding.connectionId,
+    };
   }
 
   async revokeOAuthInstallation(installationId: string, workspaceId: string, revokedAt: Date): Promise<boolean> {
@@ -814,6 +934,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
 
     this.#oauthInstallations.set(flow.installationId, activatedInstallation);
     this.#agentConnectionBindings.set(binding.bindingId, binding);
+    this.#activeBindingIds.set(binding.installationId, binding.bindingId);
     this.#oauthAuthorizationCodes.set(authorizationCode.codeHash, authorizationCode);
     this.#oauthBrokerAuthorizationFlows.set(flow.flowHash, completed);
     return {
@@ -1060,11 +1181,21 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     ) {
       return undefined;
     }
-    const binding = this.#resolveActiveBindingByTuple(
+    const sourceBinding = this.#resolveActiveBindingByTuple(
       token.installationId,
       token.bindingId,
       token.connectionId,
     );
+    if (!sourceBinding) return undefined;
+    const activeBindingId = this.#currentBindingId(token.installationId);
+    const activeBinding = this.#agentConnectionBindings.get(activeBindingId);
+    const binding = activeBinding
+      ? this.#resolveActiveBindingByTuple(
+          token.installationId,
+          activeBinding.bindingId,
+          activeBinding.connectionId,
+        )
+      : undefined;
     if (!binding) return undefined;
     return {
       tokenId: token.tokenId,
@@ -1522,6 +1653,15 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       this.#mcpRefreshTokens.set(tokenHash, scrubbed);
     }
     deleted.mcpRefreshRetryResponses = retryTargets.length;
+
+    const switchTargets = [...this.#organisationSwitchSessions.entries()]
+      .filter(([, session]) => session.expiresAt <= brokerFlowCutoff)
+      .sort(([leftHash, left], [rightHash, right]) =>
+        left.expiresAt.getTime() - right.expiresAt.getTime() || leftHash.localeCompare(rightHash)
+      )
+      .slice(0, batchSize);
+    for (const [sessionHash] of switchTargets) this.#organisationSwitchSessions.delete(sessionHash);
+    deleted.organisationSwitchSessions = switchTargets.length;
 
     const expiredBrokerFlows = [...this.#oauthBrokerAuthorizationFlows.entries()]
       .filter(([, flow]) =>
@@ -2463,6 +2603,24 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     this.audits[index] = clone({ ...intent, ...completion });
   }
 
+  async appendGovernanceAuditEvent(input: GovernanceAuditEventInput): Promise<GovernanceAuditEvent> {
+    if (this.governanceAuditEvents.some((event) => event.eventId === input.eventId)) {
+      throw new AppError("CONFLICT", "Governance audit event identifier already exists.", { httpStatus: 409 });
+    }
+    const previousEventHash = [...this.governanceAuditEvents]
+      .reverse()
+      .find((event) => event.streamId === input.streamId)?.eventHash;
+    const recordedAt = new Date();
+    const event: GovernanceAuditEvent = {
+      ...clone(input),
+      ...(previousEventHash ? { previousEventHash } : {}),
+      eventHash: governanceAuditEventHash(input, previousEventHash, recordedAt),
+      recordedAt,
+    };
+    this.governanceAuditEvents.push(event);
+    return clone(event);
+  }
+
   #resolveActiveBinding(
     input: ResolveAgentConnectionBindingInput,
   ): ResolvedAgentConnectionBinding | undefined {
@@ -2528,6 +2686,14 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       agentId: binding.agentId,
       connectionId,
     });
+  }
+
+  #currentBindingId(installationId: string): string {
+    const explicit = this.#activeBindingIds.get(installationId);
+    if (explicit) return explicit;
+    return [...this.#agentConnectionBindings.values()].find(
+      (binding) => binding.installationId === installationId && binding.status === "ACTIVE",
+    )?.bindingId ?? "";
   }
 
   #requireActiveBindingTuple(
