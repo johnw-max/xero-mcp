@@ -1,0 +1,3 @@
+case_id,turn,agent,balance_before,balance_after,delta,cumulative_delta,note
+OAUTH-WORK-01,1,Xero 会计助理,UNAVAILABLE,UNAVAILABLE,UNAVAILABLE,UNAVAILABLE,Host UI did not expose an acceptance token balance; one read-only prompt and one MCP call were used
+OAUTH-AGENT2-01,1,Xero 会计助理（UAT）,UNAVAILABLE,UNAVAILABLE,UNAVAILABLE,UNAVAILABLE,Host UI did not expose an acceptance token balance; one read-only prompt and one MCP call were used

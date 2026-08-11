@@ -66,23 +66,25 @@ MCP 直接调用 Xero 官方 Accounting API，不在中间复制或维护另一�
 | 资料 | 用途 | 位置 |
 |---|---|---|
 | GitHub 源码仓库 | 代码、迁移与部署基线 | [github.com/johnw-max/xero-mcp](https://github.com/johnw-max/xero-mcp) |
-| 当前 Work Demo | 0.3.1 真实 Xero 只读验收与换公司入口 | [work.zcloak.ai/c/0168a366-773f-405b-b067-9ede601637d6](https://work.zcloak.ai/c/0168a366-773f-405b-b067-9ede601637d6) |
+| 当前 Work Demo | 0.3.1 新 Host client 的真实 Xero 只读验收 | [Work：zcloak / HKD 截图](../../artifacts/test-runs/2026-08-11-shared-host-oauth-uat/work-readback-zcloak-hkd.png) |
+| 当前 Agent2 Demo | 第二条独立 installation 的真实 Xero 只读验收 | [Agent2：Demo Company (Global) / USD 截图](../../artifacts/test-runs/2026-08-11-shared-host-oauth-uat/agent2-readback-demo-company-usd.png) |
 | 测试 MCP | 迁移前的连通性对照 | `https://mcp.jiayuanwang.xyz/mcp` |
 | Work MCP 配置 | 可直接照填的字段、Secret 交接和多人配置边界 | [Work 配置 Xero MCP](../../docs/WORK-XERO-MCP-CONFIGURATION-ZH.md) |
 | Xero Developer App | OAuth 配置与回调迁移 | `zCloak Accounting Connector` |
 | 发布与线上验收 | 固定版本、测试结果与证据边界 | [Xero 0.3.1 发布与线上 UAT](../../docs/XERO-0.3.1-DEPLOYMENT-AND-ONLINE-UAT-2026-08-10.md) |
 | 官方 Logo 样式修订 | 官方资产来源、桌面与移动端验证 | [Xero 官方 Logo 上线记录](../../docs/XERO-0.3.1-OFFICIAL-LOGO-RELEASE-2026-08-10.md) |
 | 老板演示录屏包 | 三条短片脚本、自然话术、重置和重录门槛 | [Xero MCP 老板演示录屏方案](../video-demo-plan-2026-08-10/README.md) |
+| 双 Host OAuth 线上验收 | Work + Agent2 installation、token family、binding 隔离证据 | [2026-08-11 Shared Host OAuth UAT](../../artifacts/test-runs/2026-08-11-shared-host-oauth-uat/ONLINE-UAT-RESULTS.md) |
 
 源码仓库包含 MCP 服务、Xero OAuth、Provider 适配、业务服务、数据库迁移、部署配置和测试工具。当前地址仅供验证和迁移对照，不作为公司正式生产地址。Client Secret、OAuth Token、数据库凭证及加密密钥不通过 Git 或文档交接。
 
 ### Work 配置要点
 
-Work 当前使用 `Streamable HTTPS + OAuth`。测试环境的公开配置为：MCP URL `https://mcp.jiayuanwang.xyz/mcp`、Client ID `work-xero-f70c2c68107535c1`、Authorization URL `https://mcp.jiayuanwang.xyz/authorize`、Token URL `https://mcp.jiayuanwang.xyz/token`、Scope `xero.read xero.draft.write`。Client Secret 已存在，但只能通过公司 Secret Manager 或密码管理工具私下交接，不能写入本文档。
+Work 当前使用 `Streamable HTTPS + OAuth`。测试环境的公开配置为：MCP URL `https://mcp.jiayuanwang.xyz/mcp`、Client ID `work-xero-58751518d3dea403`、Authorization URL `https://mcp.jiayuanwang.xyz/authorize`、Token URL `https://mcp.jiayuanwang.xyz/token`、Scope `xero.read xero.draft.write`。Agent2 使用独立 Client ID `agent2-xero-58751518d3dea403`。内层 Xero Developer App Client ID 为 `F5A3D33C975B47CB9FE3961A04FCA40C`，回调为 `https://mcp.jiayuanwang.xyz/oauth/xero/callback`。两套 Host Client Secret 与 Xero Client Secret 已存在，只能通过公司 Secret Manager、密码管理工具或本次 root-only 私密交接文件传递，不能写入本文档。
 
 当前 Work Redirect URI 为 `https://work.zcloak.ai/api/mcp/zcloak-ledger-mcp-xero-demo/oauth/callback`。正式迁移时，开发应以 Work 新环境实际生成的 Redirect URI 为准，将完整地址登记到服务端对应 client 的 allowlist。
 
-早期多人验收使用同一 Work Client ID、Secret 和 Redirect URI，并开启 `SHARED_TEST_USERS=true`。每个测试者仍需独立完成 Xero OAuth 和 Organisation 选择，服务端按 installation 隔离 token 与账套 binding。该模式适合 5–10 人 UAT，但临时 subject 不是经过 Work 签名的真实用户身份；正式产品仍应由 Work 统一管理 client，并补齐签名的用户、工作区和 installation identity。具体填写项和验收步骤见上表中的《Work 配置 Xero MCP》。
+早期多人验收在同一 Host 内可共享一组 Host Client ID、Secret 和 Redirect URI；不同 Host 使用各自独立的一组凭证，并开启 `SHARED_TEST_USERS=true`。每个测试者仍需独立完成 Xero OAuth 和 Organisation 选择，服务端按 installation 隔离 token 与账套 binding。2026-08-11 的 Work + Agent2 验收已证明两条 installation、refresh family 和 Organisation binding 同时有效且互不覆盖。该模式适合 5–10 人 UAT，但临时 subject 不是经过 Host 签名的真实用户身份；正式产品仍应由平台统一管理 client，并补齐签名的用户、工作区和 installation identity。具体填写项和验收步骤见上表中的《Work 配置 Xero MCP》。
 
 ## 开发接手范围
 

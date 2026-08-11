@@ -1,0 +1,3 @@
+case_id,agent_name,result,share_url,export_path,verified_at
+OAUTH-WORK-01,Xero 会计助理,PASS,WITHHELD_PRIVATE,artifacts/test-runs/2026-08-11-shared-host-oauth-uat/work-readback-zcloak-hkd.png,2026-08-11T03:25:00Z
+OAUTH-AGENT2-01,Xero 会计助理（UAT）,PASS,WITHHELD_PRIVATE,artifacts/test-runs/2026-08-11-shared-host-oauth-uat/agent2-readback-demo-company-usd.png,2026-08-11T03:27:00Z
