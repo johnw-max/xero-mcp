@@ -25,9 +25,9 @@ psql "$DATABASE_URL" -X -f scripts/preflight_xero_duplicate_guards.sql
 
 ## 临时兼容约束
 
-migration 020 会把 0.3 的五个 document-type/DRAFT 强索引改用 `v030` 专用名称，并用原名重建 Xero 0.2.13 与 QuickBooks 0.2.12 shared repository 合计会核验的五个 distinct exact definitions。三类 preflight 中的 tenant source/contact 检查是 actor-scoped 旧索引冲突检查的严格超集。旧 tenant supplier-reference index 没有 `document_type` 条件，所以在旧 active states 中也会对 ACCREC 强制 contact/reference 唯一；这会临时收紧 migration 016 原本允许的 ACCREC reference 复用。
+migration 020 会把 0.3 的五个 document-type/DRAFT 强索引改用 `v030` 专用名称，并用原名重建 Xero 0.2.13 会核验的五个 distinct exact definitions。三类 preflight 中的 tenant source/contact 检查是 actor-scoped 旧索引冲突检查的严格超集。旧 tenant supplier-reference index 没有 `document_type` 条件，所以在旧 active states 中也会对 ACCREC 强制 contact/reference 唯一；这会临时收紧 migration 016 原本允许的 ACCREC reference 复用。
 
-在不修改旧 Xero 0.2.13 runtime 的条件下，没有数据库层的等价替代：旧 readiness 同时核对 public `posting_requests` 上的 exact keys/predicate 以及 unique/valid/ready。若业务必须保留 ACCREC reference 复用，应先升级/补丁旧 Xero readiness，或停止并行旧 Xero。该兼容不要求修改 QuickBooks runtime。
+在不修改旧 Xero 0.2.13 runtime 的条件下，没有数据库层的等价替代：旧 readiness 同时核对 public `posting_requests` 上的 exact keys/predicate 以及 unique/valid/ready。若业务必须保留 ACCREC reference 复用，应先升级/补丁旧 Xero readiness，或停止并行旧 Xero。
 
 ## BLOCKED 后怎么处理
 

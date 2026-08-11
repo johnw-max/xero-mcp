@@ -30,8 +30,8 @@
 - green 只占用 `127.0.0.1:18004`，Nginx 公网继续使用 `mcp.jiayuanwang.xyz`。
 - 最终 public health：`status=ok`、`version=0.3.0`、`toolCount=43`、工具指纹精确匹配；ready 为 `status=ready`。
 - OAuth Authorization Server metadata、Protected Resource metadata、401 challenge 和 legacy bearer 拒绝均通过。
-- migration 001–020 已应用；020 同时保持 0.3.0 与旧 Xero/QuickBooks runtime 所需索引兼容。
-- QuickBooks 仍是 0.2.12 / 15 tools / `writeEnabled=false`；PostgreSQL 与 stock 均未重建或重启，RestartCount 为 0。
+- migration 001–020 已应用；020 同时保持 0.3.0 与旧 Xero runtime 所需索引兼容。
+- PostgreSQL 与 stock 均未重建或重启，RestartCount 为 0。
 
 ## 3. Xero 重新授权修复
 
@@ -97,7 +97,7 @@
 
 - 写入仅在上述确认轮短时打开，15 分钟自动关闭 timer 同时启用；创建完成后立即手动关闭。
 - 最终 `XERO_WRITE_ENABLED=false`，restart policy 为 `unless-stopped`，green 为 healthy、RestartCount `0`。
-- `.4` boot-close failsafe：installed/enabled、Nginx 非阻断 Wants、active/success；已真实执行一次并重新创建 `.4` green，输出 `BOOT_WRITE_GATE=CLOSED`、`XERO_IMAGE=PINNED`、QuickBooks/PostgreSQL continuity PASS。
+- `.4` boot-close failsafe：installed/enabled、Nginx 非阻断 Wants、active/success；已真实执行一次并重新创建 `.4` green，输出 `BOOT_WRITE_GATE=CLOSED`、`XERO_IMAGE=PINNED`、PostgreSQL continuity PASS。
 - timer 在手动关闭后为 inactive。
 - 旧 `.3` boot-close unit 与已安装脚本在 `.4` 成功后已精确停用并删除；旧 `.3` release 仍保留审计副本。
 - 因旧 grant 已撤销且新 OAuth 未完成，当前完整 `status/preflight` 的 binding 门槛按设计不能 PASS；这不会打开写入，反而阻止无绑定状态进入写 Demo。

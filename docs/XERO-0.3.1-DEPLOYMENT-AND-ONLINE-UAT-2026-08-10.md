@@ -59,7 +59,7 @@ Secret、旧个人域名、禁止路径扫描均为 0。公网 `/healthz` 返回
 
 - `XERO_WRITE_ENABLED=false`；本轮没有调用 prepare、execute、create、update、approve、authorise、pay、post、reconcile、delete 或 void。
 - build `20260810.2` 的开机 write-gate failsafe 已启用，状态为 active/success；上一 build 的冲突 unit 已停用，写入开关保持 false。
-- QuickBooks、共享 PostgreSQL 和 Stock MCP 在本次部署中未重启，RestartCount 均为 0。
+- 共享 PostgreSQL 和 Stock MCP 在本次部署中未重启，RestartCount 均为 0。
 - Agent2 与 Work 使用独立 OAuth client / installation；一个 Host 的重新授权或 Organisation 切换不会覆盖另一个 Host 的 current binding。
 - 治理事件保存版本化身份、范围、行为、处置、结果和 hash 链证据；不保存 Token、原始 Prompt、Chain of Thought 或完整用户材料。
 

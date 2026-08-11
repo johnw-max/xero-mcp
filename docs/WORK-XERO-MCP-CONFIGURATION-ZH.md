@@ -1,6 +1,6 @@
 # Work 配置 Xero MCP
 
-核对日期：2026-08-10
+核对日期：2026-08-11
 
 ## 当前测试环境可直接填写的内容
 
@@ -34,19 +34,19 @@ Redirect URI 不是随意填写项。每次新增 MCP 后，应先复制 Work �
 当前实现已经是 confidential OAuth client，存在 Client Secret 机制，不需要再额外开发一套。Secret 至少使用 32 个随机字节，只保存在：
 
 1. Work 的 MCP Server 安全配置；
-2. MCP 服务端的 Secret Manager 或权限为 `0600` 的部署环境文件。
+2. MCP 服务端的 Secret Manager 或权限为 `0600` 的部署环境文件；当前部署对应 `HOST_OAUTH_CLIENTS_JSON`。
 
 Secret 不进入 Agent 提示词、聊天、飞书文档、GitHub、截图或普通日志。开发接手时，应在公司密码管理工具中重新生成并双端更新，不继续长期使用个人测试 Secret。
 
 ## 多个人如何使用
 
-需要区分“共享一套正式连接”和“当前 Personal POC”：
+需要区分“共享 Host 应用凭证”和“共享某个人的 Xero 连接”：
 
-- **当前测试版：** `PERSONAL_POC_ONLY=true`，Host 没有提供可验证的 Work 用户/工作区身份。不要让多个真人共用上面的 Client ID 和 Secret；同一 OAuth client 的重新授权会替换其原有 grant，且不能据此证明团队级隔离。
-- **短期多人验收：** 为开发 1、开发 2、老板分别分配独立的 `client_id`、`client_secret` 和 Work Redirect URI，并把多个 client 同时登记到 `HOST_OAUTH_CLIENTS_JSON`。每个人再用自己的 Xero 账号完成 OAuth 和 Organisation 选择。现有代码支持多个预注册 Host client 并行存在。
+- **短期多人验收：** 使用同一组 Work `client_id`、`client_secret` 和 Redirect URI，并同时设置 `PERSONAL_POC_ONLY=true`、`SHARED_TEST_USERS=true`。这组凭证只标识 Work 中的 MCP 应用；每次 OAuth 都创建独立 installation、access/refresh token family 和 Xero tenant binding，后一个测试者不会覆盖前一个测试者。
+- **身份边界：** 早期测试模式没有 Work 签名的 user/workspace 身份，因此服务端给每次 installation 生成临时 subject。它能隔离 5–10 个测试连接，但不能把审计 subject 解释为已经验证的真实 Work 用户。
 - **正式产品：** 由公司 Work 环境统一配置和管理 MCP client，并补齐 Work 签名的 user/workspace/installation identity；关闭 Personal POC 模式后，同一共享连接才可安全承载多个用户各自的 Xero installation。Client Secret 由平台管理员配置一次，普通会计只点击 Connect，不接触 Secret。
 
-多 client 的服务端格式如下。示例中的 Secret 必须在公司环境重新生成：
+共享 Work client 的服务端格式如下。示例中的 Secret 必须在公司环境重新生成：
 
 ```json
 [
@@ -56,14 +56,6 @@ Secret 不进入 Agent 提示词、聊天、飞书文档、GitHub、截图或普
     "client_secret": "REPLACE_WITH_AT_LEAST_32_RANDOM_BYTES",
     "redirect_uris": [
       "https://work.zcloak.ai/api/mcp/REPLACE_WITH_SERVER_IDENTIFIER/oauth/callback"
-    ]
-  },
-  {
-    "name": "Work developer acceptance",
-    "client_id": "work-xero-developer-acceptance",
-    "client_secret": "REPLACE_WITH_A_DIFFERENT_SECRET",
-    "redirect_uris": [
-      "https://work.zcloak.ai/api/mcp/REPLACE_WITH_ANOTHER_SERVER_IDENTIFIER/oauth/callback"
     ]
   }
 ]
@@ -75,4 +67,4 @@ Secret 不进入 Agent 提示词、聊天、飞书文档、GitHub、截图或普
 2. Xero 返回后，在 zCloak AI 页面明确选择一个 Organisation。
 3. 回到 Work，用 Agent 读取 Organisation 名称和本位币；答案必须来自本轮 MCP 回执。
 4. 在对话中要求“换一家公司”，确认 Agent 返回一次性选择链接；页面确认后必须重新读取 Organisation。
-5. 两个独立测试 client 同时保持各自连接，互不替换；全程保持 `XERO_WRITE_ENABLED=false`。
+5. 用同一 Work client 完成至少两个独立用户的 OAuth，确认两条 installation、token family 和 Organisation binding 同时有效、互不替换；全程保持 `XERO_WRITE_ENABLED=false`。

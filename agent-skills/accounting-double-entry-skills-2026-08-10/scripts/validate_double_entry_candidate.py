@@ -772,21 +772,6 @@ def validate_capability_registry(errors: list[str]) -> set[str]:
             "xero_get_supplier_bill",
             "xero_get_trial_balance",
         },
-        "quickbooks.md": {
-            "quickbooks_connection_status",
-            "quickbooks_get_company",
-            "quickbooks_list_accounts",
-            "quickbooks_list_tax_codes",
-            "quickbooks_search_vendors",
-            "quickbooks_search_customers",
-            "quickbooks_list_items",
-            "quickbooks_list_bills",
-            "quickbooks_list_transactions",
-            "quickbooks_get_bill",
-            "quickbooks_get_transaction",
-            "quickbooks_run_report",
-            "quickbooks_get_trial_balance",
-        },
     }
     for profile in sorted(profile_root.glob("*.md")):
         text = profile.read_text(encoding="utf-8")
@@ -799,7 +784,7 @@ def validate_capability_registry(errors: list[str]) -> set[str]:
         if "| Tool | Capability ID | Supported object types | Control requirement" not in text:
             errors.append(f"{profile.relative_to(ROOT)}: missing executable mapping table")
         table_text = text.split("## Provider semantics", 1)[0]
-        mapped_tools = set(re.findall(r"`((?:xero|quickbooks)_[a-z0-9_]+)`", table_text))
+        mapped_tools = set(re.findall(r"`(xero_[a-z0-9_]+)`", table_text))
         missing_tools = required_profile_read_tools.get(profile.name, set()) - mapped_tools
         if missing_tools:
             errors.append(
@@ -813,7 +798,6 @@ def validate_skill_portability(errors: list[str]) -> None:
         "accountingV2",
         "zclock-ai-accounting-agency-demo",
         "xero_",
-        "quickbooks_",
         "create_google_drive",
         "read_google_drive",
     )
@@ -964,7 +948,6 @@ def main() -> None:
             "accountingV2",
             "zclock-ai-accounting-agency-demo",
             "xero_",
-            "quickbooks_",
             "create_google_drive",
         ],
     )

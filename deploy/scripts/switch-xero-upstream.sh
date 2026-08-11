@@ -70,11 +70,6 @@ current_xero_port() {
   esac
 }
 
-verify_quickbooks_unchanged() {
-  qb_ports=$(upstream_port "quickbooks_accounting_mcp_demo")
-  test "$qb_ports" = "18003" || fail "QUICKBOOKS_UPSTREAM_NOT_18003"
-}
-
 verify_blue_break_glass_container_read_only() {
   command -v docker >/dev/null 2>&1 || return 1
   blue_container_ids=$(docker ps \
@@ -198,29 +193,15 @@ check_public() {
   esac
 }
 
-check_quickbooks_public() {
-  response_max_time=${1:-15}
-  qb_health=$(curl -fsS --max-time "$response_max_time" "${PUBLIC_BASE_URL}/quickbooks/healthz") || return 1
-  qb_ready=$(curl -fsS --max-time "$response_max_time" "${PUBLIC_BASE_URL}/quickbooks/readyz") || return 1
-  printf '%s' "$qb_health" | grep -Fq '"status":"ok"' || return 1
-  printf '%s' "$qb_health" | grep -Fq '"provider":"quickbooks-online"' || return 1
-  printf '%s' "$qb_ready" | grep -Fq '"status":"ready"' || return 1
-}
-
 settle_public_after_reload() {
   target_port=$1
   settle_attempt=1
   while test "$settle_attempt" -le "$PUBLIC_SETTLE_ATTEMPTS"; do
     PUBLIC_SETTLE_XERO_OK=false
-    PUBLIC_SETTLE_QUICKBOOKS_OK=false
     if check_public "$target_port" "$PUBLIC_SETTLE_CURL_MAX_TIME_SECONDS"; then
       PUBLIC_SETTLE_XERO_OK=true
     fi
-    if check_quickbooks_public "$PUBLIC_SETTLE_CURL_MAX_TIME_SECONDS"; then
-      PUBLIC_SETTLE_QUICKBOOKS_OK=true
-    fi
-    if test "$PUBLIC_SETTLE_XERO_OK" = "true" \
-      && test "$PUBLIC_SETTLE_QUICKBOOKS_OK" = "true"; then
+    if test "$PUBLIC_SETTLE_XERO_OK" = "true"; then
       return 0
     fi
     test "$settle_attempt" -lt "$PUBLIC_SETTLE_ATTEMPTS" || return 1
@@ -256,8 +237,6 @@ restore_site() {
   # state, and treating that known state as restore failure would be misleading.
   restored_xero_ports=$(upstream_port "xero_accounting_mcp_demo") || return 1
   test "$restored_xero_ports" = "$expected_xero_port" || return 1
-  restored_quickbooks_ports=$(upstream_port "quickbooks_accounting_mcp_demo") || return 1
-  test "$restored_quickbooks_ports" = "18003" || return 1
   nginx -t || return 1
   systemctl reload nginx || return 1
 }
@@ -266,9 +245,7 @@ switch_to() {
   target_port=$1
   target_label=$2
   current_port=$(current_xero_port)
-  verify_quickbooks_unchanged
   check_loopback "$target_port"
-  check_quickbooks_public || fail "QUICKBOOKS_PUBLIC_PREFLIGHT_FAILED"
 
   if test "$current_port" = "$target_port"; then
     check_public "$target_port" || fail "PUBLIC_CHECK_FAILED_WITH_TARGET_ALREADY_ACTIVE"
@@ -305,18 +282,11 @@ switch_to() {
   fi
 
   if ! settle_public_after_reload "$target_port"; then
-    if test "$PUBLIC_SETTLE_XERO_OK" != "true"; then
-      if restore_site "$backup_file" "$current_port"; then
-        fail "PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORED"
-      fi
-      fail "PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORE_FAILED"
-    fi
     if restore_site "$backup_file" "$current_port"; then
-      fail "QUICKBOOKS_PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORED"
+      fail "PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORED"
     fi
-    fail "QUICKBOOKS_PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORE_FAILED"
+    fail "PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORE_FAILED"
   fi
-  verify_quickbooks_unchanged
   test "$(current_xero_port)" = "$target_port" || fail "POST_SWITCH_PORT_MISMATCH"
   audit_blue_rollback_warning "$target_port"
   audit "XERO_UPSTREAM" "$target_label"
@@ -326,7 +296,6 @@ switch_to() {
 
 case "${1:-}" in
   status)
-    verify_quickbooks_unchanged
     case "$(current_xero_port)" in
       "$BLUE_PORT") audit "XERO_UPSTREAM" "BLUE_18002" ;;
       "$GREEN_PORT") audit "XERO_UPSTREAM" "GREEN_18004" ;;

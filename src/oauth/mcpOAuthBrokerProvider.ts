@@ -55,6 +55,7 @@ const EXACT_PKCE_CHALLENGE = /^[A-Za-z0-9_-]{43}$/u;
 const EXACT_OPAQUE_BROWSER_VALUE = /^[A-Za-z0-9_-]{43}$/u;
 const PERSONAL_POC_WORKSPACE_ID = "personal-poc";
 const PERSONAL_POC_POLICY_ID = "policy_personal-poc-xero-v1";
+const SHARED_TEST_SUBJECT_PREFIX = "shared-test-installation";
 
 function exactNonEmpty(value: string, maxLength: number): boolean {
   return value.length > 0 &&
@@ -220,8 +221,10 @@ export function shouldUsePersonalPocManualReturn(options: {
  * End-to-end outer OAuth provider for a pre-registered MCP Host.
  *
  * Host identity is deliberately not inferred from OAuth parameters. Until a
- * signed Host assertion exists, this provider only runs in the explicitly
- * labelled one-person POC profile.
+ * signed Host assertion exists, this provider only runs in an explicitly
+ * labelled test profile. Shared-test mode treats the registered client as the
+ * application identity while each OAuth grant gets an isolated, server-owned
+ * installation subject; it must not be described as verified human identity.
  */
 export class McpOAuthBrokerProvider implements OAuthServerProvider {
   readonly skipLocalPkceValidation = true;
@@ -297,7 +300,9 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
     const xeroState = this.#newSecret("Xero state");
     const flowHash = this.#hash("browser_flow", browserSecret);
     const installationId = this.#newId("installation");
-    const subjectId = this.#config.demoActorId;
+    const subjectId = this.#broker.sharedTestUsers
+      ? `${SHARED_TEST_SUBJECT_PREFIX}:${installationId}`
+      : this.#config.demoActorId;
     const flow: OAuthBrokerAuthorizationFlow = {
       flowHash,
       browserSessionHash: this.#hash("browser_session", browserSecret),

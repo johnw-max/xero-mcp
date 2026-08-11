@@ -660,7 +660,7 @@ sha256(workspace_id | connection_id | operation | request_id | canonical_payload
 
 ### Phase 5：扩大工具域
 
-按业务价值逐项评审 Credit Note、Payment、银行只读、对账建议、月结工作包和批量草稿。每项必须新增 Scope 说明、策略、证据、审批、幂等、回读和专门 UAT。QuickBooks 在 Xero V1 闭环后复用 Authorization / Connection / Binding 和 Operation 模型接入。
+按业务价值逐项评审 Credit Note、Payment、银行只读、对账建议、月结工作包和批量草稿。每项必须新增 Scope 说明、策略、证据、审批、幂等、回读和专门 UAT。其他会计 Provider 在独立仓库中复用 Authorization / Connection / Binding 和 Operation 模型接入。
 
 ## 16. 测试与发布门槛
 

@@ -1,6 +1,6 @@
 # Xero MCP 开发交接说明
 
-更新日期：2026 年 8 月 10 日
+更新日期：2026 年 8 月 11 日
 
 ## 项目背景
 
@@ -15,6 +15,8 @@
 当前实现是在 Work 与 Xero 之间部署一个远程 MCP 服务。会计用户仍然在 Work 中以自然语言提出业务需求，Agent 负责理解任务、读取用户提供的材料并选择相应工具；MCP 则作为受控连接层，统一处理授权、账套边界、会计工具和执行记录。
 
 连接分为两层：Work 通过 MCP OAuth 连接远程 MCP；用户再通过 Xero OAuth 授权其 Xero 账号，并从获准访问的 Organisation 中选择本次连接的目标账套。此后每次工具调用都从服务端绑定关系确定 Organisation，Agent 不能在调用参数中任意切换公司。
+
+早期多人测试共享同一组 Work Client ID、Client Secret 和 Redirect URI。这组凭证只识别 MCP 应用，不代表某个自然人；每次 OAuth 会创建独立 installation、token family 和 Organisation binding，因此 5–10 个测试用户可以同时连接而互不覆盖。由于 Work 当前没有向 MCP 提供已签名的用户/工作区身份，测试版使用服务端生成的临时 subject；正式上线前仍需接入可信 Host identity。
 
 MCP 直接调用 Xero 官方 Accounting API，不在中间复制或维护另一套账本。读取结果返回 Work 供 Agent 分析；涉及会计写入时，MCP 先生成可审阅提案，只有用户明确确认后才执行，并保存 Xero 回执及同一记录的回读结果。
 
@@ -40,8 +42,6 @@ MCP 直接调用 Xero 官方 Accounting API，不在中间复制或维护另一�
 **连接与读取。** 用户完成 Xero 授权并选择 Organisation，Agent 随后可以读取客户、供应商、发票、账单、科目、付款及报表等历史信息。
 
 **Organisation 切换。** 对已授权公司，用户在对话中提出切换后打开一次性链接并明确选择；切换前的提案和旧 binding 不能被带到新公司执行。未授权公司需要重新走 Xero OAuth。
-
-![Organisation 选择页](organisation-switch-live.png)
 
 **分析与核查。** Agent 可以基于应收应付、往来历史、Trial Balance 和 Bank Transaction 等信息进行汇总、差异比较、逾期分析和对账候选判断；最终银行对账、审计或税务结论仍由会计人员在正式流程中完成。
 
@@ -82,7 +82,7 @@ Work 当前使用 `Streamable HTTPS + OAuth`。测试环境的公开配置为：
 
 当前 Work Redirect URI 为 `https://work.zcloak.ai/api/mcp/zcloak-ledger-mcp-xero-demo/oauth/callback`。正式迁移时，开发应以 Work 新环境实际生成的 Redirect URI 为准，将完整地址登记到服务端对应 client 的 allowlist。
 
-当前部署仍为 Personal POC，不能把一个 Client ID 直接当作安全的团队共享连接。短期多人验收应为每个独立测试者分配不同的 client ID、Secret 和 Redirect URI；正式产品则应由 Work 统一管理 client，并补齐签名的用户、工作区和 installation 身份后再关闭 Personal POC 模式。具体填写项和验收步骤见上表中的《Work 配置 Xero MCP》。
+早期多人验收使用同一 Work Client ID、Secret 和 Redirect URI，并开启 `SHARED_TEST_USERS=true`。每个测试者仍需独立完成 Xero OAuth 和 Organisation 选择，服务端按 installation 隔离 token 与账套 binding。该模式适合 5–10 人 UAT，但临时 subject 不是经过 Work 签名的真实用户身份；正式产品仍应由 Work 统一管理 client，并补齐签名的用户、工作区和 installation identity。具体填写项和验收步骤见上表中的《Work 配置 Xero MCP》。
 
 ## 开发接手范围
 
@@ -99,4 +99,4 @@ Work 当前使用 `Streamable HTTPS + OAuth`。测试环境的公开配置为：
 
 Organisation 切换、审计字段、SAFR 映射和 ATP adapter 边界见 [Xero Organisation 切换与治理审计设计](../../docs/XERO-ORGANISATION-SWITCH-AND-GOVERNANCE-AUDIT-ZH.md)。当前未找到 ATP 正式协议规范，代码没有猜测 ATP 字段；后续应在规范确定后新增版本化 mapper/exporter。
 
-当前交接范围仅包含 Xero。仓库内保留的少量 QuickBooks 共享模块用于保持既有运行连续性，不属于本次产品交付范围，后续可由开发团队按正式服务边界拆分。
+当前交接范围和本仓库均只包含 Xero。其他会计平台应使用独立仓库、独立 OAuth 应用、独立部署配置和独立发布流程，不与 Xero 代码混合。

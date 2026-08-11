@@ -65,6 +65,7 @@ services:
       REQUEST_BODY_LIMIT_BYTES: ${REQUEST_BODY_LIMIT_BYTES:-1048576}
       MCP_OAUTH_BROKER_ENABLED: ${MCP_OAUTH_BROKER_ENABLED:-false}
       PERSONAL_POC_ONLY: ${PERSONAL_POC_ONLY:-false}
+      SHARED_TEST_USERS: ${SHARED_TEST_USERS:-false}
       HOST_OAUTH_CLIENTS_JSON: ${HOST_OAUTH_CLIENTS_JSON:-}
       OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS: ${OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS:-}
       OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${OAUTH_ACCESS_TOKEN_TTL_SECONDS:-900}
@@ -108,73 +109,6 @@ services:
     pids_limit: 256
     mem_limit: ${APP_MEMORY_LIMIT:-768m}
     cpus: ${APP_CPU_LIMIT:-1.0}
-    stop_grace_period: 30s
-    logging: *bounded-logging
-
-  quickbooks-mcp:
-    image: ${QUICKBOOKS_APP_IMAGE:-xero-accounting-mcp-demo:local}
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile
-    command: ["npm", "run", "start:quickbooks"]
-    init: true
-    restart: unless-stopped
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    environment:
-      NODE_ENV: production
-      QUICKBOOKS_HOST: 0.0.0.0
-      QUICKBOOKS_PORT: "3000"
-      QUICKBOOKS_PUBLIC_BASE_URL: ${QUICKBOOKS_PUBLIC_BASE_URL:?Set QUICKBOOKS_PUBLIC_BASE_URL in deploy/.env.vps}
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in deploy/.env.vps}
-      QUICKBOOKS_MCP_BEARER_TOKEN: ${QUICKBOOKS_MCP_BEARER_TOKEN:?Set QUICKBOOKS_MCP_BEARER_TOKEN in deploy/.env.vps}
-      QUICKBOOKS_MCP_ALLOWED_ORIGINS: ${QUICKBOOKS_MCP_ALLOWED_ORIGINS:?Set QUICKBOOKS_MCP_ALLOWED_ORIGINS in deploy/.env.vps}
-      QUICKBOOKS_MCP_ALLOWED_HOSTS: ${QUICKBOOKS_MCP_ALLOWED_HOSTS:?Set QUICKBOOKS_MCP_ALLOWED_HOSTS in deploy/.env.vps}
-      QUICKBOOKS_REQUEST_BODY_LIMIT_BYTES: ${QUICKBOOKS_REQUEST_BODY_LIMIT_BYTES:-1048576}
-      QUICKBOOKS_MCP_OAUTH_ENABLED: ${QUICKBOOKS_MCP_OAUTH_ENABLED:-false}
-      QUICKBOOKS_MCP_OAUTH_CLIENT_ID: ${QUICKBOOKS_MCP_OAUTH_CLIENT_ID:-}
-      QUICKBOOKS_MCP_OAUTH_CLIENT_SECRET: ${QUICKBOOKS_MCP_OAUTH_CLIENT_SECRET:-}
-      QUICKBOOKS_MCP_OAUTH_REDIRECT_URIS: ${QUICKBOOKS_MCP_OAUTH_REDIRECT_URIS:-}
-      QUICKBOOKS_MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${QUICKBOOKS_MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS:-3600}
-      QUICKBOOKS_MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS: ${QUICKBOOKS_MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS:-2592000}
-      QUICKBOOKS_CLIENT_ID: ${QUICKBOOKS_CLIENT_ID:?Set QUICKBOOKS_CLIENT_ID in deploy/.env.vps}
-      QUICKBOOKS_CLIENT_SECRET: ${QUICKBOOKS_CLIENT_SECRET:?Set QUICKBOOKS_CLIENT_SECRET in deploy/.env.vps}
-      QUICKBOOKS_ENVIRONMENT: ${QUICKBOOKS_ENVIRONMENT:-sandbox}
-      QUICKBOOKS_MINOR_VERSION: ${QUICKBOOKS_MINOR_VERSION:-}
-      QUICKBOOKS_WRITE_ENABLED: ${QUICKBOOKS_WRITE_ENABLED:-false}
-      QUICKBOOKS_ALLOWED_REALM_ID: ${QUICKBOOKS_ALLOWED_REALM_ID:-}
-      QUICKBOOKS_TOKEN_ENCRYPTION_KEY_B64: ${QUICKBOOKS_TOKEN_ENCRYPTION_KEY_B64:?Set QUICKBOOKS_TOKEN_ENCRYPTION_KEY_B64 in deploy/.env.vps}
-      QUICKBOOKS_DEMO_ACTOR_ID: ${QUICKBOOKS_DEMO_ACTOR_ID:-quickbooks-agent2-test}
-      QUICKBOOKS_LOG_LEVEL: ${QUICKBOOKS_LOG_LEVEL:-info}
-    ports:
-      - target: 3000
-        published: ${QUICKBOOKS_LOOPBACK_PORT:-18003}
-        host_ip: 127.0.0.1
-        protocol: tcp
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777,uid=10001,gid=10001
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "fetch('http://127.0.0.1:3000/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
-      interval: 15s
-      timeout: 5s
-      retries: 8
-      start_period: 30s
-    networks:
-      - egress
-      - data
-    pids_limit: 256
-    mem_limit: ${QUICKBOOKS_MEMORY_LIMIT:-768m}
-    cpus: ${QUICKBOOKS_CPU_LIMIT:-1.0}
     stop_grace_period: 30s
     logging: *bounded-logging
 

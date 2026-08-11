@@ -24,7 +24,7 @@ Accounting Skill
 - define missing information, approval, and exception rules;
 - state the highest truthful business outcome.
 
-The Skill must not depend on `xero_*`, `quickbooks_*`, Google Drive tool names, OAuth fields, provider tenant IDs, folder IDs, workbook ranges, or raw API payloads.
+The Skill must not depend on `xero_*`, Google Drive tool names, OAuth fields, provider tenant IDs, folder IDs, workbook ranges, or raw API payloads.
 
 ### Capability router and domain runtime
 

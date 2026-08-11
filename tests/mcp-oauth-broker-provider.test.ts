@@ -12,6 +12,7 @@ import {
 } from "../src/oauth/mcpOAuthBrokerProvider.js";
 import { McpOAuthTokenService } from "../src/oauth/mcpOAuthTokenService.js";
 import { pkceS256Challenge } from "../src/security/oauthSecrets.js";
+import { keyedOAuthSecretHash } from "../src/security/oauthSecrets.js";
 import { Aes256GcmTokenCipher } from "../src/security/tokenCipher.js";
 import type { BrokerXeroAuthorizationService } from "../src/oauth/brokerXeroAuthorizationService.js";
 import type { XeroClientManager } from "../src/providers/xeroClientManager.js";
@@ -21,7 +22,7 @@ const redirectUri = "https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callb
 const verifier = "v".repeat(43);
 const retryCipher = new Aes256GcmTokenCipher(Buffer.alloc(32, 14));
 
-function config(personalPocOnly = true): AppConfig {
+function config(personalPocOnly = true, sharedTestUsers = false): AppConfig {
   return {
     nodeEnv: "test",
     host: "127.0.0.1",
@@ -69,6 +70,7 @@ function config(personalPocOnly = true): AppConfig {
       revocationEndpoint: "https://xero-mcp.example.test/revoke",
       scopes: MCP_OAUTH_SCOPES,
       personalPocOnly,
+      sharedTestUsers,
       hostClients: [{
         name: "Agent2",
         clientId: "agent2-client",
@@ -439,6 +441,79 @@ describe("MCP OAuth Broker provider", () => {
       redirectUri,
       new URL(brokerConfig.resourceUri),
     )).rejects.toMatchObject({ errorCode: "invalid_grant" });
+  });
+
+  it("gives multiple testers using one Host client independent installation subjects", async () => {
+    const appConfig = config(true, true);
+    const brokerConfig = appConfig.mcpOAuthBroker;
+    if (!brokerConfig?.enabled) throw new Error("test broker must be enabled");
+    const repository = new InMemoryAccountingRepository();
+    const manager = {
+      createOAuthClient: vi.fn((state: string) => ({
+        buildConsentUrl: async () => `https://login.xero.test/authorize?state=${state}`,
+      })),
+    } as unknown as XeroClientManager;
+    const browserOne = "b".repeat(43);
+    const xeroOne = "x".repeat(43);
+    const browserTwo = "d".repeat(43);
+    const xeroTwo = "y".repeat(43);
+    const secrets = [browserOne, xeroOne, browserTwo, xeroTwo];
+    const installationIds = ["installation_shared_1", "installation_shared_2"];
+    const provider = new McpOAuthBrokerProvider({
+      config: appConfig,
+      repository,
+      manager,
+      xeroAuthorization: {} as BrokerXeroAuthorizationService,
+      tokens: new McpOAuthTokenService({
+        config: brokerConfig,
+        repository,
+        cipher: retryCipher,
+        clock: () => now,
+      }),
+      clock: () => now,
+      secretFactory: () => {
+        const value = secrets.shift();
+        if (!value) throw new Error("unexpected secret request");
+        return value;
+      },
+      idFactory: (purpose) => {
+        if (purpose !== "installation") throw new Error("unexpected identifier request");
+        const value = installationIds.shift();
+        if (!value) throw new Error("unexpected installation request");
+        return value;
+      },
+    });
+    const client = await provider.clientsStore.getClient("agent2-client") as OAuthClientInformationFull;
+    const params = {
+      scopes: ["xero.read"],
+      codeChallenge: pkceS256Challenge(verifier),
+      redirectUri,
+      resource: new URL(brokerConfig.resourceUri),
+    };
+
+    await provider.authorize(client, { ...params, state: "tester-one" }, capturedResponse().response);
+    await provider.authorize(client, { ...params, state: "tester-two" }, capturedResponse().response);
+
+    const begin = (browserSecret: string, xeroState: string) => repository.beginBrokerXeroCallback({
+      flowHash: keyedOAuthSecretHash(brokerConfig.tokenHashKey, "browser_flow", browserSecret),
+      browserSessionHash: keyedOAuthSecretHash(brokerConfig.tokenHashKey, "browser_session", browserSecret),
+      xeroStateHash: keyedOAuthSecretHash(brokerConfig.tokenHashKey, "xero_state", xeroState),
+      now,
+    });
+    const first = await begin(browserOne, xeroOne);
+    const second = await begin(browserTwo, xeroTwo);
+
+    expect(first).toMatchObject({
+      clientId: "agent2-client",
+      installationId: "installation_shared_1",
+      subjectId: "shared-test-installation:installation_shared_1",
+    });
+    expect(second).toMatchObject({
+      clientId: "agent2-client",
+      installationId: "installation_shared_2",
+      subjectId: "shared-test-installation:installation_shared_2",
+    });
+    expect(first?.subjectId).not.toBe(second?.subjectId);
   });
 
   it("keeps the non-POC Host handoff on the existing direct 302 path", () => {

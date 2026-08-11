@@ -32,9 +32,6 @@ GATE_MAY_BE_OPEN=0
 ENV_TEMP_FILE=""
 UNIT_TEMP_FILE=""
 BOOT_DEPENDENCY_SNAPSHOT_VALID=0
-BOOT_QB_ID=""
-BOOT_QB_IMAGE=""
-BOOT_QB_STARTED=""
 BOOT_PG_ID=""
 BOOT_PG_IMAGE=""
 BOOT_PG_STARTED=""
@@ -423,22 +420,17 @@ verify_xero_restart_policy() {
 }
 
 write_baseline() {
-  local app_id qb_id pg_id env_hash tmp
+  local app_id pg_id env_hash tmp
   app_id="$(green_compose ps -q accounting-mcp-green)"
-  qb_id="$(main_compose ps -q quickbooks-mcp)"
   pg_id="$(main_compose ps -q postgres)"
   test -n "$app_id" || fail "BASELINE_XERO_CONTAINER_MISSING"
-  test -n "$qb_id" || fail "BASELINE_QUICKBOOKS_CONTAINER_MISSING"
   test -n "$pg_id" || fail "BASELINE_POSTGRES_CONTAINER_MISSING"
   env_hash="$(sha256sum "$ENV_FILE" | awk '{print $1}')"
   tmp="$(mktemp "${BASELINE_FILE}.XXXXXX")"
   chmod 600 "$tmp"
-  printf 'ENV_HASH=%s\nAPP_IMAGE=%s\nQB_ID=%s\nQB_IMAGE=%s\nQB_STARTED=%s\nPG_ID=%s\nPG_IMAGE=%s\nPG_STARTED=%s\n' \
+  printf 'ENV_HASH=%s\nAPP_IMAGE=%s\nPG_ID=%s\nPG_IMAGE=%s\nPG_STARTED=%s\n' \
     "$env_hash" \
     "$(docker inspect -f '{{.Image}}' "$app_id")" \
-    "$qb_id" \
-    "$(docker inspect -f '{{.Image}}' "$qb_id")" \
-    "$(docker inspect -f '{{.State.StartedAt}}' "$qb_id")" \
     "$pg_id" \
     "$(docker inspect -f '{{.Image}}' "$pg_id")" \
     "$(docker inspect -f '{{.State.StartedAt}}' "$pg_id")" >"$tmp"
@@ -448,18 +440,14 @@ write_baseline() {
 
 capture_boot_dependency_snapshot() {
   BOOT_DEPENDENCY_SNAPSHOT_VALID=0
-  BOOT_QB_ID="$(main_compose ps -a -q quickbooks-mcp 2>/dev/null || true)"
   BOOT_PG_ID="$(main_compose ps -a -q postgres 2>/dev/null || true)"
-  if test -z "$BOOT_QB_ID" || test -z "$BOOT_PG_ID"; then
+  if test -z "$BOOT_PG_ID"; then
     audit "BOOT_DEPENDENCY_SNAPSHOT" "INCOMPLETE"
     return 0
   fi
-  BOOT_QB_IMAGE="$(docker inspect -f '{{.Image}}' "$BOOT_QB_ID" 2>/dev/null || true)"
-  BOOT_QB_STARTED="$(docker inspect -f '{{.State.StartedAt}}' "$BOOT_QB_ID" 2>/dev/null || true)"
   BOOT_PG_IMAGE="$(docker inspect -f '{{.Image}}' "$BOOT_PG_ID" 2>/dev/null || true)"
   BOOT_PG_STARTED="$(docker inspect -f '{{.State.StartedAt}}' "$BOOT_PG_ID" 2>/dev/null || true)"
-  if test -z "$BOOT_QB_IMAGE" || test -z "$BOOT_QB_STARTED" ||
-    test -z "$BOOT_PG_IMAGE" || test -z "$BOOT_PG_STARTED"; then
+  if test -z "$BOOT_PG_IMAGE" || test -z "$BOOT_PG_STARTED"; then
     audit "BOOT_DEPENDENCY_SNAPSHOT" "INCOMPLETE"
     return 0
   fi
@@ -469,11 +457,6 @@ capture_boot_dependency_snapshot() {
 
 verify_boot_dependency_continuity() {
   test "$BOOT_DEPENDENCY_SNAPSHOT_VALID" -eq 1 || fail "BOOT_DEPENDENCY_SNAPSHOT_INVALID"
-  test "$(main_compose ps -a -q quickbooks-mcp)" = "$BOOT_QB_ID" || fail "BOOT_QUICKBOOKS_CONTAINER_CHANGED"
-  test "$(docker inspect -f '{{.Image}}' "$BOOT_QB_ID")" = "$BOOT_QB_IMAGE" ||
-    fail "BOOT_QUICKBOOKS_IMAGE_CHANGED"
-  test "$(docker inspect -f '{{.State.StartedAt}}' "$BOOT_QB_ID")" = "$BOOT_QB_STARTED" ||
-    fail "BOOT_QUICKBOOKS_RESTARTED"
   test "$(main_compose ps -a -q postgres)" = "$BOOT_PG_ID" || fail "BOOT_POSTGRES_CONTAINER_CHANGED"
   test "$(docker inspect -f '{{.Image}}' "$BOOT_PG_ID")" = "$BOOT_PG_IMAGE" ||
     fail "BOOT_POSTGRES_IMAGE_CHANGED"
@@ -487,19 +470,14 @@ read_baseline_value() {
 }
 
 verify_continuity() {
-  local app_id qb_id pg_id
+  local app_id pg_id
   test -f "$BASELINE_FILE" || fail "BASELINE_FILE_MISSING"
   test ! -L "$BASELINE_FILE" || fail "BASELINE_FILE_MUST_NOT_BE_SYMLINK"
   app_id="$(green_compose ps -q accounting-mcp-green)"
-  qb_id="$(main_compose ps -q quickbooks-mcp)"
   pg_id="$(main_compose ps -q postgres)"
   test -n "$app_id" || fail "CONTINUITY_XERO_CONTAINER_MISSING"
-  test -n "$qb_id" || fail "CONTINUITY_QUICKBOOKS_CONTAINER_MISSING"
   test -n "$pg_id" || fail "CONTINUITY_POSTGRES_CONTAINER_MISSING"
   test "$(docker inspect -f '{{.Image}}' "$app_id")" = "$(read_baseline_value APP_IMAGE)" || fail "CONTINUITY_XERO_IMAGE_CHANGED"
-  test "$qb_id" = "$(read_baseline_value QB_ID)" || fail "CONTINUITY_QUICKBOOKS_CONTAINER_CHANGED"
-  test "$(docker inspect -f '{{.Image}}' "$qb_id")" = "$(read_baseline_value QB_IMAGE)" || fail "CONTINUITY_QUICKBOOKS_IMAGE_CHANGED"
-  test "$(docker inspect -f '{{.State.StartedAt}}' "$qb_id")" = "$(read_baseline_value QB_STARTED)" || fail "CONTINUITY_QUICKBOOKS_RESTARTED"
   test "$pg_id" = "$(read_baseline_value PG_ID)" || fail "CONTINUITY_POSTGRES_CONTAINER_CHANGED"
   test "$(docker inspect -f '{{.Image}}' "$pg_id")" = "$(read_baseline_value PG_IMAGE)" || fail "CONTINUITY_POSTGRES_IMAGE_CHANGED"
   test "$(docker inspect -f '{{.State.StartedAt}}' "$pg_id")" = "$(read_baseline_value PG_STARTED)" || fail "CONTINUITY_POSTGRES_RESTARTED"
@@ -657,7 +635,6 @@ open_gate() {
   audit "RELEASE" "0.3.1-20260810.1"
   audit "RESOURCE" "$EXPECTED_RESOURCE"
   audit "XERO_IMAGE" "PINNED"
-  audit "QUICKBOOKS_CONTINUITY" "PASS"
   audit "POSTGRES_CONTINUITY" "PASS"
   audit "HEALTH" "PASS"
 }
@@ -681,7 +658,6 @@ boot_close_gate() {
   audit "RELEASE" "0.3.1-20260810.1"
   audit "RESOURCE" "$EXPECTED_RESOURCE"
   audit "XERO_IMAGE" "PINNED"
-  audit "QUICKBOOKS_CONTINUITY" "PASS"
   audit "POSTGRES_CONTINUITY" "PASS"
   audit "LOOPBACK_HEALTH" "PASS"
 }
@@ -706,7 +682,6 @@ close_gate() {
   audit "RELEASE" "0.3.1-20260810.1"
   audit "RESOURCE" "$EXPECTED_RESOURCE"
   audit "XERO_IMAGE" "PINNED"
-  audit "QUICKBOOKS_CONTINUITY" "PASS"
   audit "POSTGRES_CONTINUITY" "PASS"
   audit "HEALTH" "PASS"
 }

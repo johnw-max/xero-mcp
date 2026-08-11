@@ -16,9 +16,7 @@ Current profiles:
 
 - [connector-profiles/accountingv2-drive-demo.md](connector-profiles/accountingv2-drive-demo.md): source/work-store Demo profile; no formal-ledger posting.
 - [connector-profiles/xero.md](connector-profiles/xero.md): Xero ledger adapter profile and current evidence boundary.
-- [connector-profiles/quickbooks.md](connector-profiles/quickbooks.md): QuickBooks ledger adapter profile and current evidence boundary.
-
-An Agent may compose profiles. For example, it may read source evidence through the Drive profile and execute an approved supplier bill through a QuickBooks or Xero ledger profile. Receipts retain their own destination role; they are never merged into a generic `completed` result.
+An Agent may compose profiles. For example, it may read source evidence through the Drive profile and prepare an approved supplier bill through the Xero ledger profile. Receipts retain their own destination role; they are never merged into a generic `completed` result.
 
 Tool names, URLs, OAuth setup, tenant bindings, and environment-specific UAT evidence belong in the chosen profile or deployment configuration, not in the business Skills or generic Agent instructions.
 

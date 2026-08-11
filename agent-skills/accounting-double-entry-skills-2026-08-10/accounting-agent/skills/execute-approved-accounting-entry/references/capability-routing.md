@@ -95,7 +95,7 @@ A connection manifest should return a safe connection reference, destination rol
 - With only a file/storage connector, read or preserve the source and optionally save the proposal/handoff. Never use a file or spreadsheet row as a journal receipt.
 - With an accounting connector in read-only mode, use live company, account, tax, and history data to improve the proposal but stop before write.
 - With a formal accounting connector, prefer its native business object. A provider draft remains unposted when that state does not affect the ledger.
-- When source evidence is in Google Drive and the formal ledger is QuickBooks or Xero, use both connectors in one workflow: Drive for evidence, the authorized ledger connector for the accounting write and read-back.
+- When source evidence is in Google Drive and the formal ledger is Xero, use both connectors in one workflow: Drive for evidence, the authorized Xero connector for the accounting action and read-back.
 
 ## 8. Deterministic server controls
 

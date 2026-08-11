@@ -76,6 +76,7 @@ describe("MCP OAuth Broker configuration", () => {
       revocationEndpoint: "https://xero-mcp.example.test/revoke",
       scopes: MCP_OAUTH_SCOPES,
       personalPocOnly: false,
+      sharedTestUsers: false,
     });
   });
 
@@ -97,6 +98,7 @@ describe("MCP OAuth Broker configuration", () => {
       revocationEndpoint: "https://xero-mcp.example.test/revoke",
       scopes: ["xero.read", "xero.draft.write"],
       personalPocOnly: true,
+      sharedTestUsers: false,
       missingResourceCompatClientIds: ["agent2-accounting-mcp"],
       accessTokenTtlSeconds: 900,
       refreshTokenTtlSeconds: 2_592_000,
@@ -124,6 +126,17 @@ describe("MCP OAuth Broker configuration", () => {
     expect(config.xeroWriteEnabled).toBe(true);
     expect(config.xeroAllowedTenantId).toBeUndefined();
     expect(config.mcpOAuthBroker?.enabled).toBe(true);
+  });
+
+  it("enables isolated multi-user early UAT behind an explicit test-only flag", () => {
+    const broker = loadConfig(enabledEnv({ SHARED_TEST_USERS: "true" })).mcpOAuthBroker;
+
+    expect(broker?.enabled && broker.sharedTestUsers).toBe(true);
+    expect(() => loadConfig(enabledEnv({
+      PERSONAL_POC_ONLY: "false",
+      SHARED_TEST_USERS: "true",
+      OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS: "",
+    }))).toThrow(/SHARED_TEST_USERS.*PERSONAL_POC_ONLY/i);
   });
 
   it("still requires the global tenant allowlist for legacy shared-bearer writes", () => {
@@ -213,6 +226,7 @@ describe("MCP OAuth Broker configuration", () => {
 
   it("accepts only explicit boolean flag values", () => {
     expect(() => loadConfig(validEnv({ PERSONAL_POC_ONLY: "yes" }))).toThrow(/PERSONAL_POC_ONLY/i);
+    expect(() => loadConfig(validEnv({ SHARED_TEST_USERS: "yes" }))).toThrow(/SHARED_TEST_USERS/i);
     expect(() => loadConfig(validEnv({ MCP_OAUTH_BROKER_ENABLED: "1" }))).toThrow(
       /MCP_OAUTH_BROKER_ENABLED/i,
     );

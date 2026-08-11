@@ -78,6 +78,12 @@ interface McpOAuthBrokerBaseConfig {
   revocationEndpoint: string;
   scopes: readonly McpOAuthScope[];
   personalPocOnly: boolean;
+  /**
+   * Early-UAT mode: one registered Host client may create multiple isolated
+   * installation grants. The Host credential identifies the application, not
+   * a human; each grant receives a server-generated installation subject.
+   */
+  sharedTestUsers?: boolean;
 }
 
 export type McpOAuthBrokerConfig = McpOAuthBrokerBaseConfig & (
@@ -211,6 +217,7 @@ const envSchema = z.object({
   OAUTH_TOKEN_HASH_KEY_B64: z.string().optional(),
   OAUTH_COOKIE_STATE_KEY_B64: z.string().optional(),
   PERSONAL_POC_ONLY: booleanFlag,
+  SHARED_TEST_USERS: booleanFlag,
   DEMO_ACTOR_ID: z.string().min(1).max(128).default("demo-operator"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
@@ -339,6 +346,7 @@ function buildMcpOAuthBrokerConfig(
     revocationEndpoint: `${value.PUBLIC_BASE_URL}/revoke`,
     scopes: MCP_OAUTH_SCOPES,
     personalPocOnly: value.PERSONAL_POC_ONLY,
+    sharedTestUsers: value.SHARED_TEST_USERS,
   } satisfies McpOAuthBrokerBaseConfig;
 
   if (!value.MCP_OAUTH_BROKER_ENABLED) {
@@ -375,6 +383,11 @@ function buildMcpOAuthBrokerConfig(
   if (missingResourceCompatClientIds.length > 0 && !value.PERSONAL_POC_ONLY) {
     throw invalidBrokerConfiguration(
       "OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS is allowed only when PERSONAL_POC_ONLY=true",
+    );
+  }
+  if (value.SHARED_TEST_USERS && !value.PERSONAL_POC_ONLY) {
+    throw invalidBrokerConfiguration(
+      "SHARED_TEST_USERS=true requires PERSONAL_POC_ONLY=true because no signed Host user identity is available",
     );
   }
   const tokenHashKey = parseBrokerKey("OAUTH_TOKEN_HASH_KEY_B64", value.OAUTH_TOKEN_HASH_KEY_B64);

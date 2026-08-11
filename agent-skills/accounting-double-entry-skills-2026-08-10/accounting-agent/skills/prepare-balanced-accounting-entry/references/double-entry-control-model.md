@@ -30,7 +30,7 @@ Treat contra accounts, tax accounts, foreign exchange, accumulated depreciation,
 
 ## 3. Choose the accounting route first
 
-Prefer native accounting-system transactions for routine operational events because formal accounting systems generate the underlying double-entry journals from approved bills, invoices, payments, expenses, and bank transactions. Xero and QuickBooks are examples, not Skill dependencies.
+Prefer native accounting-system transactions for routine operational events because formal accounting systems generate the underlying double-entry journals from approved bills, invoices, payments, expenses, and bank transactions. Xero is the adapter shipped here, not a Skill dependency.
 
 Use a manual-journal candidate sparingly for events such as:
 
@@ -114,5 +114,3 @@ For bank reconciliation, compare the book balance with the statement balance for
 - Xero Journal report: approved business transactions create double-entry postings in the general ledger: https://central.xero.com/s/article/Journal-report
 - Xero manual journals: a manual journal needs two or more lines and total debits must equal total credits before posting: https://central.xero.com/s/article/Add-import-and-post-manual-journals-US
 - Xero bank reconciliation: compare accounting records with bank statements and explain reconciling items: https://www.xero.com/us/glossary/what-is-bank-reconciliation/
-- QuickBooks journal entries: total debits must equal total credits: https://quickbooks.intuit.com/learn-support/en-us/help-article/accounting-bookkeeping/create-journal-entry-quickbooks-online/L6Bzy9mT9_US_en_US
-- QuickBooks month-end close: review, reconcile, adjust, report, and finalize monthly activity: https://quickbooks.intuit.com/r/bookkeeping/month-end-close/

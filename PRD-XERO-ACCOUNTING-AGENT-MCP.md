@@ -87,7 +87,7 @@ V1 要证明一名会计人员无需接触 Token、Tenant ID、InvoiceID 等技�
 - V1 不提供自动付款、自动报税、自动月结、自动审计结论；
 - V1 不允许 Agent 自主 Authorise、Void、Delete、Manual Journal 或创建银行交易；
 - 不提供任意 URL、任意 Xero Endpoint、任意 HTTP Header 或原始 `where` 条件的通用执行工具；
-- 在 Xero V1 验收前不同时扩展 QuickBooks，以免两个不完整连接并行失控。
+- 在 Xero V1 验收前不同时扩展其他会计 Provider，以免多个不完整连接并行失控。
 
 ## 5. Market Segments
 
@@ -124,7 +124,7 @@ V1 要证明一名会计人员无需接触 Token、Tenant ID、InvoiceID 等技�
 ### 6.3 对产品平台
 
 - 形成可复用的会计连接、材料证据、审批和回读模型；
-- 后续可在相同安全模型下扩展 QuickBooks，而不是为每个平台重做一套 Agent 工作流；
+- 后续可在相同安全模型下扩展其他 Provider，而不是为每个平台重做一套 Agent 工作流；
 - MCP 工具保持业务语义清晰、输入有界，便于不同模型稳定调用。
 
 ## 7. Solution
@@ -285,6 +285,6 @@ MCP 数据库只保存连接与控制面数据：
 - Payment、Credit Note、银行数据只读和对账建议；
 - 月结工作包、批量材料和批量草稿；
 - Webhook 驱动的状态更新；
-- 在相同连接与策略模型下评估 QuickBooks Provider。
+- 在相同连接与策略模型下评估其他会计 Provider。
 
 任何 V2 能力必须沿用最小权限、来源证据、人工审批、防重复、精确回读和租户隔离，不得通过开放通用 Xero API 工具绕过这些控制。

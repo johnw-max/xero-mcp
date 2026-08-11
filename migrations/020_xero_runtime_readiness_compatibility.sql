@@ -1,7 +1,7 @@
 -- Preserve the document-type/DRAFT-aware 0.3 duplicate guards under explicit
 -- versioned names, then restore the five distinct catalog definitions checked
--- by Xero 0.2.13 and the QuickBooks 0.2.12 shared repository. Both generations
--- remain valid and enforced so a rolling deployment can run either binary.
+-- by Xero 0.2.13. Both generations remain valid and enforced so a rolling
+-- Xero deployment can run either binary.
 --
 -- Migration execution is transactional. If any legacy definition conflicts
 -- with rows admitted since 016, index creation fails closed and all preceding

@@ -207,7 +207,7 @@ docker compose \
 
 迁移是显式步骤：App 启动不会偷偷建表。升级时同样先审查迁移兼容性，再执行 `npm run migrate`。
 
-本发布的 `020_xero_runtime_readiness_compatibility.sql` 在保留五项 0.3 `v030` 强索引的同时，恢复旧 Xero 0.2.13 与 QuickBooks 0.2.12 shared repository 精确要求的五个原名索引。只读 preflight 必须确认 `actor + tenant + request_id + create_operation`、旧 active states 下的 `tenant + source`、旧 active states 下的 `tenant + contact + reference` 三类冲突均为 `0`，包括跨 `document_type` 与 ACCREC；后两类 tenant 检查也覆盖 actor-scoped 旧索引，否则停止发布。旧 supplier-reference 定义没有 `document_type`，因此这是会临时收紧 ACCREC reference 复用的**临时兼容约束**。若不能接受，只能先升级旧 Xero readiness 或停止并行旧 Xero，不能靠数据库伪影绕过 exact unique/valid/ready 检查；QuickBooks runtime 不需要修改。
+本发布的 `020_xero_runtime_readiness_compatibility.sql` 在保留五项 0.3 `v030` 强索引的同时，恢复旧 Xero 0.2.13 精确要求的五个原名索引。只读 preflight 必须确认 `actor + tenant + request_id + create_operation`、旧 active states 下的 `tenant + source`、旧 active states 下的 `tenant + contact + reference` 三类冲突均为 `0`，包括跨 `document_type` 与 ACCREC；否则停止发布。旧 supplier-reference 定义没有 `document_type`，因此这是会临时收紧 ACCREC reference 复用的**临时兼容约束**。若不能接受，只能先升级旧 Xero readiness 或停止并行旧 Xero，不能靠数据库伪影绕过 exact unique/valid/ready 检查。
 
 确认 Nginx 已通过引导证书启动后，签发并安装正式证书：
 

@@ -95,9 +95,8 @@ function normalizedDefinition(value: string): string {
 }
 
 /**
- * Fail closed unless all five distinct legacy indexes checked by Xero 0.2.13
- * and the QuickBooks 0.2.12 shared repository, plus their five document-type/
- * DRAFT-aware v030 successors, have exact keys and predicates. Index names
+ * Fail closed unless all five distinct legacy indexes checked by Xero 0.2.13,
+ * plus their five document-type/DRAFT-aware v030 successors, have exact keys and predicates. Index names
  * alone are not sufficient because PostgreSQL can retain a stale definition.
  */
 export function hasExactXeroDuplicateIndexes(rows: XeroDuplicateIndexCatalogRow[]): boolean {
