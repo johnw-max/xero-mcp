@@ -20,7 +20,7 @@ describe("Xero 0.4 runtime attestation", () => {
       accountingCaseReadbackValidator: "accounting-case-observed-line-readback-v4",
       xeroNativeRouteContract: "xero-native-route-contract-v1",
       xeroContactIdentityContract: "xero-contact-identity-v3",
-      requiredMigration: "040_xero_native_idempotency_recovery_claim.sql",
+      requiredMigration: "041_accounting_case_source_case_binding.sql",
       publicToolProfile: "xero-accounting-case-business-intake-v4",
       executionAuthority: "STANDING_DELEGATION",
       writeCompletion: "PROVIDER_ID_RECEIPT_EXACT_READBACK",
@@ -29,9 +29,12 @@ describe("Xero 0.4 runtime attestation", () => {
       resolve(process.cwd(), "migrations", XERO_RELEASE_ATTESTATION.requiredMigration),
       "utf8",
     );
-    expect(migration).toContain("native_recovery_claim jsonb");
-    expect(migration).toContain("XERO_NATIVE_IDEMPOTENCY_RECOVERY_CLAIM");
-    expect(migration).toContain("native_recovery_claim_independent_check");
+    // The attested head must actually define what it claims, not merely exist.
+    // Head 041 is the cross-MCP source-case binding: its primary key is what
+    // makes one upstream case unable to span two Xero tenants.
+    expect(migration).toContain("accounting_case_source_case_bindings");
+    expect(migration).toContain("PRIMARY KEY (workspace_id, source_system, source_case_ref_hash)");
+    expect(migration).toContain("source_case_claim");
     expect(hashObject(XERO_RELEASE_ATTESTATION)).toMatch(/^[a-f0-9]{64}$/u);
   });
 

@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.1-accounting-case",
   "releaseVersion": "0.4.0-rc.1",
-  "requiredMigration": "040_xero_native_idempotency_recovery_claim.sql",
+  "requiredMigration": "041_accounting_case_source_case_binding.sql",
   "authorityModel": "STANDING_DELEGATION",
   "expectedTools": [
     "xero_connection_status",
@@ -79,7 +79,9 @@
     {
       "id": "read.accounts-with-filter",
       "tool": "xero_list_accounts",
-      "arguments": { "account_class": "EXPENSE" },
+      "arguments": {
+        "account_class": "EXPENSE"
+      },
       "expectedServiceMethod": "listAccounts"
     },
     {
@@ -100,7 +102,9 @@
     {
       "id": "read.trial-balance",
       "tool": "xero_get_trial_balance",
-      "arguments": { "date": "2026-08-06" },
+      "arguments": {
+        "date": "2026-08-06"
+      },
       "expectedServiceMethod": "getTrialBalance"
     },
     {
@@ -144,7 +148,10 @@
     {
       "id": "case.status",
       "tool": "xero_get_accounting_case_status",
-      "arguments": { "case_id": "contract-case-001", "case_version": 1 },
+      "arguments": {
+        "case_id": "contract-case-001",
+        "case_version": 1
+      },
       "expectedServiceMethod": "accountingCase.status"
     }
   ],
@@ -152,13 +159,17 @@
     {
       "id": "schema.no-input-rejects-routing",
       "tool": "xero_connection_status",
-      "arguments": { "tenant_id": "caller-controlled" },
+      "arguments": {
+        "tenant_id": "caller-controlled"
+      },
       "forbiddenServiceMethod": "connectionStatus"
     },
     {
       "id": "schema.invoice-list-rejects-raw-where",
       "tool": "xero_list_invoices",
-      "arguments": { "where": "Status==\"PAID\"" },
+      "arguments": {
+        "where": "Status==\"PAID\""
+      },
       "forbiddenServiceMethod": "listInvoices"
     },
     {
@@ -168,7 +179,9 @@
         "case_id": "contract-case-001",
         "case_version": 1,
         "request_id": "contract-execute-invalid-payload",
-        "payload": { "reference": "MODEL-CONTROLLED" }
+        "payload": {
+          "reference": "MODEL-CONTROLLED"
+        }
       },
       "forbiddenServiceMethod": "accountingCase.execute"
     },
@@ -186,7 +199,10 @@
     {
       "id": "schema.case-status-rejects-zero-version",
       "tool": "xero_get_accounting_case_status",
-      "arguments": { "case_id": "contract-case-001", "case_version": 0 },
+      "arguments": {
+        "case_id": "contract-case-001",
+        "case_version": 0
+      },
       "forbiddenServiceMethod": "accountingCase.status"
     }
   ]

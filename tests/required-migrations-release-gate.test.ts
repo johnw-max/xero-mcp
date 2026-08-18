@@ -15,7 +15,7 @@ import {
 } from "../scripts/release/release-bundle-lib.mjs";
 
 describe("required migration release manifest", () => {
-  it("defines the ordered 025-040 release contract and derives its attested head", () => {
+  it("defines the ordered 025-041 release contract and derives its attested head", () => {
     expect(REQUIRED_MIGRATIONS).toEqual([
       "025_xero_ledger_target_sessions.sql",
       "026_xero_autonomous_authorization_receipts.sql",
@@ -33,6 +33,7 @@ describe("required migration release manifest", () => {
       "038_accounting_case_mutation_projection_convergence.sql",
       "039_accounting_case_expired_target_residual_continuation.sql",
       "040_xero_native_idempotency_recovery_claim.sql",
+      "041_accounting_case_source_case_binding.sql",
     ]);
     expect(REQUIRED_MIGRATION_HEAD).toBe(REQUIRED_MIGRATIONS.at(-1));
     expect(XERO_RELEASE_ATTESTATION.requiredMigration).toBe(REQUIRED_MIGRATION_HEAD);

@@ -16,6 +16,7 @@
     "037_accounting_case_contact_prepared_reservation_recovery.sql",
     "038_accounting_case_mutation_projection_convergence.sql",
     "039_accounting_case_expired_target_residual_continuation.sql",
-    "040_xero_native_idempotency_recovery_claim.sql"
+    "040_xero_native_idempotency_recovery_claim.sql",
+    "041_accounting_case_source_case_binding.sql"
   ]
 }

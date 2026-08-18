@@ -59,7 +59,7 @@ describe("current 0.4.0-rc.1 release materials", () => {
     expect(allowlist).toEqual([...TOOL_ALLOWLIST]);
     expect(expected).toEqual(allowlist);
     expect(contract.releaseVersion).toBe("0.4.0-rc.1");
-    expect(contract.requiredMigration).toBe("040_xero_native_idempotency_recovery_claim.sql");
+    expect(contract.requiredMigration).toBe("041_accounting_case_source_case_binding.sql");
     expect(contract.requiredMigration).toBe(XERO_RELEASE_ATTESTATION.requiredMigration);
     expect(contract.authorityModel).toBe("STANDING_DELEGATION");
     expect(contract.expectedTools).toEqual(allowlist);
