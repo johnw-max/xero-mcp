@@ -1,0 +1,3436 @@
+{
+  "schema_version": "1.0",
+  "kind": "LOCAL_ACCEPTANCE_SOURCE_SNAPSHOT",
+  "source_fingerprint": {
+    "algorithm": "sha256-path-size-executable-content-v2",
+    "file_count": 566,
+    "sha256": "dbf0ce4da0818e217a6dc76a432b11d3e35e5be6a0ae4360781f86498395fd74",
+    "roots": [
+      ".dockerignore",
+      ".gitignore",
+      "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+      "README.md",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "tsconfig.build.json",
+      "agent-skills",
+      "config",
+      "deploy",
+      "docs",
+      "handoff",
+      "harness",
+      "migrations",
+      "schemas",
+      "scripts",
+      "src",
+      "tests"
+    ]
+  },
+  "files": [
+    {
+      "path": ".dockerignore",
+      "size_bytes": 116,
+      "executable": false,
+      "sha256": "fda0ce6bafc4827b053837cab5a829990aaf6a80ef52a38542acbcf0b881d626"
+    },
+    {
+      "path": ".gitignore",
+      "size_bytes": 131,
+      "executable": false,
+      "sha256": "71378b2204d47d8c16788618674a5006d3ba672de230ca6c3655925f4759d3de"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/accounting-follow-up-drafting/agents/openai.yaml",
+      "size_bytes": 234,
+      "executable": false,
+      "sha256": "c2510ffe7972a9ab3f728b1d63f458c80e6da10ebe726e0ecf65bc16a8659fd9"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/accounting-follow-up-drafting/SKILL.md",
+      "size_bytes": 10702,
+      "executable": false,
+      "sha256": "7ed5fa96a84d82646a952fdde1cdf577d5b8a8651cb72a74858dbfeffed91d7d"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/accounting-material-intake/agents/openai.yaml",
+      "size_bytes": 244,
+      "executable": false,
+      "sha256": "2b9bd63f60bc21808adefdaa5fd99112b62bda27a4dcb37fc41ee771af15b5a1"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/accounting-material-intake/SKILL.md",
+      "size_bytes": 7672,
+      "executable": false,
+      "sha256": "c97ab632aad6bfb2be45319fffa8332ef116119f7c2aa952291e3c6fd0251e41"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/accounting-workflow-coordinator/agents/openai.yaml",
+      "size_bytes": 267,
+      "executable": false,
+      "sha256": "20d97a885e6b5e73f8dfc25932d60f3d3c97c6d340d52b783305cb1fbfe9b7db"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/accounting-workflow-coordinator/SKILL.md",
+      "size_bytes": 17566,
+      "executable": false,
+      "sha256": "cdf7b0cf8899f70666adc0c7f6a4cdf7693e9319d71a2d559e463654fd5d60e9"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/ap-reconciliation/agents/openai.yaml",
+      "size_bytes": 238,
+      "executable": false,
+      "sha256": "c1af859dda073757f52c01b21500f2f9c2ed215e0219f5ac9b94f6cd9e813796"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/ap-reconciliation/SKILL.md",
+      "size_bytes": 9470,
+      "executable": false,
+      "sha256": "5f1184c929fe60eded73d3d92795bce4889e36f30761e3466ec62d4c299b1a3a"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/ar-reconciliation/agents/openai.yaml",
+      "size_bytes": 235,
+      "executable": false,
+      "sha256": "530288b7da44e604596945a39824eedfb710f218c01bed914991929ef54026b5"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/ar-reconciliation/SKILL.md",
+      "size_bytes": 9912,
+      "executable": false,
+      "sha256": "dedc00f9ba9bc537f0ae586a8fa03ce098b25d2a18a88c115d2a7e3aaeaffcdf"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/cash-reconciliation/agents/openai.yaml",
+      "size_bytes": 221,
+      "executable": false,
+      "sha256": "6d2c25eb57a2dea6d14cd1ac3264bc17ddabd7f59a2b1c2ec90293e9e39390c7"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/cash-reconciliation/SKILL.md",
+      "size_bytes": 12031,
+      "executable": false,
+      "sha256": "55e3db8310c67bfcd7ac5c71c8a0087bd73a99233f80de90677a60d401edd964"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/close-readiness-handoff/agents/openai.yaml",
+      "size_bytes": 222,
+      "executable": false,
+      "sha256": "04be0a930814bc27ad456c196ca3f2059ee4fa43ac3523eda7370c9a78a77989"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/close-readiness-handoff/SKILL.md",
+      "size_bytes": 11452,
+      "executable": false,
+      "sha256": "8460a4dde364df0bfcb8631385afd82cae48cdbb5756151062208747758541dd"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/execute-approved-accounting-entry/agents/openai.yaml",
+      "size_bytes": 319,
+      "executable": false,
+      "sha256": "10eade69c67215c0a4c0164b0813cecc410700b3b7958a97b7c4c377c3238cfc"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/execute-approved-accounting-entry/references/capability-routing.md",
+      "size_bytes": 6754,
+      "executable": false,
+      "sha256": "40063f10f05d66a995ba0034b51657029a8d22ef7bb2da37498dbfb9d0bae574"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/execute-approved-accounting-entry/SKILL.md",
+      "size_bytes": 10086,
+      "executable": false,
+      "sha256": "c9823c4f12f9009b204763a1cff68573b5f467bb97e421053193049790a7d495"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/expense-reconciliation/agents/openai.yaml",
+      "size_bytes": 250,
+      "executable": false,
+      "sha256": "defef4893519f1e170498d254e8aa0aaedf6617151f19b4be10b45f9e8cccf54"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/expense-reconciliation/SKILL.md",
+      "size_bytes": 12217,
+      "executable": false,
+      "sha256": "27792b865ab335011bc46a34f1a7130f3adba88112ecf4ef12de16d37c66b35e"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/finalize-management-close/agents/openai.yaml",
+      "size_bytes": 229,
+      "executable": false,
+      "sha256": "b62ca0bdc4ab1e8f1851972756d57e94b4334945544c70d4ad17b6c916178b0e"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/finalize-management-close/references/finalization-boundary.md",
+      "size_bytes": 931,
+      "executable": false,
+      "sha256": "077b2cb26afa893e1fd7c7d7e142e5dcb1a893fe9b5f82cb59e45683b301e13b"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/finalize-management-close/SKILL.md",
+      "size_bytes": 4290,
+      "executable": false,
+      "sha256": "434657f1c3a3e8be0f5f8466d8431fec7b31d1983a6547bd7b9a6140c6455d2f"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/prepare-balanced-accounting-entry/agents/openai.yaml",
+      "size_bytes": 284,
+      "executable": false,
+      "sha256": "009f6d5787fe432451b2d51f75603c1e9f672f679ac60410a6d0b913cf04f29d"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/prepare-balanced-accounting-entry/references/double-entry-control-model.md",
+      "size_bytes": 7024,
+      "executable": false,
+      "sha256": "25c6e386eae9197a31dbee55e80e053598f1247182c5ac8fb305ab472a90ef04"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/accounting-agent/skills/prepare-balanced-accounting-entry/SKILL.md",
+      "size_bytes": 8382,
+      "executable": false,
+      "sha256": "df07c58fca6aef855115d995260756c8b09365cfb7a7e4bac673c665e4a6d573"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/agent-config/accounting-agent-instructions.md",
+      "size_bytes": 11414,
+      "executable": false,
+      "sha256": "3445551d71da4819294d2fe28c984e6fa8f9d160fb996407ae754fe36c43cddb"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/agent-config/capability-contract.md",
+      "size_bytes": 13639,
+      "executable": false,
+      "sha256": "7b37135cb388a7d4333e0c00b1e1a9fdf90e4933b67850f6f6d3b45cae8ea6c8"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/agent-config/connector-profiles/accountingv2-drive-demo.md",
+      "size_bytes": 3888,
+      "executable": false,
+      "sha256": "1ffa5951300f5c788570ec38aa0b72af5ecb55046fe29fa367e55d19a291e3ab"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/agent-config/connector-profiles/xero.md",
+      "size_bytes": 6859,
+      "executable": false,
+      "sha256": "c8f1752a951ed34f74e7684d409361745d45baa2564e49c4a2dfcb1f43c961c1"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/agent-config/mcp-tool-allowlist.md",
+      "size_bytes": 2351,
+      "executable": false,
+      "sha256": "9f4b10668bedb42f93d716b693f44f958ae6505c38168360faba559bfe9544a5"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/deploy/accounting-follow-up-drafting.zip",
+      "size_bytes": 4938,
+      "executable": false,
+      "sha256": "7260bcfb805b0b3f506aacec663e512349b525a80e1629abfa687187e75be9c4"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/deploy/accounting-material-intake.zip",
+      "size_bytes": 3736,
+      "executable": false,
+      "sha256": "112f60fa41c7e8c91b4071918ed4eaa9cdf142a1b75c5a78dd6293eca7b7866d"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/deploy/accounting-workflow-coordinator.zip",
+      "size_bytes": 7223,
+      "executable": false,
+      "sha256": "b98673d067d2a2eabc31772ebb54f94078be80fe1bd3232a132ab8dc119ae193"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/deploy/ap-reconciliation.zip",
+      "size_bytes": 4435,
+      "executable": false,
+      "sha256": "81a1ced0ba17c197978d2b172529727de841aeef3340ff3ee4414ae4bf64b357"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/deploy/ar-reconciliation.zip",
+      "size_bytes": 4421,
+      "executable": false,
+      "sha256": "c781416dc806967672232f3fcdab990d6a38dac069b60c858c9dff283597d1c2"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/deploy/cash-reconciliation.zip",
+      "size_bytes": 5434,
+      "executable": false,
+      "sha256": "bda49857b3b9d401c03368a70f0ded85fcdabb03f14e6558b7869d4f92f77db8"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/deploy/close-readiness-handoff.zip",
+      "size_bytes": 5338,
+      "executable": false,
+      "sha256": "b0b6578abbc43b46347c99fec45d3a36464d051ce6a53289b274ba00eb5055a7"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/deploy/execute-approved-accounting-entry.zip",
+      "size_bytes": 7265,
+      "executable": false,
+      "sha256": "dfb9a79559f4044c8c056a73e39c911628ef8e7558dd5fcd628e00c09f7153fe"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/deploy/expense-reconciliation.zip",
+      "size_bytes": 5461,
+      "executable": false,
+      "sha256": "319b5a5a6957e345b296f3e6dc0474a4ed2ebbd74745b862d4a235abe6f0176d"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/deploy/finalize-management-close.zip",
+      "size_bytes": 2780,
+      "executable": false,
+      "sha256": "8db4514d751da6618eb400c445511d823666a42c5ac02c061fc71cc2a2adf972"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/deploy/prepare-balanced-accounting-entry.zip",
+      "size_bytes": 7001,
+      "executable": false,
+      "sha256": "2641d5d36fb76f161a2440f6bdc3d6bd4225bdcec505d0c420ee75e89146c7b6"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/README.md",
+      "size_bytes": 6302,
+      "executable": false,
+      "sha256": "0ce8ff5e434edf5ffabad930d9e85c34ff7f8c44185973be725e58ea7a2662fc"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/scripts/package_candidate.py",
+      "size_bytes": 2374,
+      "executable": false,
+      "sha256": "6abf3bebc054eb04c0dc9b4eab9bc95ff17301d48fd2975bd3b2a638d79a985e"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/scripts/validate_double_entry_candidate.py",
+      "size_bytes": 44223,
+      "executable": false,
+      "sha256": "17b3fb195ac5dd7b6890d73e32d10aae924299954c7f485581141e70c1eb230d"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/tests/agent-orchestration-cases.json",
+      "size_bytes": 2845,
+      "executable": false,
+      "sha256": "0519521f27cafc0eb48855ac12ba47db9df014fea8823d172c766960c4e436ce"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/tests/connector-capability-cases.json",
+      "size_bytes": 21545,
+      "executable": false,
+      "sha256": "2ed6eb56cda80b310e3f6ce62add32495ba07dd500b97d910543613b06047989"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/tests/double-entry-cases.json",
+      "size_bytes": 11633,
+      "executable": false,
+      "sha256": "984dc42d5f34565d03d7a35bf1bd38cd99c354b600c03d19f5154edfd4fd556d"
+    },
+    {
+      "path": "agent-skills/accounting-double-entry-skills-2026-08-10/tests/provenance-cases.json",
+      "size_bytes": 12131,
+      "executable": false,
+      "sha256": "94bbad4daa19f1cfa844939901822862c49f8f6a7a0e69b70d3464f64da445b1"
+    },
+    {
+      "path": "config/.env.example",
+      "size_bytes": 3899,
+      "executable": false,
+      "sha256": "cd7c941cd2fe7c3be7c4fed7e49059ac5b4f804784a1cc5d004c66b955200215"
+    },
+    {
+      "path": "config/tool-allowlist.json",
+      "size_bytes": 848,
+      "executable": false,
+      "sha256": "cce4620bb6a48622758a92de7cf4e256d98851426ba16f4ae8797553a808bbbf"
+    },
+    {
+      "path": "deploy/docker-compose/compose.dev.yaml",
+      "size_bytes": 451,
+      "executable": false,
+      "sha256": "08cdd06e6e9fc15fbc702cc640ec2ceeb229532a2cb109122f8dccd8ab1338bc"
+    },
+    {
+      "path": "deploy/docker-compose/compose.host-nginx.green.vps.yaml",
+      "size_bytes": 6934,
+      "executable": false,
+      "sha256": "3754532d6592dd668ba91e0315e31c77886836cc3fa7c099d9a3637b4297f42e"
+    },
+    {
+      "path": "deploy/docker-compose/compose.host-nginx.vps.yaml",
+      "size_bytes": 7153,
+      "executable": false,
+      "sha256": "1c5dbbb31e1bea1de5ccfb20844b001d76ca87e551632f2e08c2494317d55d23"
+    },
+    {
+      "path": "deploy/docker-compose/compose.vps.yaml",
+      "size_bytes": 8850,
+      "executable": false,
+      "sha256": "f9d8f41b29512cc834b8e47e25f3e50cfe2c427195530218b1c873f0ec3d1578"
+    },
+    {
+      "path": "deploy/Dockerfile",
+      "size_bytes": 2877,
+      "executable": false,
+      "sha256": "04bb6992bcb514fff3415c50e32f96e7a1b48298d3555fcfcc10dc4e3f6fadb9"
+    },
+    {
+      "path": "deploy/Dockerfile.dockerignore",
+      "size_bytes": 153,
+      "executable": false,
+      "sha256": "00b19c94eb73f17422d320fd240aa9c1ded6b6d5a00bad45f8366215c53dea7f"
+    },
+    {
+      "path": "deploy/env.vps.example",
+      "size_bytes": 9715,
+      "executable": false,
+      "sha256": "d163bd634df14281d8bbf442ef586e57de626ae129da468390be5bc49ce803fb"
+    },
+    {
+      "path": "deploy/HETZNER_RUNBOOK.md",
+      "size_bytes": 22723,
+      "executable": false,
+      "sha256": "7b21901a63aa60570f9bcdb0f4851d5a57b459fb6a8f821bcd91be5a43bfd74a"
+    },
+    {
+      "path": "deploy/HETZNER-HOST-NGINX-RUNBOOK.md",
+      "size_bytes": 12178,
+      "executable": false,
+      "sha256": "04f1d18476d9f152d27dfbecae8b05ac35f3928fea5a67da854f9c7228ae90a3"
+    },
+    {
+      "path": "deploy/host-nginx/certbot-deploy-hook.sh",
+      "size_bytes": 122,
+      "executable": true,
+      "sha256": "d5ea414c064443ceedd75991993507d827e137379c688c6d6bc63cbfb46aa73a"
+    },
+    {
+      "path": "deploy/host-nginx/mcp.jiayuanwang.xyz",
+      "size_bytes": 10311,
+      "executable": false,
+      "sha256": "8854bcfa87265eb096dd1fb40f41f0d85dd6f15b7762b422cc2fb805d35e6696"
+    },
+    {
+      "path": "deploy/host-nginx/mcp.jiayuanwang.xyz.bootstrap",
+      "size_bytes": 437,
+      "executable": false,
+      "sha256": "a6cf2152fd20584dc4786bd50f0d61eba897df202ddd96322c5e0a34fd53891a"
+    },
+    {
+      "path": "deploy/nginx/00-security.conf",
+      "size_bytes": 772,
+      "executable": false,
+      "sha256": "50214b4ce7e91f172c9fa70a741f0eccc1754102584ead78fa297d18594aae1b"
+    },
+    {
+      "path": "deploy/nginx/default.conf.template",
+      "size_bytes": 7912,
+      "executable": false,
+      "sha256": "fe98bdb8247f641d59e7f7aafafc6dd9cac1d4d6b29b4142c99952c7cdbda4e7"
+    },
+    {
+      "path": "deploy/nginx/nginx.conf",
+      "size_bytes": 489,
+      "executable": false,
+      "sha256": "08af5feea1e33ddd3dc5676c9e99773a3d21efe96b5015eb3ba2e8df1e30c9f2"
+    },
+    {
+      "path": "deploy/nginx/proxy_params",
+      "size_bytes": 301,
+      "executable": false,
+      "sha256": "4fa036abdb079caeffec3102de8c53fc506751f751241787e7668e1aa42b42a7"
+    },
+    {
+      "path": "deploy/scripts/admit-and-compose.sh",
+      "size_bytes": 1898,
+      "executable": true,
+      "sha256": "51b563f3e56c9c78173f282d00ea32c6ec524d578bd3c4860fde825798e35bbd"
+    },
+    {
+      "path": "deploy/scripts/governance-cutover-contract.mjs",
+      "size_bytes": 5914,
+      "executable": false,
+      "sha256": "52968da7f865c9911130be0e57a16303317cb5f3e73822630a5f60e7035f6bd4"
+    },
+    {
+      "path": "deploy/scripts/install-renewed-cert.sh",
+      "size_bytes": 2079,
+      "executable": true,
+      "sha256": "a83bf9aba41bf5ab6b1d1c6fd63b09fc17da712fcbdceb3452c17c9544c871a3"
+    },
+    {
+      "path": "deploy/scripts/switch-xero-upstream.sh",
+      "size_bytes": 19535,
+      "executable": false,
+      "sha256": "da6257b2b7ad77fe642378f15c95eb70e727bd904246698f123312e3be18006a"
+    },
+    {
+      "path": "deploy/scripts/test-switch-xero-upstream-settle.sh",
+      "size_bytes": 756,
+      "executable": true,
+      "sha256": "b72a0b8ad5446e0407fc3d967ed15f44433a2aeeccac4ea6bb009c19e2df1b21"
+    },
+    {
+      "path": "deploy/scripts/verify-static.sh",
+      "size_bytes": 12639,
+      "executable": true,
+      "sha256": "5dd4527f97d7fda67e4a420ddc1c382c6f6ba4d4c2bd1abdb9834d7ee2c35a2e"
+    },
+    {
+      "path": "docs/adr/ADR-001-ledger-control-kernel-deployment-boundary.md",
+      "size_bytes": 5078,
+      "executable": false,
+      "sha256": "74f963bec1e305cef6f7e5358da7015450eb7829c50e7fcc7caf7b55b3fba93d"
+    },
+    {
+      "path": "docs/AGENT2-XERO-ACCOUNTANT-UAT-V1.md",
+      "size_bytes": 15789,
+      "executable": false,
+      "sha256": "808a0a0a2d38e0b626b1b522bfba69905a3ae9e7058a9dd945c2f5808be18145"
+    },
+    {
+      "path": "docs/AGENT2-XERO-PERSONAL-POC-ACCEPTANCE-2026-08-07.md",
+      "size_bytes": 10103,
+      "executable": false,
+      "sha256": "e72c41a2b24da7af910d8084618227b30758a1ba01c3fec85be69181b7e97eed"
+    },
+    {
+      "path": "docs/assets/xero-mcp-mvp-zero-architecture-2026-08-17.png",
+      "size_bytes": 1359041,
+      "executable": false,
+      "sha256": "e0e472e7f3a28cda6542c87f892fef728c50526a6aaef644e0d2dcc26f268bc3"
+    },
+    {
+      "path": "docs/LEDGER-CONTROL-KERNEL-AUTONOMOUS-WRITE-SPEC-2026-08-13.md",
+      "size_bytes": 10103,
+      "executable": false,
+      "sha256": "acf348059a42cbda9060f23008135465e6645b290496fffa60228195ea6ea904"
+    },
+    {
+      "path": "docs/LEDGER-KERNEL-ITERATIVE-REVIEW-AND-ACCEPTANCE-2026-08-13.md",
+      "size_bytes": 8201,
+      "executable": false,
+      "sha256": "8f3f3c61f596526861acf5900349ea17d9351737965c17dea4db6a801a7c6ef8"
+    },
+    {
+      "path": "docs/LIVE-DEPLOYMENT-EVIDENCE-2026-08-03.md",
+      "size_bytes": 17738,
+      "executable": false,
+      "sha256": "0246d105a601487c4cd89ce2d16cdd70fb2de14a936db2f1b446305db35604e5"
+    },
+    {
+      "path": "docs/LOCAL-ANTI-LAZINESS-ACCEPTANCE-MECHANISM.md",
+      "size_bytes": 18014,
+      "executable": false,
+      "sha256": "63b8bbf1a75872cd8eaa3dd78b1ea3a1bd28fbe80e26ddcee991b3c0de9dc631"
+    },
+    {
+      "path": "docs/MCP-OAUTH-BROKER-CONTRACT-V1.md",
+      "size_bytes": 40882,
+      "executable": false,
+      "sha256": "733296ddd518f30c2d2b074f6c97f09319341e3a0f5189eba888031ee60728b9"
+    },
+    {
+      "path": "docs/TEST-PLAN.md",
+      "size_bytes": 34929,
+      "executable": false,
+      "sha256": "6b521f9aa1e54bf215235ca1880e6bdcc48590d0c69f4b6e9903b74c0109e724"
+    },
+    {
+      "path": "docs/THREAT-MODEL.md",
+      "size_bytes": 20234,
+      "executable": false,
+      "sha256": "597d1f12fe42c700b33341d9b7076d1bf8478a567a5bdb0609c41ba5165de23e"
+    },
+    {
+      "path": "docs/WORK-XERO-MCP-CONFIGURATION-ZH.md",
+      "size_bytes": 9687,
+      "executable": false,
+      "sha256": "ac0ab3f3105cbcbb7935f674d3ffaa794e117bf3bf6fb6fac903657a6546c017"
+    },
+    {
+      "path": "docs/XERO-0.3.0-DEPLOYMENT-AND-ONLINE-UAT-2026-08-08.md",
+      "size_bytes": 8883,
+      "executable": false,
+      "sha256": "8ab3faf16efdf45744ccc9d39ae289a308b8a2513ab371efbef560296c45e5b0"
+    },
+    {
+      "path": "docs/XERO-0.3.0-LOCAL-RELEASE-GATE-2026-08-07.md",
+      "size_bytes": 2647,
+      "executable": false,
+      "sha256": "21b55657f37e16a1641261de70a7f1953752559da5cff3c1902fe35965bfa7ca"
+    },
+    {
+      "path": "docs/XERO-0.3.0-ORGANISATION-SWITCH-UX-2026-08-08.md",
+      "size_bytes": 5222,
+      "executable": false,
+      "sha256": "d58f6208e15efba3669e82d1684176649b904119751736eeb5e2900a16cb508e"
+    },
+    {
+      "path": "docs/XERO-0.3.0-REFRESH-CONCURRENCY-FIX-2026-08-09.md",
+      "size_bytes": 2299,
+      "executable": false,
+      "sha256": "c0c6529ede485b1897fc211d290850c53c78289c625ed350be124841cc605622"
+    },
+    {
+      "path": "docs/XERO-0.3.0-RELEASE-BUNDLE.md",
+      "size_bytes": 3900,
+      "executable": false,
+      "sha256": "c1eab2fd4d2689ab88d28f90516aabd16961316e7251818573a48424730980fe"
+    },
+    {
+      "path": "docs/XERO-0.3.0-SECURITY-REVIEW-2026-08-08.md",
+      "size_bytes": 23447,
+      "executable": false,
+      "sha256": "d608788ca139f8ca887cff186acf728bd7d54d6dddf387ed209fe2f16956d4bb"
+    },
+    {
+      "path": "docs/XERO-0.3.1-DEPLOYMENT-AND-ONLINE-UAT-2026-08-10.md",
+      "size_bytes": 5365,
+      "executable": false,
+      "sha256": "29687b4be8e361cca67393eace32276a929cb990ee598bc1603728b3393a3660"
+    },
+    {
+      "path": "docs/XERO-0.3.1-OFFICIAL-LOGO-RELEASE-2026-08-10.md",
+      "size_bytes": 2079,
+      "executable": false,
+      "sha256": "e18d009f88f60088453b4d88890dec7ecdc0d7bd699f7ee438fa00444ad8b66a"
+    },
+    {
+      "path": "docs/XERO-0.4.0-RC1-LOCAL-MULTI-ORGANISATION-TARGET-SESSIONS-2026-08-12.md",
+      "size_bytes": 6373,
+      "executable": false,
+      "sha256": "c311d09d5e5d9a838281667ca6d8d4d1433e23acd4d92ae6a3ab68a6e4eeeb0f"
+    },
+    {
+      "path": "docs/XERO-CAPABILITY-EXPANSION-RECOVERY-CHECKPOINT-2026-08-07.md",
+      "size_bytes": 3128,
+      "executable": false,
+      "sha256": "1d65fa1806c41d00b786fef391256c398bb0e86e1f6d231e10728efdb615a755"
+    },
+    {
+      "path": "docs/XERO-DUPLICATE-GUARD-DEPLOYMENT-PREFLIGHT.md",
+      "size_bytes": 3331,
+      "executable": false,
+      "sha256": "cec844ca7cb93fdb56b2afe3990f732a351a6ed3c55e4cba26da7fac41bab5da"
+    },
+    {
+      "path": "docs/XERO-LIVE-E2E-SYNTHETIC-BILL-2026-08-03.md",
+      "size_bytes": 10366,
+      "executable": false,
+      "sha256": "b9bf02f6e3c83312db205d7f3e410fa8f9725985e527a62faf707cf3d7f20d6d"
+    },
+    {
+      "path": "docs/XERO-MCP-CAPABILITY-EXPANSION-V1-2026-08-07.md",
+      "size_bytes": 12205,
+      "executable": false,
+      "sha256": "f8da21e449ed2f73c042f72175ac678c43644412d1f57c13a2195cedb1019800"
+    },
+    {
+      "path": "docs/XERO-MCP-CONNECTION-LIFECYCLE-ZH.md",
+      "size_bytes": 5282,
+      "executable": false,
+      "sha256": "52fcbb633cdcd62a844c4e04c8686f8d1215c75106fb77e9ac9cd0bc60a3e83f"
+    },
+    {
+      "path": "docs/XERO-MCP-CURRENT-CAPABILITIES-2026-08-05.md",
+      "size_bytes": 10008,
+      "executable": false,
+      "sha256": "76f527f9ae868270e3ee65338b8d507543aff0518bd3b5368ea306c1c11ff0ee"
+    },
+    {
+      "path": "docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md",
+      "size_bytes": 9232,
+      "executable": false,
+      "sha256": "147616930921ae466dd180784f5d5ffc588401071c40231fef02a4485010ace9"
+    },
+    {
+      "path": "docs/XERO-MCP-CURRENT-STATE-ZH-2026-08-17.md",
+      "size_bytes": 21642,
+      "executable": false,
+      "sha256": "30320d37dff4d746f5acb9f8b37d37ac1922b63f0bdcc5921349f7916f115a14"
+    },
+    {
+      "path": "docs/XERO-MCP-EXHAUSTIVE-TEST-STRATEGY-2026-08-06.md",
+      "size_bytes": 11529,
+      "executable": false,
+      "sha256": "c07b60fe3f4d2322e8b9b7cae8fa77bed1df60c031f5875fb26216ab9c4f4485"
+    },
+    {
+      "path": "docs/XERO-MCP-NEXT-PHASE-EXECUTION-AND-ACCEPTANCE-LOOP-2026-08-18.md",
+      "size_bytes": 24661,
+      "executable": false,
+      "sha256": "726e7e331175003d968222d31586328be7c6b46d8f62f7e0d97b21052695ead9"
+    },
+    {
+      "path": "docs/XERO-MCP-PRODUCT-ARCHITECTURE-V1.md",
+      "size_bytes": 40915,
+      "executable": false,
+      "sha256": "fdfd77d1ee777cc55f1742281e5d5f11e1bc63cea26f90d08dfdede0d5f8f32f"
+    },
+    {
+      "path": "docs/XERO-ORGANISATION-SWITCH-AND-GOVERNANCE-AUDIT-ZH.md",
+      "size_bytes": 7463,
+      "executable": false,
+      "sha256": "1ee3ae45446672b5e832bc82b9c39c2b28f8154cf140255972c7544f23d92488"
+    },
+    {
+      "path": "docs/XERO-READ-EVIDENCE-LOCAL-PATCH-2026-08-10.md",
+      "size_bytes": 2973,
+      "executable": false,
+      "sha256": "7ac1611de54e6eef438a5ab3b4e719360b8859f1d3a8967b3b348877c8d3b148"
+    },
+    {
+      "path": "docs/XERO-TRIAL-BALANCE-PROVIDER-RESOURCE-BOUNDARY.md",
+      "size_bytes": 3431,
+      "executable": false,
+      "sha256": "af999dbafb369b012ffdb64c8465373c4468a2fd53b318921d0a221688a5044d"
+    },
+    {
+      "path": "handoff/2026-08-10/01-Xero会计助理-会计同事体验指南.md",
+      "size_bytes": 5711,
+      "executable": false,
+      "sha256": "3bff457e5b3fc31d613ea4be2e3071baff1ecdf3cb0061e0b67cd2e01c49dd6a"
+    },
+    {
+      "path": "handoff/2026-08-10/02-Xero-MCP-开发接手指南.md",
+      "size_bytes": 12510,
+      "executable": false,
+      "sha256": "c1482e712a66fcf9119af59be4d11f667bc1a820833ccdc819f823aabdd9489f"
+    },
+    {
+      "path": "handoff/2026-08-10/diagrams/xero-mcp-architecture.png",
+      "size_bytes": 156120,
+      "executable": false,
+      "sha256": "eb1e9e82fdb38c681f72bf6714da94bf2ac748eed9bc37c885d24ebc101f8e57"
+    },
+    {
+      "path": "handoff/2026-08-10/diagrams/xero-mcp-architecture.svg",
+      "size_bytes": 6388,
+      "executable": false,
+      "sha256": "dd51856cb07ab000eeee30f73e84495818c4395446d0acaafb132460da653930"
+    },
+    {
+      "path": "handoff/2026-08-10/diagrams/xero-mcp-core-flows.png",
+      "size_bytes": 172929,
+      "executable": false,
+      "sha256": "780fefed131af0e1f937ec951622a4a2a3cd9da345f5d292badd721627c7e650"
+    },
+    {
+      "path": "handoff/2026-08-10/diagrams/xero-mcp-core-flows.svg",
+      "size_bytes": 8837,
+      "executable": false,
+      "sha256": "13b46a1ed3b7ffbf85862b7a5f8b5f67b0b67fc31bde817fccda07ae0fb6f1fc"
+    },
+    {
+      "path": "handoff/2026-08-10/materials/01-SMART-Agency-测试供应商账单.txt",
+      "size_bytes": 500,
+      "executable": false,
+      "sha256": "048815d3a7562d45d95ed77511f22ec41d05a7e356540bc6c4e3635cc45390a9"
+    },
+    {
+      "path": "handoff/2026-08-10/materials/02-SMART-Agency-内部处理说明.txt",
+      "size_bytes": 528,
+      "executable": false,
+      "sha256": "7be806bc41646a7738ed53baecdff3e1903660d57c9c761b999466cb1eeaabda"
+    },
+    {
+      "path": "handoff/2026-08-10/materials/03-测试材料使用说明.md",
+      "size_bytes": 721,
+      "executable": false,
+      "sha256": "2afa7ce2136a83ce0edb1faeea82206c6033adc14166a8fcb11f11be05654774"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/00-录制前检查.md",
+      "size_bytes": 2940,
+      "executable": false,
+      "sha256": "865977c06b3e604bdb89568343411bec4a841c02f650581883a7adb9c47d3b67"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/00A-样片录制与审批.md",
+      "size_bytes": 2353,
+      "executable": false,
+      "sha256": "fdc33018c48987608858d5183961d6d19735092ec3d4bd479b2ec19a389cf26d"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/01-首次连接并选择公司.md",
+      "size_bytes": 1624,
+      "executable": false,
+      "sha256": "ddcd0b02a201d7a98cfe3f33b202214d55189194c4afc14e195c9a981ff20f8f"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/02-会计接手客户并快速体检.md",
+      "size_bytes": 1891,
+      "executable": false,
+      "sha256": "7384231dd22bfd655fdeaa2f0eb3822d2358bcd04ffd3b246cb395139967545b"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/03-从对话切换客户公司.md",
+      "size_bytes": 1503,
+      "executable": false,
+      "sha256": "b065d5a0b8703e1a45267a49cec7cd92a9c85d18555673798f650b2b26e0cf4c"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/04-成片验收与重录门槛.md",
+      "size_bytes": 1427,
+      "executable": false,
+      "sha256": "7c796484850fc63197319ed7e10aec7400d2ccfc4a8160a5b0f394db3cb41371"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/05-Agent录制执行手册.md",
+      "size_bytes": 10858,
+      "executable": false,
+      "sha256": "3c0b6ec987e4394aafe6f88f013c927ba2bf8b39affe6c9b4c384e26a72ffa7f"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/materials/Agent录制日志模板.md",
+      "size_bytes": 1313,
+      "executable": false,
+      "sha256": "a616875794abe6435a80edd390d19ad59503590e168c0894b6048d7cd0fba8a4"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/materials/录制话术.txt",
+      "size_bytes": 949,
+      "executable": false,
+      "sha256": "63fe20de831d2e76c4f69761cf5e6eb9daed98bb48e1da4454d6c4f0ed7a782d"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/materials/组织选择页-桌面.png",
+      "size_bytes": 44280,
+      "executable": false,
+      "sha256": "f504f127024a0aaf38a0ec484875118dbbafcd9e138f7426d2e58a778a1a1333"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/materials/组织选择页-移动端.png",
+      "size_bytes": 31555,
+      "executable": false,
+      "sha256": "f8f13f0377b830dacd035c68fc063bd6c1ec62ee664ed71449a541931cc20251"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/materials/给录制Agent的启动指令.md",
+      "size_bytes": 3173,
+      "executable": false,
+      "sha256": "c3ef2128b57da1ed8d3e87899c2baae3f71cc9c17d08fcdcf67b17de48f73956"
+    },
+    {
+      "path": "handoff/video-demo-plan-2026-08-10/README.md",
+      "size_bytes": 4401,
+      "executable": false,
+      "sha256": "9f6704445841ee6df266ca5e0df7efd602cc0e210405304ff9766382bc8a9473"
+    },
+    {
+      "path": "harness/fixtures/xero/accounting-case-business-documents.v1.json",
+      "size_bytes": 4963,
+      "executable": false,
+      "sha256": "779ae6aa64c070c4a2eabba5ba72eb77f7182b2f452a5e511c2eb95bac88ec34"
+    },
+    {
+      "path": "harness/fixtures/xero/fault-profiles.json",
+      "size_bytes": 2365,
+      "executable": false,
+      "sha256": "6ee1a2debb22256a518d81e3667057c89b9ab234b6ba06cc117122762885585c"
+    },
+    {
+      "path": "harness/fixtures/xero/golden-14-case.v1.json",
+      "size_bytes": 17117,
+      "executable": false,
+      "sha256": "76e39618e1f50d02669530217cd423ebd228a917c3e30af7289e73131d9d3834"
+    },
+    {
+      "path": "harness/fixtures/xero/golden-14-expected.v1.json",
+      "size_bytes": 2264,
+      "executable": false,
+      "sha256": "248591a6add4c2fdc8b43cbb96599256d219b3e1462769402dcf7de9be053b35"
+    },
+    {
+      "path": "harness/fixtures/xero/golden-14-public-case.v1.json",
+      "size_bytes": 20426,
+      "executable": false,
+      "sha256": "cd695e995d143deece154e2d0980501819a67d9b262e3af1078891b3725af4ae"
+    },
+    {
+      "path": "harness/fixtures/xero/material-clean.json",
+      "size_bytes": 1576,
+      "executable": false,
+      "sha256": "a4e1113554cb10015d6fed3bd3dc6cbbbd5b0d15d7930b51e2c41d15834af47b"
+    },
+    {
+      "path": "harness/fixtures/xero/material-conflict.json",
+      "size_bytes": 1412,
+      "executable": false,
+      "sha256": "1e64ae4b67b2342e4334d74acabc804353afcc623f25bf5eb220667c30e4b576"
+    },
+    {
+      "path": "harness/fixtures/xero/material-prompt-injection.json",
+      "size_bytes": 1089,
+      "executable": false,
+      "sha256": "3ebb62fc5e52db1548e3667a269fe43c4ec3950752d51dcbe51c2004bfbca26d"
+    },
+    {
+      "path": "harness/fixtures/xero/synthetic-ledger.json",
+      "size_bytes": 22938,
+      "executable": false,
+      "sha256": "6ae556cbb83a0971e8d65082340b1f9ad162b2d313eddd08aa0ad29fc52cff77"
+    },
+    {
+      "path": "harness/lib/deterministicAccountingService.ts",
+      "size_bytes": 6117,
+      "executable": false,
+      "sha256": "05030268bd21e8435f001bc57d82c07d7ca3ab57e495fb89deb2079813d729b0"
+    },
+    {
+      "path": "harness/lib/oracleResultRuntimeSchema.ts",
+      "size_bytes": 4866,
+      "executable": false,
+      "sha256": "55d51444030c067c40e2ee858014d0519f28c5db6986b2caba7bd5a4587cc189"
+    },
+    {
+      "path": "harness/lib/syntheticXeroAccountingProvider.ts",
+      "size_bytes": 17830,
+      "executable": false,
+      "sha256": "6aef7120a42e4c9821e0ba96d4461e91abbd862a6e3aac9a66b740db950a2c49"
+    },
+    {
+      "path": "harness/lib/syntheticXeroWriteProvider.ts",
+      "size_bytes": 8677,
+      "executable": false,
+      "sha256": "1da079de89e35a9cd6859892bfcf5141f978de1f2349efad0fb301bd1584af90"
+    },
+    {
+      "path": "harness/lifecycle/process-crash-worker.ts",
+      "size_bytes": 31887,
+      "executable": false,
+      "sha256": "73a027f5302b815cd349b3e67ed35894b22b2ccd3f8862ac7f0ca784ef4e0282"
+    },
+    {
+      "path": "harness/local-agents/agent-workspace.mjs",
+      "size_bytes": 24199,
+      "executable": false,
+      "sha256": "9f9861a44877f6c1cd3e1ba2e15ccc5776b5396ece8e3d91aae0cc1eac6fbf2c"
+    },
+    {
+      "path": "harness/local-agents/local-agent-final-answer.schema.json",
+      "size_bytes": 1106,
+      "executable": false,
+      "sha256": "f4885aef6cb4e086013ca8ad3fa4d059dbe6143d6dba9cc6188c82519d5ffc12"
+    },
+    {
+      "path": "harness/local-agents/README.md",
+      "size_bytes": 6332,
+      "executable": false,
+      "sha256": "151e130147c04f731a54a5f7e6a05ba9d6ada2f0c0595d7ac7ef2435033a488e"
+    },
+    {
+      "path": "harness/local-agents/serve-accounting-case-mcp.ts",
+      "size_bytes": 349,
+      "executable": false,
+      "sha256": "6c78c263a1b211fd8bdf206c72b5185d3b77ee9e239dd16e9fb9745bf04ce718"
+    },
+    {
+      "path": "harness/local-agents/serve-synthetic-mcp.ts",
+      "size_bytes": 5478,
+      "executable": false,
+      "sha256": "3ba3ea4ef3d6a85f439935331f6ccbccf1cfd27f6a2cfeea35667a77d43316ee"
+    },
+    {
+      "path": "harness/manifests/claim-guardrails.json",
+      "size_bytes": 3867,
+      "executable": false,
+      "sha256": "0af6cf1e9120c2847c065e8b6de1c2afacdde4ebfcc90a4509efa2b67ae2f1ca"
+    },
+    {
+      "path": "harness/manifests/contract-v1.json",
+      "size_bytes": 6156,
+      "executable": false,
+      "sha256": "08577552a3af99d73c951a97d8b991660a01b30d64e4069701a6a8a6e4dc6ba2"
+    },
+    {
+      "path": "harness/manifests/expected-reds.json",
+      "size_bytes": 6421,
+      "executable": false,
+      "sha256": "45310008c0e1f502349d6a6547b4aa849864b8007c79fc0c958e139fd7f4590d"
+    },
+    {
+      "path": "harness/manifests/oracle-policy.json",
+      "size_bytes": 2375,
+      "executable": false,
+      "sha256": "8189644216aa5676043bea87350f1ef000c464f8d60a8af7d48cec526b91e5a8"
+    },
+    {
+      "path": "harness/manifests/oracle-result.schema.json",
+      "size_bytes": 6467,
+      "executable": false,
+      "sha256": "6213cd2328a5169a087a3510ca1e66ba89c01d90468c788f29477389c7f61f17"
+    },
+    {
+      "path": "harness/manifests/p0-suite.json",
+      "size_bytes": 1955,
+      "executable": false,
+      "sha256": "53b8c0f6d966b65fc77175df6df713036935931ea590956ffd1eebc33d532448"
+    },
+    {
+      "path": "harness/manifests/personas.json",
+      "size_bytes": 5344,
+      "executable": false,
+      "sha256": "3fb96695eda942241e61fbc94168185496064f8d9f3cad33a4b05bd93a307288"
+    },
+    {
+      "path": "harness/manifests/scenario.schema.json",
+      "size_bytes": 7925,
+      "executable": false,
+      "sha256": "df101966c44ca32e43f66154e0a1ba899216697055fd724cc2036b1866ad603a"
+    },
+    {
+      "path": "harness/P0_CONTROLLED_WRITE_RUNNER.md",
+      "size_bytes": 3061,
+      "executable": false,
+      "sha256": "3dadd6d41a8cc2ffdda1b80c9c575939415c0ac595ddf23145b4778676b28b4b"
+    },
+    {
+      "path": "harness/P0_READONLY_RUNNER.md",
+      "size_bytes": 3118,
+      "executable": false,
+      "sha256": "e9f41ee6ea6b96316d13e44678244f279681be186834544ed7da098db6a61f89"
+    },
+    {
+      "path": "harness/README.md",
+      "size_bytes": 1923,
+      "executable": false,
+      "sha256": "7e7cf4d6edbafcdfdd67b4b371c34242b8a015cb1060111b53431ecfc688623f"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/current-clean-prepare-only-2026-08-06.txt",
+      "size_bytes": 1001,
+      "executable": false,
+      "sha256": "7600b9de18c82bfe57d3ff16c7967bf3f943de71dcc6eee6b28a251c9562657b"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/current-material-prompt-injection-2026-08-06.txt",
+      "size_bytes": 756,
+      "executable": false,
+      "sha256": "6f6c26f20f52035a224e5bdc619a75604ea7fb840125a1b17a5e557a54ee9ca2"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/current-trial-balance-evidence-limit-2026-08-06.txt",
+      "size_bytes": 1229,
+      "executable": false,
+      "sha256": "c434af3d8e70fcf435220912b6b650ff46b6bb5b9181cf71ebb959c41bd5a9b3"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/current-unsupported-operations-2026-08-06.txt",
+      "size_bytes": 610,
+      "executable": false,
+      "sha256": "51a41846995971841ca8b44589b8b8bfd5af1c368b1154de6e1c6d26faa1a603"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/current-zcloak-ledger-baseline-2026-08-06.txt",
+      "size_bytes": 1062,
+      "executable": false,
+      "sha256": "03405afad9511e7a0c64ff777309edf35ed50a84a38831c39bd87d54415ce2b6"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/synthetic-draft-candidate.txt",
+      "size_bytes": 564,
+      "executable": false,
+      "sha256": "cc9a518524d3972b4f65c89047f2922f53ca0e8feb64ed86b3981b3b424e35e1"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/synthetic-supplier-history.txt",
+      "size_bytes": 602,
+      "executable": false,
+      "sha256": "35c663f8cba9bcd6338c66eedc20121bc5d3899dee8bc1d8f38d73636c5d6272"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v030-wf01-ap-history.txt",
+      "size_bytes": 373,
+      "executable": false,
+      "sha256": "09b08fa8fc7752079ba63b3536783ae9a46f5fe6bfec75b0952a9ddbf31e6118"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v030-wf02-ap-multi-material.txt",
+      "size_bytes": 919,
+      "executable": false,
+      "sha256": "5eaaf63eef36294a275b4640da4c9f4cf437e0c20e26efae945a6ec55972c895"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v030-wf03-settled-anomaly.txt",
+      "size_bytes": 590,
+      "executable": false,
+      "sha256": "4950f0308b6d9ba35620eb2e599954c574374384fcf021ec99d9521114d26e89"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v030-wf04-untrusted-privilege.txt",
+      "size_bytes": 511,
+      "executable": false,
+      "sha256": "9726dd7978d05e9d2cfee8c2628264bbee8d9480762ea0d748a71d81e3c324b5"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v030-wf05-ar-multi-material.txt",
+      "size_bytes": 883,
+      "executable": false,
+      "sha256": "ae03f6185710e612441aa54d60bbd5acb07427f019d90be02cd92a6e9d52ee0e"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v030-wf06-journal-changed.txt",
+      "size_bytes": 762,
+      "executable": false,
+      "sha256": "c7f613acbe2270c208eca2c373e33a9b19fa84a2af5167a2c844a9eef14ee0fc"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v030-wf06-journal-original.txt",
+      "size_bytes": 715,
+      "executable": false,
+      "sha256": "6f5480f0fb01153b2a2e39868500fad0ed511137b901c15ac16ff954783e5e23"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v040rc-negative/fault-seeds.txt",
+      "size_bytes": 966,
+      "executable": false,
+      "sha256": "b9e9f7e50627f8a1370da9a5babde60e7cd8848b9061dc25d4e5c658c866e97d"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v040rc-negative/prompt-injection.txt",
+      "size_bytes": 362,
+      "executable": false,
+      "sha256": "0acf6082d079b8bb723ca67e85a3c34f5ae370187cade7c646613bc9692c2100"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v040rc-negative/tax-mismatch.json",
+      "size_bytes": 1078,
+      "executable": false,
+      "sha256": "d3e111d66f66d9a80bbe0e30372b250390478848d3ed9e223bfeb82310a4bc84"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v040rc-negative/transition-review.json",
+      "size_bytes": 1114,
+      "executable": false,
+      "sha256": "1988d68412d907ecd40e0c110e8b220148cde7d75fbf0c78d808583bfd3b290c"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v040rc-negative/unsupported-route.json",
+      "size_bytes": 2211,
+      "executable": false,
+      "sha256": "58e0ebfe19473062838e7cc2cd00f8642e6a542c579f674118e5f39d83eaa522"
+    },
+    {
+      "path": "harness/remote-agents/fixtures/v040rc-negative/wrong-amount.json",
+      "size_bytes": 1074,
+      "executable": false,
+      "sha256": "a1e1561fef2c7a3b49f574944359fcba35db248261b470627aa0a0b35c7fee3f"
+    },
+    {
+      "path": "harness/remote-agents/lib/runner-core.mjs",
+      "size_bytes": 64144,
+      "executable": false,
+      "sha256": "602f89819a6adee120ac456b1269cdfd3f7aba916e8dd400a67c49c6bc477cbd"
+    },
+    {
+      "path": "harness/remote-agents/manifests/agent2-production-current-readonly-2026-08-06.json",
+      "size_bytes": 13150,
+      "executable": false,
+      "sha256": "3c58c9032c3beaf033f0a2b309796238f16050b498f72ff68eb11a1bbe2d6f1c"
+    },
+    {
+      "path": "harness/remote-agents/manifests/agent2-xero-v030-business-readonly-prepare-first-2026-08-08.json",
+      "size_bytes": 38122,
+      "executable": false,
+      "sha256": "801cdd6f78dc8140bdf9d7eb23fef9a84a8005cf84dec9cc3b2d5abdab6a7d14"
+    },
+    {
+      "path": "harness/remote-agents/manifests/agent2-xero-v040rc-accounting-case-uat.template.json",
+      "size_bytes": 7508,
+      "executable": false,
+      "sha256": "bea953c80eb29d975444a3da522dc3202335c6431956e8957e0bafa72f86c95c"
+    },
+    {
+      "path": "harness/remote-agents/manifests/agent2-xero-v040rc-negative-acceptance.template.json",
+      "size_bytes": 22411,
+      "executable": false,
+      "sha256": "2a2318c7f26152d99c861c412cd46da7a2242cccd75ccdd419fdf2ba72694b37"
+    },
+    {
+      "path": "harness/remote-agents/manifests/live-readonly.template.json",
+      "size_bytes": 2527,
+      "executable": false,
+      "sha256": "9002be571c960c74d49a8856ae15a560406eef478d85ab67c2a3c63d711617ca"
+    },
+    {
+      "path": "harness/remote-agents/manifests/mock-readonly.json",
+      "size_bytes": 6327,
+      "executable": false,
+      "sha256": "9f50a675ac95b77153cba7106fcfbbd2c3bd971c48ce05994982d8ab07eaee77"
+    },
+    {
+      "path": "harness/remote-agents/manifests/mock-v040rc-negative-contract.json",
+      "size_bytes": 25340,
+      "executable": false,
+      "sha256": "82c1d0ef2bb3d153975a70dcfb603077eb4fa23b0978fcbd248940e4c1681dfa"
+    },
+    {
+      "path": "harness/remote-agents/manifests/mock-write-no-retry.json",
+      "size_bytes": 2694,
+      "executable": false,
+      "sha256": "9c79e10870b4e8dfa343bfdedec66743da13188a3a13ef1822c52565fdf83895"
+    },
+    {
+      "path": "harness/remote-agents/manifests/test-rate-budget.json",
+      "size_bytes": 1440,
+      "executable": false,
+      "sha256": "92c0de33f243e65c55a912adbb7b0e72ee4bf23995e3345976d66b43f90ac8fa"
+    },
+    {
+      "path": "harness/remote-agents/README.md",
+      "size_bytes": 16901,
+      "executable": false,
+      "sha256": "0d4eaaf99f94d485118746063b1da1d61ac98c3e363d3684feeba19f67675985"
+    },
+    {
+      "path": "harness/remote-agents/run-behavior.mjs",
+      "size_bytes": 3905,
+      "executable": false,
+      "sha256": "87c246f127de100e5722eba91149a95d4ab1e98bd95955f65b6675a2f2162122"
+    },
+    {
+      "path": "harness/remote-agents/verify-runner.mjs",
+      "size_bytes": 25834,
+      "executable": false,
+      "sha256": "3e09787ef8fc38cd504743272dbc990d7e3bcac682a5616ff63d3f39abf4abd8"
+    },
+    {
+      "path": "harness/runners/run-contract.ts",
+      "size_bytes": 20284,
+      "executable": false,
+      "sha256": "0892198482f5514d9626d067d64cda03f6aebc3bfb2673589dbfa71d4254afaa"
+    },
+    {
+      "path": "harness/runners/run-p0-accounting-case.ts",
+      "size_bytes": 83452,
+      "executable": false,
+      "sha256": "45e4f8cf0090f9bbc8478b3ae77f0103432c3405e7bbd1a2a9eacc7d2b72821e"
+    },
+    {
+      "path": "harness/runners/run-p0-controlled-write.ts",
+      "size_bytes": 76291,
+      "executable": false,
+      "sha256": "7b590be62c8e937e9a0afe627bc0c08cfaa8bea8f84f87ac85e30d609893749e"
+    },
+    {
+      "path": "harness/runners/run-p0-readonly.ts",
+      "size_bytes": 57035,
+      "executable": false,
+      "sha256": "3679a561478dc481cee0a7656d8aaaaf83779daf368471a871910457573fe8f1"
+    },
+    {
+      "path": "harness/scenarios/accounting-case-agent2.p0.json",
+      "size_bytes": 5036,
+      "executable": false,
+      "sha256": "7b65594449b48c451a8ee752913703bc78f234f0441ceb6d2b3be468c345d2f5"
+    },
+    {
+      "path": "harness/scenarios/accounting-case-browser.p0.json",
+      "size_bytes": 3282,
+      "executable": false,
+      "sha256": "065a21d0788e41d4703ac6e20ea93620084bf6e82c17389d8da7014725b5b89f"
+    },
+    {
+      "path": "harness/scenarios/accounting-case-deterministic.p0.json",
+      "size_bytes": 7329,
+      "executable": false,
+      "sha256": "c9728c93ec293d0780476cb28da430c52c276597ce3e955086ed226a2b092857"
+    },
+    {
+      "path": "harness/scenarios/agent2-behavior.p0.json",
+      "size_bytes": 27580,
+      "executable": false,
+      "sha256": "b46ce4826d8f034ecebdb762ec323ad2dfd712bb56e8ffa12d757ad484627125"
+    },
+    {
+      "path": "harness/scenarios/deterministic-contract.p0.json",
+      "size_bytes": 49142,
+      "executable": false,
+      "sha256": "5f71c4d005d5997d6d5b922c36facaff124dcd31d85b599fa761183b1fa9b05a"
+    },
+    {
+      "path": "harness/scenarios/final-browser-signatures.json",
+      "size_bytes": 13458,
+      "executable": false,
+      "sha256": "7976278059213e7402755e5ebe5a5c2909f17aefcad1d25731c37c6949f23ba5"
+    },
+    {
+      "path": "migrations/001_init.sql",
+      "size_bytes": 4388,
+      "executable": false,
+      "sha256": "44fe7c92191def261814f98c938fe5a1ba577b0c6df74b48c298add961af8901"
+    },
+    {
+      "path": "migrations/002_ephemeral_cleanup_index.sql",
+      "size_bytes": 91,
+      "executable": false,
+      "sha256": "a7811131603c1e8da6cace25a590ba9d5ada9f56e41049b6c88fd89740879817"
+    },
+    {
+      "path": "migrations/003_provider_connection_tenant_shortcode.sql",
+      "size_bytes": 84,
+      "executable": false,
+      "sha256": "afaafa4143e5be3f40b04d6002d4c5f7b21b1e2f5dc3cb07d6a714b2ba706e1d"
+    },
+    {
+      "path": "migrations/004_durable_audit_intent.sql",
+      "size_bytes": 690,
+      "executable": false,
+      "sha256": "90b5ce916c693a9373840afebaa0ac23c5d1b943daa3a19903f98e5e2dfd8ddd"
+    },
+    {
+      "path": "migrations/005_oauth_identity_foundation.sql",
+      "size_bytes": 12095,
+      "executable": false,
+      "sha256": "0f852f06689c45ac7f08189f6881e391b4a23ad684a618da356ea6402dbc1e98"
+    },
+    {
+      "path": "migrations/006_oauth_broker_flow_lifecycle.sql",
+      "size_bytes": 5582,
+      "executable": false,
+      "sha256": "5530a5362ced9d2bc3f433f2708114b861c26b68c296fd5df67e3636719766ca"
+    },
+    {
+      "path": "migrations/008_xero_source_evidence_type.sql",
+      "size_bytes": 759,
+      "executable": false,
+      "sha256": "108625c70dc095953b539b40dbc9ee2e3f3e4b1514a47f0823b11e0e13e8f354"
+    },
+    {
+      "path": "migrations/012_xero_duplicate_guards.sql",
+      "size_bytes": 1999,
+      "executable": false,
+      "sha256": "e4de6870655eca081b49c0e48528ab61c3a3c48c994dc0e127a74c63f5aad856"
+    },
+    {
+      "path": "migrations/013_xero_rejected_duplicate_guard.sql",
+      "size_bytes": 3078,
+      "executable": false,
+      "sha256": "35dd544011e93ef6551b8cb0ffc92709a1ef0c7a90b3c1ad8785e5a01a04f2b4"
+    },
+    {
+      "path": "migrations/014_xero_tenant_duplicate_guards.sql",
+      "size_bytes": 3190,
+      "executable": false,
+      "sha256": "66bb2a979da814e9b9b08e1d0dd92f53ab9a7c223fb1ba589a5b357f890e3fca"
+    },
+    {
+      "path": "migrations/015_xero_posting_write_provenance.sql",
+      "size_bytes": 1355,
+      "executable": false,
+      "sha256": "416ffe9bca03648497e795b9a713a114ad2c282d4302bbfe43728b4212b4931f"
+    },
+    {
+      "path": "migrations/016_xero_document_type_duplicate_guards.sql",
+      "size_bytes": 4028,
+      "executable": false,
+      "sha256": "b11c497c0ce51c3731fd580013a6c60b2da1f9804dbfb25e27f581811639c0b2"
+    },
+    {
+      "path": "migrations/017_xero_controlled_mutation_foundation.sql",
+      "size_bytes": 22731,
+      "executable": false,
+      "sha256": "328d3c02d29d5e609c2e51fc5c620b87e4da688b583d3fd51d7ccb74600e0d3a"
+    },
+    {
+      "path": "migrations/018_xero_invoice_draft_one_time_confirmation.sql",
+      "size_bytes": 6625,
+      "executable": false,
+      "sha256": "768606005a40b901ee65e95065acf8a7dfecc48aa6d4754a3131a89ea2394ede"
+    },
+    {
+      "path": "migrations/019_xero_mcp_refresh_family_lifecycle.sql",
+      "size_bytes": 1020,
+      "executable": false,
+      "sha256": "8de2512f9912201d193f41264f4d7e978e68b57486f08b046ef94358324d0a59"
+    },
+    {
+      "path": "migrations/020_xero_runtime_readiness_compatibility.sql",
+      "size_bytes": 8716,
+      "executable": false,
+      "sha256": "56b29630544a17252b8e979187fd261cbc43e592523ef4656a108c623b87f2eb"
+    },
+    {
+      "path": "migrations/021_xero_mcp_refresh_retry_grace.sql",
+      "size_bytes": 1058,
+      "executable": false,
+      "sha256": "753ec1fa0c172297633526fc473e1946478e210f68b5bb1bc623c6edb0aaf34c"
+    },
+    {
+      "path": "migrations/022_xero_organisation_switch.sql",
+      "size_bytes": 2612,
+      "executable": false,
+      "sha256": "917c9bb6293b50317154c634d2005ddb51641b31bc93958ca9bd7709c0488560"
+    },
+    {
+      "path": "migrations/023_governance_audit_events.sql",
+      "size_bytes": 2231,
+      "executable": false,
+      "sha256": "dac3ee2bcc59aa8a978bcf8ccbb79ba479a230b4896228ef3932968264c8f931"
+    },
+    {
+      "path": "migrations/024_allow_binding_history_per_installation.sql",
+      "size_bytes": 658,
+      "executable": false,
+      "sha256": "87ede19743ba13cd778b1a9b419a452b81ac7a2387b4f54b56498b87e83b6902"
+    },
+    {
+      "path": "migrations/025_xero_ledger_target_sessions.sql",
+      "size_bytes": 4345,
+      "executable": false,
+      "sha256": "fc05b12f546ac1479e59babc3e73ca7941cfafa9c02586974b41c3d2bf83f127"
+    },
+    {
+      "path": "migrations/026_xero_autonomous_authorization_receipts.sql",
+      "size_bytes": 11892,
+      "executable": false,
+      "sha256": "177dfd18f4128036eef8ce188c09049b693c9a3905a76fd9040ae89d286ebad6"
+    },
+    {
+      "path": "migrations/027_accounting_case_foundation.sql",
+      "size_bytes": 39936,
+      "executable": false,
+      "sha256": "c0d87dd5aa7f7b53722c657f67ff3f57303ea1bc52f2011988f1c1a4ab658ded"
+    },
+    {
+      "path": "migrations/028_xero_autonomous_validation_receipt_lifecycle.sql",
+      "size_bytes": 4707,
+      "executable": false,
+      "sha256": "7a32d865cf42217a72d6232a1d6af8ca2fd6cb0f7ef3650f1917ab568f27df00"
+    },
+    {
+      "path": "migrations/029_accounting_case_evidence_linkage.sql",
+      "size_bytes": 40915,
+      "executable": false,
+      "sha256": "f0d1933fa581778e79f7523d82c9cc3963d502b8340b37d956a4583fa68a863a"
+    },
+    {
+      "path": "migrations/030_accounting_case_preflight_reseal.sql",
+      "size_bytes": 42401,
+      "executable": false,
+      "sha256": "df9c9d240b0dcfb544f9b1a2b49462e56355194cf219d29992b89bb52e179159"
+    },
+    {
+      "path": "migrations/031_accounting_case_economic_readback_convergence.sql",
+      "size_bytes": 14405,
+      "executable": false,
+      "sha256": "a078bf6bd141f0850bbeddb9dfc728889b652d6ccf049c38fc88f240a7c62d53"
+    },
+    {
+      "path": "migrations/032_ledger_authority_snapshots.sql",
+      "size_bytes": 975,
+      "executable": false,
+      "sha256": "14f2ba7b30d221d7559707de3fa54f386e53f0a8622e4193de14a27f160593be"
+    },
+    {
+      "path": "migrations/033_accounting_case_business_write_reservations.sql",
+      "size_bytes": 6053,
+      "executable": false,
+      "sha256": "b44f1109ce83a9baaeb5192f95772767e93f42bae045d19b3e0ff54e8f382b4c"
+    },
+    {
+      "path": "migrations/034_accounting_case_continuation.sql",
+      "size_bytes": 11315,
+      "executable": false,
+      "sha256": "d74d781a341852b49de7e9ed97d2b4951a14833c17cec0c1f03ade0b999ba8a8"
+    },
+    {
+      "path": "migrations/035_accounting_case_business_reservation_scopes.sql",
+      "size_bytes": 8305,
+      "executable": false,
+      "sha256": "0e98aafbb903ea5526975d3162a48323e2b86cf3a36c2530121597c2d3d21792"
+    },
+    {
+      "path": "migrations/036_accounting_case_contact_bare_number_reservations.sql",
+      "size_bytes": 10549,
+      "executable": false,
+      "sha256": "e791d120359a1221d50b57864c3c8a597ff50f29a0b52b0558877700a4ec25e8"
+    },
+    {
+      "path": "migrations/037_accounting_case_contact_prepared_reservation_recovery.sql",
+      "size_bytes": 21603,
+      "executable": false,
+      "sha256": "97df660b25e8af414a62fe79b7aaa1253a9a4e57ed6c83db09d8b248f7dc2362"
+    },
+    {
+      "path": "migrations/038_accounting_case_mutation_projection_convergence.sql",
+      "size_bytes": 14922,
+      "executable": false,
+      "sha256": "714628d3671e0e086b69c3e357c0f9ec0a8648ed0dcc6c28b22656f9a0db75c4"
+    },
+    {
+      "path": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "size_bytes": 56718,
+      "executable": false,
+      "sha256": "5c2d8e1e346f255c8babb3dc44d09a0a46b04b119272d35f63a74165514c8383"
+    },
+    {
+      "path": "migrations/040_xero_native_idempotency_recovery_claim.sql",
+      "size_bytes": 1327,
+      "executable": false,
+      "sha256": "2bf1a214dafbd3d5ef02f2bfe28580a902b084750847974cc0f1ff0f71fefa7f"
+    },
+    {
+      "path": "package-lock.json",
+      "size_bytes": 129540,
+      "executable": false,
+      "sha256": "450bcd66ee77db372d91e77c7d395152cd886349e447ca22dc3c9a08791d9fd3"
+    },
+    {
+      "path": "package.json",
+      "size_bytes": 2941,
+      "executable": false,
+      "sha256": "8c3551fe0b6a401318b1be2a522a051563c1474f67cc9d1897183ee1efce28e9"
+    },
+    {
+      "path": "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+      "size_bytes": 17371,
+      "executable": false,
+      "sha256": "26f942b75fd7f4b0fda296c49ed99cf3ff552bc292757ac70709ef6a211e413c"
+    },
+    {
+      "path": "README.md",
+      "size_bytes": 16776,
+      "executable": false,
+      "sha256": "733eca04a0b5e9689b3300057de20926e9f021021db7c2ccfaa3e0b19d7dca47"
+    },
+    {
+      "path": "schemas/independent-review-shard-verdict.schema.json",
+      "size_bytes": 3444,
+      "executable": false,
+      "sha256": "caa557014329a8842d5cc2e6afb150bbea1aa57617383a70445444d709d75532"
+    },
+    {
+      "path": "schemas/independent-review-verdict.schema.json",
+      "size_bytes": 3831,
+      "executable": false,
+      "sha256": "8119ef6fec87d05cd5ceb3cfdae8d597555fccf04efd399a8f0a8d0f7d98b7d0"
+    },
+    {
+      "path": "schemas/ledger-control-clauses.v1.json",
+      "size_bytes": 24827,
+      "executable": false,
+      "sha256": "e488e6ed4cdbe665f214a65ce9d55d42ce1ac3adf54e77317078bb0ec7209fbe"
+    },
+    {
+      "path": "schemas/local-agent-acceptance-evidence.schema.json",
+      "size_bytes": 3538,
+      "executable": false,
+      "sha256": "04718157df42e923fa7741c2ce5d06a048151f4f47b4da0fea54e70659813a82"
+    },
+    {
+      "path": "schemas/process-crash-restart-evidence.schema.json",
+      "size_bytes": 3787,
+      "executable": false,
+      "sha256": "80f3237beb4ced4912907f57f5aefa850ae78ecb818d812214e5f702ef976a2f"
+    },
+    {
+      "path": "schemas/requirements-traceability.schema.json",
+      "size_bytes": 8604,
+      "executable": false,
+      "sha256": "cfa5e296326c1c29dde0429a175baa30399fdfbe67d0aafe22b9a1ea61b179b6"
+    },
+    {
+      "path": "scripts/agent2_uat_write_gate_vps.sh",
+      "size_bytes": 28141,
+      "executable": false,
+      "sha256": "1763fdd7f64bf9098d4ac8dda743f42cbbeebdcf288f5f13d330381aa78432c3"
+    },
+    {
+      "path": "scripts/approved-local-builder-contract.mjs",
+      "size_bytes": 6218,
+      "executable": false,
+      "sha256": "0239b4bb149a153b99e39a7ff042ceca86f8398062f436dee6232e5fbdc7d5e5"
+    },
+    {
+      "path": "scripts/copy-oauth-assets.mjs",
+      "size_bytes": 273,
+      "executable": false,
+      "sha256": "3f31d1314ab12066a2f879071ff09afdbf5ea0cdca99517b189fe1ea0b042749"
+    },
+    {
+      "path": "scripts/generate_agent2_uat_draft_invoice_20260805.py",
+      "size_bytes": 7376,
+      "executable": false,
+      "sha256": "b53fa6c5b0eab36fa3860fbf40bec6495047c85eef20dfe2c97ade900259cbcb"
+    },
+    {
+      "path": "scripts/generate_synthetic_invoice_hkd_20260804.py",
+      "size_bytes": 7063,
+      "executable": false,
+      "sha256": "ba03caddcc216f05e404ce2a3b71655b23b75a2311d2a10b4279f353e14f6b58"
+    },
+    {
+      "path": "scripts/generate_synthetic_invoice.py",
+      "size_bytes": 7142,
+      "executable": false,
+      "sha256": "c52b24aaa38d1e600255b5857fc43ff97b01f3866a52f1a8ec8c1c3ce334ed8e"
+    },
+    {
+      "path": "scripts/generate_xero_release_uat_pdfs.py",
+      "size_bytes": 11792,
+      "executable": false,
+      "sha256": "de4255c972403f02cca9b37328874c9991eb82006b1b57e42950b40d547c2ded"
+    },
+    {
+      "path": "scripts/local-acceptance-contract.mjs",
+      "size_bytes": 415,
+      "executable": false,
+      "sha256": "48cc76ee28ba191dda105f4db38e9170390f2149d590b454da19737abe23deff"
+    },
+    {
+      "path": "scripts/preflight_xero_duplicate_guards.sql",
+      "size_bytes": 10901,
+      "executable": false,
+      "sha256": "4bf78edba367142ccb8620039957c72a6162b19cc76906cc93ca430c1f462bcd"
+    },
+    {
+      "path": "scripts/preview-oauth-pages.ts",
+      "size_bytes": 1651,
+      "executable": false,
+      "sha256": "28d9a2fb40d5c9a325b4f88e0e78194b8132ac984ddeb8d95c618ec342959684"
+    },
+    {
+      "path": "scripts/release/build-accepted-oci-image.mjs",
+      "size_bytes": 9343,
+      "executable": false,
+      "sha256": "5324e08144ab94aed12179127d84af47d32191f8d7a3ed4ba3c53e8542dd7f56"
+    },
+    {
+      "path": "scripts/release/build-xero-release-bundle.mjs",
+      "size_bytes": 11217,
+      "executable": false,
+      "sha256": "ff556fc4d366f4621cf09a4df49614227ca4902dd5e57367bbe011bf6af31e44"
+    },
+    {
+      "path": "scripts/release/generate-process-crash-restart-evidence.mjs",
+      "size_bytes": 27951,
+      "executable": false,
+      "sha256": "4a86390c0cf8f1bf0476c6d65fe57ec2a56de4f42836954698ab5aad65a4867b"
+    },
+    {
+      "path": "scripts/release/local-acceptance-gate-lib.mjs",
+      "size_bytes": 67860,
+      "executable": false,
+      "sha256": "2657fa32114fe8488eacc6788de0a9c2a181dc60778ac2247018b31d3a26dfff"
+    },
+    {
+      "path": "scripts/release/process-crash-evidence-lib.mjs",
+      "size_bytes": 20339,
+      "executable": false,
+      "sha256": "2e09545db75bfda0eef9287700aebfe6afdeb16c9d8301dad5328f01ecda40e1"
+    },
+    {
+      "path": "scripts/release/production-deployment-admission.mjs",
+      "size_bytes": 35257,
+      "executable": true,
+      "sha256": "6f83b7534085b55d989b2bf6ba91e9187681e9f625f8b07258e4bcf5fad99ec6"
+    },
+    {
+      "path": "scripts/release/production-deployment-contract.mjs",
+      "size_bytes": 13903,
+      "executable": false,
+      "sha256": "ca25cae493171a01946c4c5616823e7e2e575634cbcf05130064bab2817cc100"
+    },
+    {
+      "path": "scripts/release/release-bundle-lib.mjs",
+      "size_bytes": 18873,
+      "executable": false,
+      "sha256": "28ec8a3a65a08becf7209aeeb2b8240ea971336fb4199b385e9a11b1dc690709"
+    },
+    {
+      "path": "scripts/release/run-local-acceptance-gate.mjs",
+      "size_bytes": 38290,
+      "executable": false,
+      "sha256": "ad73f353a467f2e589f3f813e239187fc2768e047eb571c1b9d73107e48ac260"
+    },
+    {
+      "path": "scripts/release/run-local-agent-evidence.mjs",
+      "size_bytes": 34828,
+      "executable": false,
+      "sha256": "94f855c05c8f5b2c65b913ca1d67b8bed1ceccb28ab7bb64dd9357872dcafef7"
+    },
+    {
+      "path": "scripts/release/smoke-accepted-oci-runtime.mjs",
+      "size_bytes": 17780,
+      "executable": false,
+      "sha256": "26943ac01dd1ec9ed05501d68f7cd7b745effb6717e6396a357837aa4a19a83e"
+    },
+    {
+      "path": "scripts/release/system-docker.mjs",
+      "size_bytes": 11047,
+      "executable": false,
+      "sha256": "5b9e2f616f5c14b6f5039702d4bcab7323be2c0f135567531328ead931e5229a"
+    },
+    {
+      "path": "scripts/release/verify-oci-build-identity.mjs",
+      "size_bytes": 4646,
+      "executable": false,
+      "sha256": "54e92caedea0307d7227624c3e4726d1928b8b310d29e22529dd5abd3f17bdcb"
+    },
+    {
+      "path": "scripts/release/verify-xero-release-bundle.mjs",
+      "size_bytes": 10197,
+      "executable": false,
+      "sha256": "1efd44ef89f3b3e74dd096629cb7ae93f31fd22616cb1531e62a34da3b39670c"
+    },
+    {
+      "path": "scripts/require-test-database-url.mjs",
+      "size_bytes": 908,
+      "executable": false,
+      "sha256": "9157cd0319188e0be4652d3524e35cab5a5a3fc4bc95c0b1b113bd4fb14e5dcf"
+    },
+    {
+      "path": "scripts/review/aggregate-independent-review-shards.mjs",
+      "size_bytes": 10404,
+      "executable": false,
+      "sha256": "3ac1ba6a34642f0060701b3c1b64e5e063758e3d9e6f8eab33a91367116fed41"
+    },
+    {
+      "path": "scripts/review/emit-review-falsification-probe.mjs",
+      "size_bytes": 2968,
+      "executable": false,
+      "sha256": "2aab6fdede23f106270623b48c34667a8e4e7e1df3e9f91d13789655af7840d7"
+    },
+    {
+      "path": "scripts/review/emit-review-input-receipt.mjs",
+      "size_bytes": 3351,
+      "executable": false,
+      "sha256": "21124ba24af5e08231ffbf3168c9b89fe9f52a4e2d98dfdc83d8e51f9e9ce326"
+    },
+    {
+      "path": "scripts/review/emit-review-obligation-probe.mjs",
+      "size_bytes": 3876,
+      "executable": false,
+      "sha256": "e9fc370221b8f38f53ad1e003150ee021a47f55ea3e401784fc93f79027da2e8"
+    },
+    {
+      "path": "scripts/review/emit-review-shard-receipt.mjs",
+      "size_bytes": 4004,
+      "executable": false,
+      "sha256": "efc6b98f00c655f7e710bfa02204b04f80ccd4409e0e50229c3a1ee9d6618f9a"
+    },
+    {
+      "path": "scripts/review/independent-review-evidence-lib.mjs",
+      "size_bytes": 178487,
+      "executable": false,
+      "sha256": "094247dcf8d20324539318ef4d249d5319e378cd48713795ebdcd99ee843be18"
+    },
+    {
+      "path": "scripts/review/independent-review-plan-lib.mjs",
+      "size_bytes": 68408,
+      "executable": false,
+      "sha256": "b38557c8a6dad0f07ee201f440aeeeb592390a32289595d0676119765285d0b5"
+    },
+    {
+      "path": "scripts/review/independent-review-shard-evidence-lib.mjs",
+      "size_bytes": 44382,
+      "executable": false,
+      "sha256": "48054429e4935b72813d42a5954ca9ffa3c3538442eb79ae14cc9adb912a5fda"
+    },
+    {
+      "path": "scripts/review/require-host-independent-review-attestation.mjs",
+      "size_bytes": 1680,
+      "executable": false,
+      "sha256": "2d4c77c88c38f943cc845f58cb1e15932bd1873e005decd144391959cb58b1d7"
+    },
+    {
+      "path": "scripts/review/run-independent-review-requirement.mjs",
+      "size_bytes": 11279,
+      "executable": false,
+      "sha256": "67567ba182e29180ff1c685299790ba8ae3a5d7933b36b4bdbc9e3f6f0d268e2"
+    },
+    {
+      "path": "scripts/review/run-independent-review-shard.mjs",
+      "size_bytes": 17722,
+      "executable": false,
+      "sha256": "3f195b6cbfd08ef4c5a0f335008f8cbde1dab58705c13e41c95aa8d1c9f99585"
+    },
+    {
+      "path": "scripts/review/run-independent-review.mjs",
+      "size_bytes": 23075,
+      "executable": false,
+      "sha256": "403762f9d14a160a3e3953080027269b8473370381b1bcde20eb6999ab4543a5"
+    },
+    {
+      "path": "scripts/review/traceability-validator-lib.mjs",
+      "size_bytes": 38282,
+      "executable": false,
+      "sha256": "14f40ff1ef42c44ae77a037b38f0d99c6dcd6a301ba78bf614a27973c70f2dca"
+    },
+    {
+      "path": "scripts/review/validate-requirements-traceability.mjs",
+      "size_bytes": 3661,
+      "executable": false,
+      "sha256": "fbdb21775d2210791b03842fd6e5ee32e0a69a7ddda79b83f86dd639c721c76d"
+    },
+    {
+      "path": "scripts/verify-accepted-build-context.mjs",
+      "size_bytes": 11812,
+      "executable": false,
+      "sha256": "e1f8b784d0f00a5c056e324e2cb9f6b6fbc6ca947ffbdceb0a043f89ffa3625c"
+    },
+    {
+      "path": "scripts/verify-accepted-oci-release.mjs",
+      "size_bytes": 16249,
+      "executable": false,
+      "sha256": "d4dc0bd26102f634436fded61d8f3c4c6189edf4a388d9a74329b848b7ce293b"
+    },
+    {
+      "path": "src/config.ts",
+      "size_bytes": 33196,
+      "executable": false,
+      "sha256": "c9a1e1ff8dd8c82c1888f06b6f92f4ebffe339f73cef3ffa2ce0b6c2630c2d74"
+    },
+    {
+      "path": "src/control-kernel/accountingCaseCompiler.ts",
+      "size_bytes": 56865,
+      "executable": false,
+      "sha256": "b6ec0621b46774aec2f4c4ed24f991e02b88bd88b4cf7f641353e911f34b658e"
+    },
+    {
+      "path": "src/control-kernel/accountingCaseProviderContract.ts",
+      "size_bytes": 5342,
+      "executable": false,
+      "sha256": "c73ea98f733e33447390989d5ffb074b163ae6d80c775beb03be8005f25d3e3f"
+    },
+    {
+      "path": "src/control-kernel/accountingCaseReadbackValidator.ts",
+      "size_bytes": 20489,
+      "executable": false,
+      "sha256": "78d47e51345a812de75f52a0e635f85fd2b0d9c5482811592383cde405b37bda"
+    },
+    {
+      "path": "src/control-kernel/accountingMonetary.ts",
+      "size_bytes": 5048,
+      "executable": false,
+      "sha256": "0488c5bfe6acc04b5c2ec9b4f3eb769242a7ed4603c67001f43c17fba7deface"
+    },
+    {
+      "path": "src/control-kernel/accountingPolicyEnforcementContract.ts",
+      "size_bytes": 3005,
+      "executable": false,
+      "sha256": "2b43148c1345fce87ff220c0673501742abce32972042399f212fe3203ba6f57"
+    },
+    {
+      "path": "src/control-kernel/deterministicValidation.ts",
+      "size_bytes": 4543,
+      "executable": false,
+      "sha256": "d45701213edd852fc93efd0a13fb63acb864a514fca97498e95b2e88ce821509"
+    },
+    {
+      "path": "src/control-kernel/ledgerControlKernel.ts",
+      "size_bytes": 19292,
+      "executable": false,
+      "sha256": "4e462cbda123a483792e98c3eed8176dc73788cd45c06f173194b34dc5e76f6f"
+    },
+    {
+      "path": "src/control-kernel/ledgerProviderWritePermit.ts",
+      "size_bytes": 16942,
+      "executable": false,
+      "sha256": "9d3bc35e8dd48d0990fce83dd8db4955ab0fec36fc180a840bcc072469364309"
+    },
+    {
+      "path": "src/db/accountingCaseRecoveryProjectionReadiness.ts",
+      "size_bytes": 8565,
+      "executable": false,
+      "sha256": "940371acd05a6d307a38a580e186d7c9fb055cc16775f32e964a181ed89ba00f"
+    },
+    {
+      "path": "src/db/inMemoryRepository.ts",
+      "size_bytes": 253142,
+      "executable": false,
+      "sha256": "af3c8df5ad6e22ad13e5c5ae31d1916327b3f50074938738e212b45d70b069ea"
+    },
+    {
+      "path": "src/db/migrate.ts",
+      "size_bytes": 2440,
+      "executable": false,
+      "sha256": "c84accfec4256955c9a42f6bfe49152494c5a71fc5986f01898f88041e2ce879"
+    },
+    {
+      "path": "src/db/postgresRepository.ts",
+      "size_bytes": 446481,
+      "executable": false,
+      "sha256": "22988197620f2d645fb98277c688f167ec73b81397a361d749221b95e59f4a7e"
+    },
+    {
+      "path": "src/db/repository.ts",
+      "size_bytes": 20164,
+      "executable": false,
+      "sha256": "a4fedf2b11afdcfef9745d70486862eed41d3bb42cfbd1b550d34b5ae905d121"
+    },
+    {
+      "path": "src/db/required-migrations.json",
+      "size_bytes": 933,
+      "executable": false,
+      "sha256": "eee868fdb48896542353fa423e72b56bc73b9ecf088f3afbd2cf2d6432cffed7"
+    },
+    {
+      "path": "src/db/requiredMigrations.ts",
+      "size_bytes": 2220,
+      "executable": false,
+      "sha256": "7700046ba6a53583ebcb72eebc70be08a273e4ef92ebcd91eee1a793a8ad70b7"
+    },
+    {
+      "path": "src/db/xeroDuplicateIndexReadiness.ts",
+      "size_bytes": 3963,
+      "executable": false,
+      "sha256": "2617ed173c39c7133fd52b8a842021549a22514717d912a4234485bf051d7180"
+    },
+    {
+      "path": "src/db/xeroPostingDuplicate.ts",
+      "size_bytes": 2708,
+      "executable": false,
+      "sha256": "31d4eabc73e2836deb610cc160cb449cb7f6e2d2231c5fd566228e6062f5e2fd"
+    },
+    {
+      "path": "src/domain/accountingCase.ts",
+      "size_bytes": 19563,
+      "executable": false,
+      "sha256": "810f6e00c5755f06dd9f11daf8d382e89df474906d9135f6e5e98b0951bc3f74"
+    },
+    {
+      "path": "src/domain/accountingCaseContinuation.ts",
+      "size_bytes": 13364,
+      "executable": false,
+      "sha256": "764586ce56ff86663ff2a928cf5a337021927d8ec4e338792511153caad034e5"
+    },
+    {
+      "path": "src/domain/accountingCasePersistence.ts",
+      "size_bytes": 17555,
+      "executable": false,
+      "sha256": "b804a84f18b62f78394b3928b865b084dbc16eead90ef0f47d0c2daa480bb2f4"
+    },
+    {
+      "path": "src/domain/accountingCaseSchemas.ts",
+      "size_bytes": 22625,
+      "executable": false,
+      "sha256": "4456ea71135ba7d3bdf43a1a8f284d7c0313a96dd573f7ac3e12a0224178dc9b"
+    },
+    {
+      "path": "src/domain/canonical.ts",
+      "size_bytes": 3680,
+      "executable": false,
+      "sha256": "8e1da91de885d9df58c003d37e311cd3c45f7c0d226715b154a841cb1fe26115"
+    },
+    {
+      "path": "src/domain/extendedReadSchemas.ts",
+      "size_bytes": 7733,
+      "executable": false,
+      "sha256": "7a162148a3d513165c8295a8630f0d6633fbfc2295c5e3c02c28f898ac92bebc"
+    },
+    {
+      "path": "src/domain/ledgerAuthority.ts",
+      "size_bytes": 28001,
+      "executable": false,
+      "sha256": "3102d0afeebd195b42c7eaf50436ac83cfb63d97098ac068665b09b781775b8e"
+    },
+    {
+      "path": "src/domain/models.ts",
+      "size_bytes": 20296,
+      "executable": false,
+      "sha256": "730a7aaca2050a4ac7f5de24c67e741a57593b30c0ab0e0a90d643451500d47a"
+    },
+    {
+      "path": "src/domain/schemas.ts",
+      "size_bytes": 11329,
+      "executable": false,
+      "sha256": "81707f0b617df6d9afa6ce5219b3f770e8fa62e500fab97dc27a613ce509d95d"
+    },
+    {
+      "path": "src/domain/xeroContactItemCanonical.ts",
+      "size_bytes": 12089,
+      "executable": false,
+      "sha256": "430b825853c914d90a765743079743f1181bc7bf48dda5117a5267bce0301454"
+    },
+    {
+      "path": "src/domain/xeroContactItemMutationSchemas.ts",
+      "size_bytes": 4673,
+      "executable": false,
+      "sha256": "56cf2435459b5d248532f16f0cb7882173c4763c898f04a31b5b13f4214808b8"
+    },
+    {
+      "path": "src/domain/xeroContactItemPrimitives.ts",
+      "size_bytes": 34682,
+      "executable": false,
+      "sha256": "097a4ac2f17beabd84d9292cb370e501d1234f834a05e84f12d7014d4c2bfbe7"
+    },
+    {
+      "path": "src/domain/xeroControlledMutationSchemas.ts",
+      "size_bytes": 329,
+      "executable": false,
+      "sha256": "446eb78025f8329eec6dff7af1300a140e05b49998d2118de5740f99684a2e63"
+    },
+    {
+      "path": "src/domain/xeroCreditNoteManualJournalDraft.ts",
+      "size_bytes": 19559,
+      "executable": false,
+      "sha256": "4d4bc6cbca686cd1dfe2834f7383b1d0424dbe1839c27ee3299bc5175e04f9f7"
+    },
+    {
+      "path": "src/domain/xeroMutation.ts",
+      "size_bytes": 8248,
+      "executable": false,
+      "sha256": "b7dcd1638872a7e83b2f6a88118f5598895015fd577f983f4dc47915a389e8bd"
+    },
+    {
+      "path": "src/domain/xeroMutationSchemas.ts",
+      "size_bytes": 5827,
+      "executable": false,
+      "sha256": "336735652bbc7262b02de042a7001e1b42dcfb96430e0301fa665e9d3644507d"
+    },
+    {
+      "path": "src/domain/xeroQuotePurchaseOrderDraft.ts",
+      "size_bytes": 15260,
+      "executable": false,
+      "sha256": "c4b210c3faa148a5c01b005e5e2feba1247aef21bab75c2e546eb4e318af1791"
+    },
+    {
+      "path": "src/errors.ts",
+      "size_bytes": 1607,
+      "executable": false,
+      "sha256": "5adcc0a86f150fb31cb3bbfc221a231b85683e8677cf1f7a22da4c1fb5ea505b"
+    },
+    {
+      "path": "src/governance/governanceAudit.ts",
+      "size_bytes": 2881,
+      "executable": false,
+      "sha256": "9749fea80dd748caf827c73ea8b9759cb1d5ca87db6922b2bbb14bd62ce9899b"
+    },
+    {
+      "path": "src/http/app.test.ts",
+      "size_bytes": 28731,
+      "executable": false,
+      "sha256": "7ae7bd2c9e90e58eacab6c4eb0b90ad0257d7541ad4be60d8fe8cf7989e63f04"
+    },
+    {
+      "path": "src/http/app.ts",
+      "size_bytes": 44361,
+      "executable": false,
+      "sha256": "ef31babf1d44b831ab421268832489a0af04a27b761ceb72198e3c05b09043ed"
+    },
+    {
+      "path": "src/logging.ts",
+      "size_bytes": 2586,
+      "executable": false,
+      "sha256": "9230490bf0a7bf5652c5c7d628c04039b8b6b40dd078f7e4517b1f83e2f64316"
+    },
+    {
+      "path": "src/mcp/createServer.test.ts",
+      "size_bytes": 52942,
+      "executable": false,
+      "sha256": "625af43d023c5ac9202e3254dc992035a2d0bdc394804fd262ce9ef134278d26"
+    },
+    {
+      "path": "src/mcp/createServer.ts",
+      "size_bytes": 53978,
+      "executable": false,
+      "sha256": "e543c709b4df7c52b4402bb50d79f8800640a17cf13fca58ef1a99b96ac4bc7b"
+    },
+    {
+      "path": "src/mcp/toolNames.ts",
+      "size_bytes": 883,
+      "executable": false,
+      "sha256": "0cd2751c994018017e4615fb6a64244725fadec794e7beb3e8f72cd95b7bb6e8"
+    },
+    {
+      "path": "src/mcp/xeroAccountingCaseBusinessIntake.ts",
+      "size_bytes": 32003,
+      "executable": false,
+      "sha256": "eb7532252412daf78f21551eaf856366820a31cb542b4e9f19d6157ce2a429f4"
+    },
+    {
+      "path": "src/mcp/xeroFailureEnvelope.ts",
+      "size_bytes": 8778,
+      "executable": false,
+      "sha256": "32c70f7b49bd140240bcf88998c21160a49043cb22a3d70f19e00b53526c6a92"
+    },
+    {
+      "path": "src/mcp/xeroReadEvidence.ts",
+      "size_bytes": 24279,
+      "executable": false,
+      "sha256": "9df0d22592fe280ed756a9ec8d0290b2c5031a102a59961a9c707d797e424cef"
+    },
+    {
+      "path": "src/mcp/xeroToolCapabilityContract.ts",
+      "size_bytes": 6942,
+      "executable": false,
+      "sha256": "7d5fc2317754c5ff547b46686afce51874f38368d39d8bb114645675750e965a"
+    },
+    {
+      "path": "src/oauth/assets/README.md",
+      "size_bytes": 612,
+      "executable": false,
+      "sha256": "64a474cbf0452462bb406128e3a1b6c8ee8db612a2a903e41077d95fd2cb5b66"
+    },
+    {
+      "path": "src/oauth/assets/xero-logo.png",
+      "size_bytes": 25464,
+      "executable": false,
+      "sha256": "d7c4a6e92beabf266a4da3c424655c7537b5789aad6641ed98cefb0cf5c53f9d"
+    },
+    {
+      "path": "src/oauth/assets/zcloak-app-icon.png",
+      "size_bytes": 26614,
+      "executable": false,
+      "sha256": "d2b4df5ba2e809b2ae6af4af480750c5719c9d6d3e45897cfb130aea2b23a511"
+    },
+    {
+      "path": "src/oauth/brandAssets.ts",
+      "size_bytes": 471,
+      "executable": false,
+      "sha256": "1971f221312a58de8a04e668df815d7a0150e6810f927b23f9e4c51dc1d7d319"
+    },
+    {
+      "path": "src/oauth/brokerCookies.ts",
+      "size_bytes": 1168,
+      "executable": false,
+      "sha256": "173be9bd696982029a03774e4ff3e3868a56bb27c59c4d913c1ae1b109c2bfc9"
+    },
+    {
+      "path": "src/oauth/brokerPages.ts",
+      "size_bytes": 14957,
+      "executable": false,
+      "sha256": "0a8052414bfa96ca7fed8b71a91d3465413b015fa7e5126f07ef4253795169b4"
+    },
+    {
+      "path": "src/oauth/brokerResource.ts",
+      "size_bytes": 1774,
+      "executable": false,
+      "sha256": "8acfe36fa078cdacc30115705bc1664ec2efd48f7743334dc3c857b07c5d4298"
+    },
+    {
+      "path": "src/oauth/brokerXeroAuthorizationService.ts",
+      "size_bytes": 11074,
+      "executable": false,
+      "sha256": "b9de1c97bb54d71fa8ea4d46c083ae77980e79bb57b25972d9a02978d64b62f8"
+    },
+    {
+      "path": "src/oauth/clientAuthentication.ts",
+      "size_bytes": 6988,
+      "executable": false,
+      "sha256": "bb0ddb5e839afc3befb7fbacdd8e8c2a092ea33d59f49805c283b9964906af70"
+    },
+    {
+      "path": "src/oauth/mcpOAuthBrokerProvider.ts",
+      "size_bytes": 30663,
+      "executable": false,
+      "sha256": "137fabe9fc47191d85acbee47048ddbb2273f9b07188206fdb3d01b7bc25a5d7"
+    },
+    {
+      "path": "src/oauth/mcpOAuthRouter.ts",
+      "size_bytes": 4631,
+      "executable": false,
+      "sha256": "af8202e4fb595f77cb27c1097c2a729807be46e29fa751281d8ccb8e02422b84"
+    },
+    {
+      "path": "src/oauth/mcpOAuthTokenService.ts",
+      "size_bytes": 19969,
+      "executable": false,
+      "sha256": "c5b7116deb848be35deea0ea4e10862d2cb74239d44535f2a3ba6c52b4df5512"
+    },
+    {
+      "path": "src/oauth/staticOAuthClientsStore.ts",
+      "size_bytes": 1618,
+      "executable": false,
+      "sha256": "ba4a0dc0c09ceb2ae68d6bbe7e9e35ac09d51dd03bc98bfd3e886b1362345ab3"
+    },
+    {
+      "path": "src/oauth/xeroAuthenticationEvent.ts",
+      "size_bytes": 5358,
+      "executable": false,
+      "sha256": "aba2883a775a85208b6e4909f45420eebfa8c6937b4a07a4587526a0bb0b866f"
+    },
+    {
+      "path": "src/oauth/xeroOAuthService.ts",
+      "size_bytes": 4774,
+      "executable": false,
+      "sha256": "ef118ac10ab202517a8b8a403e1d1a7b31e57dc46d7d7416eea8b509f3fe7423"
+    },
+    {
+      "path": "src/policy/xeroAccountingCaseExistingDocumentEvidence.ts",
+      "size_bytes": 11870,
+      "executable": false,
+      "sha256": "f5abb5a3b68889c6c1b2ed30ee297e55fb0e8e41523d809b2d605acd450eeb4f"
+    },
+    {
+      "path": "src/policy/xeroAccountingCaseProviderContract.ts",
+      "size_bytes": 25289,
+      "executable": false,
+      "sha256": "b294985877b5a4280ed1f04260667a4073ebc8dcbc193334128209ed891f8e68"
+    },
+    {
+      "path": "src/policy/xeroAccountingCaseReadbackProjection.ts",
+      "size_bytes": 6718,
+      "executable": false,
+      "sha256": "bdac263436dcc1673d45e9d429516436c9626d58eb5863cbc7667db40f33eb00"
+    },
+    {
+      "path": "src/policy/xeroAutonomousActions.ts",
+      "size_bytes": 1516,
+      "executable": false,
+      "sha256": "ebb6028e3b14777244247c8abfc7b85e9dcace1824af7e39061418d625617ef6"
+    },
+    {
+      "path": "src/policy/xeroBusinessCoordinateAuthority.ts",
+      "size_bytes": 16783,
+      "executable": false,
+      "sha256": "a89db141ca5e028df064af7df25ad3a63ca31628881b5786f42fa9011421e776"
+    },
+    {
+      "path": "src/policy/xeroCapabilityError.ts",
+      "size_bytes": 4014,
+      "executable": false,
+      "sha256": "fda58e7a981fc5501c27c166876cf3aaf9056ba70e27fb3bc2e6c7cfe62aa973"
+    },
+    {
+      "path": "src/policy/xeroCapabilityPolicy.ts",
+      "size_bytes": 39646,
+      "executable": false,
+      "sha256": "c6a59e505b9c21e5d067d76c8b9d2ceb9bc3a32aca18f70dfdd3e4b69819329d"
+    },
+    {
+      "path": "src/policy/xeroContactIdentity.ts",
+      "size_bytes": 7978,
+      "executable": false,
+      "sha256": "2e25e01124b91a43917f4378265202a128e32d6360b59b27e33238ab12db218b"
+    },
+    {
+      "path": "src/policy/xeroEffectiveCapability.ts",
+      "size_bytes": 7466,
+      "executable": false,
+      "sha256": "082e458eda55aae8834ab1d5a713bec01e184981c5504ef23ef97b326f0196a8"
+    },
+    {
+      "path": "src/policy/xeroExternalGovernanceAuthority.ts",
+      "size_bytes": 28527,
+      "executable": false,
+      "sha256": "56a152367961e74be0331affd1b009f37ecb9d478fdacea85eb4385154495621"
+    },
+    {
+      "path": "src/policy/xeroFirmGovernanceClaim.ts",
+      "size_bytes": 7590,
+      "executable": false,
+      "sha256": "2bc29b5eb3bcbec354e9bac6ea703d95245423efb17207f5872ee732222c5ab9"
+    },
+    {
+      "path": "src/policy/xeroNativeRouteContract.ts",
+      "size_bytes": 2464,
+      "executable": false,
+      "sha256": "01d43e5041a1eb0ed4c6d3a2fdb69ed072858b4c453bf8968b2596e2c8fd7a5a"
+    },
+    {
+      "path": "src/policy/xeroOriginalTransactionEvidence.ts",
+      "size_bytes": 12790,
+      "executable": false,
+      "sha256": "1f6f65c81006c0a888d90962c6e05abd8b1b869961b97cea43d01ff08da7b163"
+    },
+    {
+      "path": "src/policy/xeroRuntimeCapabilityService.ts",
+      "size_bytes": 3656,
+      "executable": false,
+      "sha256": "5757d61b769f1efcd14f4584edd647288993f2d36dfcbbc94f88095f05368510"
+    },
+    {
+      "path": "src/policy/xeroSingaporeAccountingPolicy.ts",
+      "size_bytes": 14434,
+      "executable": false,
+      "sha256": "76551f7daf7100e0a9554187d6c302ea7c769321742f853b3dbe29328383cf4c"
+    },
+    {
+      "path": "src/policy/xeroTaxRateResolver.ts",
+      "size_bytes": 5827,
+      "executable": false,
+      "sha256": "3a7c2c71a3b70297472083226cdd1d796e0fbf53857131ef6a8ae2b2da5f86cf"
+    },
+    {
+      "path": "src/policy/xeroTenantCoaProfile.ts",
+      "size_bytes": 17057,
+      "executable": false,
+      "sha256": "1ac023c445009857d50c784377f31d1fe42daa4819b7384a71357983e62bfd9e"
+    },
+    {
+      "path": "src/providers/types.ts",
+      "size_bytes": 12191,
+      "executable": false,
+      "sha256": "b1c04e5b3384d8b825cb565ec09002c282950b42b2b98a62c44762546962f087"
+    },
+    {
+      "path": "src/providers/xeroClientManager.ts",
+      "size_bytes": 25580,
+      "executable": false,
+      "sha256": "98b6fd6adc86bd316a7761fcd80499ae49ac30b0537c60bcb5f1253eebb5b1ac"
+    },
+    {
+      "path": "src/providers/xeroContactItemMapper.ts",
+      "size_bytes": 20132,
+      "executable": false,
+      "sha256": "ecaa69ee7059e4b98c7e1831316c1b88c53eabd9b731777878b4ef4091c94b4e"
+    },
+    {
+      "path": "src/providers/xeroContactItemMutationProvider.ts",
+      "size_bytes": 19645,
+      "executable": false,
+      "sha256": "346ca2d5717e726f5eb56137d57bad278bb3bb683119e8308e8f4b992570ea3d"
+    },
+    {
+      "path": "src/providers/xeroControlledMutationProvider.ts",
+      "size_bytes": 9583,
+      "executable": false,
+      "sha256": "fb3719168524a11c9d7503432a2c01ea56b6d6d5a5a0544fcab6ea5a2a55bda1"
+    },
+    {
+      "path": "src/providers/xeroCreditNoteManualJournalDraft.ts",
+      "size_bytes": 22052,
+      "executable": false,
+      "sha256": "087ea44976a66c011adfccb5b30d31e02e6e3d5c5654e1d42da49d5adc273969"
+    },
+    {
+      "path": "src/providers/xeroCreditNoteManualJournalProvider.ts",
+      "size_bytes": 11342,
+      "executable": false,
+      "sha256": "25ceac25389e7a21a21a6ac947d10b2f7c8da69bfcbe433982451437b7a1adc0"
+    },
+    {
+      "path": "src/providers/xeroDeepLinks.ts",
+      "size_bytes": 813,
+      "executable": false,
+      "sha256": "d158ae2fd0c1e5c2e36be8d1daf085be722606a1da3b2f610769bac9d8a5558d"
+    },
+    {
+      "path": "src/providers/xeroExtendedReadMapper.ts",
+      "size_bytes": 35902,
+      "executable": false,
+      "sha256": "b84b7511b7bf35dac97a0d0332da5a608178cab45d922ea648dec352cabaa9ee"
+    },
+    {
+      "path": "src/providers/xeroProvider.ts",
+      "size_bytes": 69186,
+      "executable": false,
+      "sha256": "424b45d33d2abcff28d6819ccb54da0aa0a53b41482e3873bdbac9cf32e44f0b"
+    },
+    {
+      "path": "src/providers/xeroProviderFailure.ts",
+      "size_bytes": 4499,
+      "executable": false,
+      "sha256": "09cb2d449d1fa4241f0f9daeeb155ff4c09a581c1a1296f2d31e4d3589f2df9b"
+    },
+    {
+      "path": "src/providers/xeroQuotePurchaseOrderDraft.ts",
+      "size_bytes": 18252,
+      "executable": false,
+      "sha256": "7634ae65674db3985a887b9a89f707fe2781d9b571f5c5941a6604a0a1ff0d66"
+    },
+    {
+      "path": "src/providers/xeroScopes.ts",
+      "size_bytes": 11013,
+      "executable": false,
+      "sha256": "ca7404da01bd2910e3c376f21763104b4a76c0887cae9513b9e7f0bdc7b10855"
+    },
+    {
+      "path": "src/providers/xeroTrialBalanceTransport.ts",
+      "size_bytes": 10472,
+      "executable": false,
+      "sha256": "963ea41aa121a3bbfcf6c77adc0bb3fbcc4e44dd1e0d4a46d7132da653404d2d"
+    },
+    {
+      "path": "src/providers/xeroWriteOutcome.ts",
+      "size_bytes": 3139,
+      "executable": false,
+      "sha256": "f6b717316278d7d92cceb42346e782847b21b1139f98ef922839ad34744cb524"
+    },
+    {
+      "path": "src/scripts/verifyPostgresAuditContinuity.ts",
+      "size_bytes": 7186,
+      "executable": false,
+      "sha256": "7a2cd586b9e8488f14d6ed615c17b62a6b5e0ceef7bce0444fedd910899fde07"
+    },
+    {
+      "path": "src/scripts/verifyPostgresAuthoriseMonotonicity.ts",
+      "size_bytes": 16166,
+      "executable": false,
+      "sha256": "c17dd67deae120f50b293f03c5252c9da29980590ff3922b07d53b097481e352"
+    },
+    {
+      "path": "src/scripts/verifyPostgresEphemeralCleanup.ts",
+      "size_bytes": 19802,
+      "executable": false,
+      "sha256": "375722d69db3c02c2d1af1c38aa0b856f32112199237a9b697b19b2ec6362786"
+    },
+    {
+      "path": "src/security/hash.ts",
+      "size_bytes": 1033,
+      "executable": false,
+      "sha256": "13493504fcee3e524ea2972bb93e6e0f19e4b3447f2b71ffb356f7d2ee41402d"
+    },
+    {
+      "path": "src/security/ledgerTargetReference.ts",
+      "size_bytes": 256,
+      "executable": false,
+      "sha256": "b93f1e9a251c4753b9287667c42f24ee9dfb02b5948677a3cfa922a0338221de"
+    },
+    {
+      "path": "src/security/oauthSecrets.ts",
+      "size_bytes": 1444,
+      "executable": false,
+      "sha256": "5ad9dfef69721e214836ac1daee525492170c71df151f2db087ba9a2cfa65fe6"
+    },
+    {
+      "path": "src/security/requestContext.ts",
+      "size_bytes": 10905,
+      "executable": false,
+      "sha256": "0e76cc7897ad25433d356516614152fa2d01cb7f36d0ce4561994389b23d306a"
+    },
+    {
+      "path": "src/security/tokenCipher.ts",
+      "size_bytes": 1997,
+      "executable": false,
+      "sha256": "6626442b899e8e5b25a4b0f856680979ab0bb35dc5162d06804284f431723830"
+    },
+    {
+      "path": "src/security/xeroProviderWritePermit.ts",
+      "size_bytes": 4120,
+      "executable": false,
+      "sha256": "b7a311da14bafdb8f70e7d7ca170aea9f98993b75aab95a9db77766f6cdffc71"
+    },
+    {
+      "path": "src/security/xeroProviderWritePermitContext.ts",
+      "size_bytes": 3907,
+      "executable": false,
+      "sha256": "9443c03b7fec300382a4585fbccae432f264990639fe79e56a3c50d2e204b4af"
+    },
+    {
+      "path": "src/server.ts",
+      "size_bytes": 9178,
+      "executable": false,
+      "sha256": "f9bfc3fd0624c2e8074ab3f61c17397175f35d90b0d7f199ed57a3bd1b536325"
+    },
+    {
+      "path": "src/services/accountingService.controlledExtensions.test.ts",
+      "size_bytes": 6222,
+      "executable": false,
+      "sha256": "e134a1b32b3ed8b82059e95e2bad059a180577a611e6a3b4ba2d91f560a97095"
+    },
+    {
+      "path": "src/services/accountingService.ts",
+      "size_bytes": 126744,
+      "executable": false,
+      "sha256": "3ca7262ce8e4e241e6ce006810534efc04fcb9aec394e5efca9defc560456218"
+    },
+    {
+      "path": "src/services/connectionTicketService.test.ts",
+      "size_bytes": 773,
+      "executable": false,
+      "sha256": "2d1b200a4cc2a16f3dbb3c9eed97a6ff337bc15e6f303e897f4aebb72bd91617"
+    },
+    {
+      "path": "src/services/connectionTicketService.ts",
+      "size_bytes": 1206,
+      "executable": false,
+      "sha256": "36752e54e147f27859dcd847515577d027a8a86a9da582599d61007e7be49eb4"
+    },
+    {
+      "path": "src/services/ephemeralCleanupService.ts",
+      "size_bytes": 6694,
+      "executable": false,
+      "sha256": "f3de52a7a2991aaf7143056150603694a019d5e3c0337b1fa65d4ca65215073f"
+    },
+    {
+      "path": "src/services/ledgerTargetSessionService.ts",
+      "size_bytes": 8544,
+      "executable": false,
+      "sha256": "e2cc8de4c29ba39c122f8e8682de96ac789fbb18e178824e5da2d07e9591bd3f"
+    },
+    {
+      "path": "src/services/organisationSwitchService.ts",
+      "size_bytes": 12220,
+      "executable": false,
+      "sha256": "db3dd6b4010e1042a75c4460c4542f7960758ed5374cfba6b3cf48db8102aae0"
+    },
+    {
+      "path": "src/services/reviewService.test.ts",
+      "size_bytes": 7700,
+      "executable": false,
+      "sha256": "0f2f9ed0e7b30fa87a1500a5fce1c3232281a7efc4a8e8710a1c8e196754b425"
+    },
+    {
+      "path": "src/services/reviewService.ts",
+      "size_bytes": 8417,
+      "executable": false,
+      "sha256": "f97cc33fe0d6ed54fe5b97069d8205bbc2436ac45593104991c363c964f725c6"
+    },
+    {
+      "path": "src/services/xeroAccountingCaseService.ts",
+      "size_bytes": 183968,
+      "executable": false,
+      "sha256": "15a155991352f6dd2e4696078bcc5f8a2796596a49a455df9b0c04072556e54b"
+    },
+    {
+      "path": "src/services/xeroBusinessCoordinateHistory.ts",
+      "size_bytes": 16846,
+      "executable": false,
+      "sha256": "38a3728877a2e5461db54c7b125668d85fde5539cc246d656342c27a702c8779"
+    },
+    {
+      "path": "src/services/xeroContactItemMutationService.ts",
+      "size_bytes": 30395,
+      "executable": false,
+      "sha256": "b8492d7305b808bd8918d15f66064472eca164a13dde45d4a4ed97a7fc2a92ba"
+    },
+    {
+      "path": "src/services/xeroControlledMutationService.ts",
+      "size_bytes": 21672,
+      "executable": false,
+      "sha256": "3ea5dcea6caf7ca2798eae4c36c7db99728e657a111a9843410334889750663c"
+    },
+    {
+      "path": "src/services/xeroCreditNoteManualJournalService.ts",
+      "size_bytes": 27060,
+      "executable": false,
+      "sha256": "8c372e9f3a18540e0ce714a60314e8f4e6de76daddd35a7c06a66bdebcc95174"
+    },
+    {
+      "path": "src/services/xeroMutationService.test.ts",
+      "size_bytes": 27276,
+      "executable": false,
+      "sha256": "d8fc7cad41a6e2f566d185ec6655361db64531016161f39bd35e9671b7929c0d"
+    },
+    {
+      "path": "src/services/xeroMutationService.ts",
+      "size_bytes": 64923,
+      "executable": false,
+      "sha256": "d82bb805dfb40abd381167b7c85a67f547879b435d7f0f17c667dc5c5ec167ec"
+    },
+    {
+      "path": "src/services/xeroTrialBalanceBounds.ts",
+      "size_bytes": 26393,
+      "executable": false,
+      "sha256": "4c1145dacea045487386e4821262ab223616c1738f811e3bab13063a38a75730"
+    },
+    {
+      "path": "src/xeroRelease.test.ts",
+      "size_bytes": 374,
+      "executable": false,
+      "sha256": "525789c5b07f7db2f50ab5166291b254ed77992e93cbdb85f480ca49f1849b57"
+    },
+    {
+      "path": "src/xeroRelease.ts",
+      "size_bytes": 7682,
+      "executable": false,
+      "sha256": "8d845a5d1f9eb6336688e94a5dd805916c65350eaa6dab4432b5f903b482dc1c"
+    },
+    {
+      "path": "tests/accounting-case-adversarial.test.ts",
+      "size_bytes": 19417,
+      "executable": false,
+      "sha256": "f08b05ed75b0367498810355cee5b782e70a60196c0d5496401f9433d67a34a2"
+    },
+    {
+      "path": "tests/accounting-case-business-reservation-migration.integration.test.ts",
+      "size_bytes": 27600,
+      "executable": false,
+      "sha256": "0449515f839c918525b9fcfa49a19f1dbcaca95648629642f5fe3dd81cd89bae"
+    },
+    {
+      "path": "tests/accounting-case-business-reservation-migration.test.ts",
+      "size_bytes": 2170,
+      "executable": false,
+      "sha256": "a059fa42f3f62b2836aed99ba67b69265265b8d4bf34fc06552511ddf2fcff89"
+    },
+    {
+      "path": "tests/accounting-case-business-reservation-scope-migration.test.ts",
+      "size_bytes": 1676,
+      "executable": false,
+      "sha256": "75208d96153f0a3acdd06a90c5e1e75ebe62b6ecd8d6487e4240bb57b84838a4"
+    },
+    {
+      "path": "tests/accounting-case-compiler-error-taxonomy.test.ts",
+      "size_bytes": 3560,
+      "executable": false,
+      "sha256": "994c6ac319a566b57552c7baf861e1714b2724ab8e8402a797d431cdde8cb08d"
+    },
+    {
+      "path": "tests/accounting-case-contact-bare-number-reservation-migration.test.ts",
+      "size_bytes": 1947,
+      "executable": false,
+      "sha256": "0e2027a64d9bef0b985e92a4b9b06c6d0077416831e20634cae4e3c9dc0bc4d2"
+    },
+    {
+      "path": "tests/accounting-case-contact-durable-identity.test.ts",
+      "size_bytes": 5576,
+      "executable": false,
+      "sha256": "2acbf4831ff97ed1b0910645fa5a85cbd037cc5945f3d85c9902f15a8437d1b2"
+    },
+    {
+      "path": "tests/accounting-case-contact-prepared-reservation-recovery-migration.test.ts",
+      "size_bytes": 2245,
+      "executable": false,
+      "sha256": "fc4d6ebcc64ac827e21d482e972307cd2797720240928ff49f78e3a0b3787747"
+    },
+    {
+      "path": "tests/accounting-case-continuation-migration.integration.test.ts",
+      "size_bytes": 5405,
+      "executable": false,
+      "sha256": "ac0d0496754300b11d783da2c2118bc43b4fcec992d34b55289a7382be5b1cd2"
+    },
+    {
+      "path": "tests/accounting-case-continuation-migration.test.ts",
+      "size_bytes": 1987,
+      "executable": false,
+      "sha256": "fb41bd4d08b798dfdf5682d78ece0692e908aecb0b020cd76e5ece489bcd37dc"
+    },
+    {
+      "path": "tests/accounting-case-economic-readback-migration.integration.test.ts",
+      "size_bytes": 12230,
+      "executable": false,
+      "sha256": "21304f6fd88446585d78f090ffea5eaff6c43e9026d4dd71f39422cc0d70a15f"
+    },
+    {
+      "path": "tests/accounting-case-economic-readback-migration.test.ts",
+      "size_bytes": 1464,
+      "executable": false,
+      "sha256": "3af770ed61da9d86824d7bdf2a146ac0982b8af7de5fcf87ab2df6538bfac431"
+    },
+    {
+      "path": "tests/accounting-case-expired-target-residual-continuation-migration.test.ts",
+      "size_bytes": 3486,
+      "executable": false,
+      "sha256": "84bb32da11e076d8143c0bb76fb048e2d2433c942f1ff6fe1433c92e658d9cce"
+    },
+    {
+      "path": "tests/accounting-case-golden-14.test.ts",
+      "size_bytes": 7762,
+      "executable": false,
+      "sha256": "b0df301afac3fb9077a3521a594816f2453382dd4b674f5cefb5b1f0f0b7640f"
+    },
+    {
+      "path": "tests/accounting-case-in-memory-repository-concurrency.test.ts",
+      "size_bytes": 106444,
+      "executable": false,
+      "sha256": "49d71cd7e811c7ba3ab692b5f33b7a759eca78449f8ab48c0c959629d177e3fb"
+    },
+    {
+      "path": "tests/accounting-case-monetary-rounding.test.ts",
+      "size_bytes": 8410,
+      "executable": false,
+      "sha256": "e9860149641532fb8c04be87e3f0f93047f3571d93884c01c56d0e4d6ddbef29"
+    },
+    {
+      "path": "tests/accounting-case-mutation-projection-convergence-migration.test.ts",
+      "size_bytes": 1315,
+      "executable": false,
+      "sha256": "b319177834c032861879ac952d1d3468e9e755f6328e978d52eac4bc95ff2c29"
+    },
+    {
+      "path": "tests/accounting-case-postgres-migration.test.ts",
+      "size_bytes": 12137,
+      "executable": false,
+      "sha256": "ec51a2662e4baa56f2db2a7aee80efbf604cc90af483ec2a0aaf09f53b31e3c5"
+    },
+    {
+      "path": "tests/accounting-case-postgres-repository.integration.test.ts",
+      "size_bytes": 144038,
+      "executable": false,
+      "sha256": "bed1a16027d2a15cc5010de81360ea202698097c235da1c23ce86ddffe9bbcc2"
+    },
+    {
+      "path": "tests/accounting-case-provider-capability-bounds.test.ts",
+      "size_bytes": 8761,
+      "executable": false,
+      "sha256": "394d7181dd752899375b44d15afd545e5bbf19298b78272adc1b985129bf026f"
+    },
+    {
+      "path": "tests/accounting-case-public-golden-14.test.ts",
+      "size_bytes": 1443,
+      "executable": false,
+      "sha256": "ba7cdb92420508798ac3da2800f41c1fb667cc89fc01c34c7e5be8688bd4f8c4"
+    },
+    {
+      "path": "tests/accounting-case-readback-validator.test.ts",
+      "size_bytes": 15575,
+      "executable": false,
+      "sha256": "6df3ab2dc34626de9976468c1ab9f0bfb2c14704feb255866ec06ee2268eeffc"
+    },
+    {
+      "path": "tests/accounting-case-source-bridge.test.ts",
+      "size_bytes": 6679,
+      "executable": false,
+      "sha256": "d03b4b5669dc3bb59c0bd71e9ffcf8bfd2967b1e0934d889ecd4961a679c5810"
+    },
+    {
+      "path": "tests/accounting-case-tax-semantics.test.ts",
+      "size_bytes": 14672,
+      "executable": false,
+      "sha256": "cef15fafddb9f105259474bb7279648366f15fc99c79a55ec7ff72091df29c83"
+    },
+    {
+      "path": "tests/accounting-service-read-bounds.test.ts",
+      "size_bytes": 5934,
+      "executable": false,
+      "sha256": "37833ba6ea796bcb8fd45fd2445163509026cb5369c0c4faf6407b9f40d393a9"
+    },
+    {
+      "path": "tests/accounting-service-safety.test.ts",
+      "size_bytes": 45084,
+      "executable": false,
+      "sha256": "f1aa36490db728d8f90464b9781e428b973aad9ef8051bc4717cb0a25f55f009"
+    },
+    {
+      "path": "tests/assert-log-redaction.mjs",
+      "size_bytes": 3182,
+      "executable": false,
+      "sha256": "b477731b30d56aaafb72786b825ef3247322211c9d51b4faff559d0e3866811f"
+    },
+    {
+      "path": "tests/broker-xero-authorization-service.test.ts",
+      "size_bytes": 19674,
+      "executable": false,
+      "sha256": "e52a18ad115498b4e484fbe613bb9434dde042187de2ccaa83f6ca2ce694dc74"
+    },
+    {
+      "path": "tests/contract/expected-tools.json",
+      "size_bytes": 775,
+      "executable": false,
+      "sha256": "a423fd4ce6cb5d64b27e5e19f890d5186831eb85db1c9a652872a3ea673ed44d"
+    },
+    {
+      "path": "tests/current-release-contract.test.ts",
+      "size_bytes": 11131,
+      "executable": false,
+      "sha256": "c774bae85e1435968c0286f64fe8f626df05bfc24773ac4996995dcb68162f67"
+    },
+    {
+      "path": "tests/ephemeral-cleanup-service.test.ts",
+      "size_bytes": 7141,
+      "executable": false,
+      "sha256": "6811634d14456d70b7597d985a9bba52f0de446130861fd4485479dc4b3155df"
+    },
+    {
+      "path": "tests/firm-governance-final-claim.test.ts",
+      "size_bytes": 9517,
+      "executable": false,
+      "sha256": "cf3a346bb93f0bde814d027d3408a8c1572eb6f052e2e20e23c9c0cd3095b897"
+    },
+    {
+      "path": "tests/fixtures/authorise-supplier-bill.json",
+      "size_bytes": 348,
+      "executable": false,
+      "sha256": "8d264b9aa97aff45ed1da8767cef9e8a0cab47249e1cb26ff6fce2f74989f80e"
+    },
+    {
+      "path": "tests/fixtures/synthetic-supplier-bill.json",
+      "size_bytes": 823,
+      "executable": false,
+      "sha256": "d5d2f9a0a9879358bc8d3f79260d583f2f1365ee56eaab85ab37e66c9f49c038"
+    },
+    {
+      "path": "tests/governance-audit.test.ts",
+      "size_bytes": 20301,
+      "executable": false,
+      "sha256": "3d7ccd783fabd867b383d0a5648d4cb7f75c929c625496c3063099561380ce4e"
+    },
+    {
+      "path": "tests/governance-cutover-contract.test.ts",
+      "size_bytes": 6512,
+      "executable": false,
+      "sha256": "15c722090ef9b1533b1d924ebf8e3c65c76a39463b5a3f630ac863090de9e9f8"
+    },
+    {
+      "path": "tests/helpers/xeroGovernanceAuthority.ts",
+      "size_bytes": 8951,
+      "executable": false,
+      "sha256": "b8e84d07cfef424d8e0982e77b0ca007c6e74be1a9ea779090625da95ad01f4c"
+    },
+    {
+      "path": "tests/helpers/xeroProviderPermit.ts",
+      "size_bytes": 4590,
+      "executable": false,
+      "sha256": "bfd9904d267b5b6eaf372e71d8271992cce8723f16e4b4eb64ab67622baa4de9"
+    },
+    {
+      "path": "tests/helpers/xeroTenantCoaProfile.ts",
+      "size_bytes": 9945,
+      "executable": false,
+      "sha256": "d163f0f4e9bebf5da7f89d3b778c9d2d288d3e1904777114bd30fcb305476ffc"
+    },
+    {
+      "path": "tests/http-oauth-edge.test.ts",
+      "size_bytes": 38237,
+      "executable": false,
+      "sha256": "c4fce27a503bbcd740e1938f0fe8a04f401151bd1bcddd9fd3aeaecc8653856c"
+    },
+    {
+      "path": "tests/independent-review-evidence.test.ts",
+      "size_bytes": 164428,
+      "executable": false,
+      "sha256": "9892db38f66b4cf41a3cfefd7b755a465f1ce4c79aa40fd65308277b2f0dac6f"
+    },
+    {
+      "path": "tests/ledger-authority-migration.integration.test.ts",
+      "size_bytes": 4154,
+      "executable": false,
+      "sha256": "a991c242297c89506ff57a8ec9cc9bcc8e3b435aee03d27e0c371ad0d314183e"
+    },
+    {
+      "path": "tests/ledger-authority-migration.test.ts",
+      "size_bytes": 933,
+      "executable": false,
+      "sha256": "b22dcb229ef88867b74a606297b40f4b8cddc8d98d4128350f613f719f370b5a"
+    },
+    {
+      "path": "tests/ledger-authority-snapshot.test.ts",
+      "size_bytes": 7752,
+      "executable": false,
+      "sha256": "a1fb96eff203f695b535a88cb9bae29233d30c982a1487e22cb7bc9cf5ee8a9e"
+    },
+    {
+      "path": "tests/ledger-control-kernel.test.ts",
+      "size_bytes": 8962,
+      "executable": false,
+      "sha256": "422115e78fdf0a9d9e5729c3b58c1282b2e9c05e4e4ce84348599d27f5b5fc03"
+    },
+    {
+      "path": "tests/ledger-provider-write-permit.test.ts",
+      "size_bytes": 9439,
+      "executable": false,
+      "sha256": "0b7e3dd48552fcaac00c47f8fcb3f70a6b1bf70267aa7ff43df59ce89079ad20"
+    },
+    {
+      "path": "tests/ledger-target-session-service.test.ts",
+      "size_bytes": 12021,
+      "executable": false,
+      "sha256": "688aac8628a3547f78dbbe23e8bd695bde8ff65e7586bf4b7c55bdb6e61604b4"
+    },
+    {
+      "path": "tests/local-acceptance-mechanism.test.ts",
+      "size_bytes": 39746,
+      "executable": false,
+      "sha256": "459b9a6c1fb816e3e857d2576250d8d4c7ae8a1132c1e8e15b82d3f7e81b8db0"
+    },
+    {
+      "path": "tests/local-agent-accounting-case-mcp.test.ts",
+      "size_bytes": 9753,
+      "executable": false,
+      "sha256": "2a5fa075ad9ea0dc1992a9fad98dbd9f042b9b7017c6d39bf58260a243d785d1"
+    },
+    {
+      "path": "tests/local-agent-deployment-equivalent.test.ts",
+      "size_bytes": 8118,
+      "executable": false,
+      "sha256": "11cb0e91e4dee217f4138799a285fc50563e02de04bb18a9baa4f0d7ae8f62e0"
+    },
+    {
+      "path": "tests/mcp-oauth-broker-provider.test.ts",
+      "size_bytes": 25954,
+      "executable": false,
+      "sha256": "8e966404c3f9966d13946a583c5c720be742d8a9eac86effca453779ab84688e"
+    },
+    {
+      "path": "tests/mcp-oauth-config.test.ts",
+      "size_bytes": 13821,
+      "executable": false,
+      "sha256": "0fc4166c7990f8d5024390dcfbcf097ee128a7419a0a91bac21f4a0c3d87a2e9"
+    },
+    {
+      "path": "tests/mcp-oauth-router.test.ts",
+      "size_bytes": 6979,
+      "executable": false,
+      "sha256": "5b4859138256154d3afb1fcea2181fe1251c37d8448e121cf198129a45b9cc11"
+    },
+    {
+      "path": "tests/mcp-oauth-token-service.test.ts",
+      "size_bytes": 38113,
+      "executable": false,
+      "sha256": "cf739024c1d56c0987abae225e4e92262bf04fa0dbd859239e832a4a24ad0a84"
+    },
+    {
+      "path": "tests/oauth-broker-cookies.test.ts",
+      "size_bytes": 1269,
+      "executable": false,
+      "sha256": "27bb84a33752de10f53f043fc1550efbc46dc5aa6921ad683905353a67c0218d"
+    },
+    {
+      "path": "tests/oauth-broker-flow-repository-contract.test.ts",
+      "size_bytes": 53094,
+      "executable": false,
+      "sha256": "4c316ae4a580c741d34f92433c5e589c5453d068fc217b91a5b2b61501b7c850"
+    },
+    {
+      "path": "tests/oauth-broker-pages.test.ts",
+      "size_bytes": 6424,
+      "executable": false,
+      "sha256": "9dd7d38938f9954ebb90a82fc7e219ca013f804309e4010b431317d8f55412c6"
+    },
+    {
+      "path": "tests/oauth-identity-repository-contract.test.ts",
+      "size_bytes": 33627,
+      "executable": false,
+      "sha256": "a1eebb5971d426be58b5a68103a052f84af515b5c0b3b15e88cf67d1104e20db"
+    },
+    {
+      "path": "tests/oauth-request-context.test.ts",
+      "size_bytes": 6641,
+      "executable": false,
+      "sha256": "28c5e90c61739e3b4692ba8205e8a1ae4e79f29b674674f34bae71d7204d3fea"
+    },
+    {
+      "path": "tests/oauth-secrets.test.ts",
+      "size_bytes": 1750,
+      "executable": false,
+      "sha256": "d7a4db6b8f0dcd1657ed8cd02e71e19fdad73ddf3880c013b72e211b9fb11e57"
+    },
+    {
+      "path": "tests/organisation-switch-pages.test.ts",
+      "size_bytes": 1923,
+      "executable": false,
+      "sha256": "ec63a0e1f0d6164e4ce7b1e80aa05ddbf55de21dbc42c05e36a39bdfab603a7d"
+    },
+    {
+      "path": "tests/organisation-switch-service.test.ts",
+      "size_bytes": 8103,
+      "executable": false,
+      "sha256": "48c117ed6130a92d40c04ec49a2125430069ad6dbc4bf0f593da243083c874a4"
+    },
+    {
+      "path": "tests/p0-concurrent-create-regression.test.ts",
+      "size_bytes": 10230,
+      "executable": false,
+      "sha256": "fd7719284609f7ac06777d7ccb188d301b8a9a194a4a76d823c38ddaa6a133fc"
+    },
+    {
+      "path": "tests/p0-controlled-write-scenario-runner.test.ts",
+      "size_bytes": 5955,
+      "executable": false,
+      "sha256": "7099428d93e9b864365675d53dc921b016895dcf0a46a698b8f0a07c98e29725"
+    },
+    {
+      "path": "tests/p0-readonly-scenario-runner.test.ts",
+      "size_bytes": 7128,
+      "executable": false,
+      "sha256": "e64bed66ac034627228a094cd6aa410e1f417949a66b9c4827e0bb31c4990227"
+    },
+    {
+      "path": "tests/postgres-ledger-authority.integration.test.ts",
+      "size_bytes": 15243,
+      "executable": false,
+      "sha256": "0cd0c26cfa047fb982ff1b39ca705ac3edb69f4e74fe85b421837359eca919e3"
+    },
+    {
+      "path": "tests/postgres-ledger-target-session.integration.test.ts",
+      "size_bytes": 9540,
+      "executable": false,
+      "sha256": "710b0f1d3744a5c0f5a0dbe310bdc3f184009c93b72165211889697804fb7ee2"
+    },
+    {
+      "path": "tests/postgres-native-recovery-claim.integration.test.ts",
+      "size_bytes": 12266,
+      "executable": false,
+      "sha256": "2546c942029b27dd3d1daae27c9bd9dd22a792ac7300f5ead9061f0b98c604d0"
+    },
+    {
+      "path": "tests/postgres-oauth-broker-flow.integration.test.ts",
+      "size_bytes": 63906,
+      "executable": false,
+      "sha256": "90dfdffe732def96a98b179cd43e8357a8f0a6afd467c8e85f20f5b953e7f5f5"
+    },
+    {
+      "path": "tests/postgres-oauth-identity.integration.test.ts",
+      "size_bytes": 14835,
+      "executable": false,
+      "sha256": "63b6096664a1952e7d12fec9de89b7eee68f12d452a996eb4fe74a41ac5851ee"
+    },
+    {
+      "path": "tests/postgres-organisation-switch-governance.integration.test.ts",
+      "size_bytes": 8455,
+      "executable": false,
+      "sha256": "68eea0746741d9dd18dbc6e07b84c9f3f99d5608b86b02ca0052b7bc806c2617"
+    },
+    {
+      "path": "tests/postgres-source-evidence.integration.test.ts",
+      "size_bytes": 5768,
+      "executable": false,
+      "sha256": "8c479121d8dc3ddbddefca1ac130ef94fcba3ea80ca731ab31eb4f0c31ce5bb4"
+    },
+    {
+      "path": "tests/postgres-xero-duplicate-guards.integration.test.ts",
+      "size_bytes": 31220,
+      "executable": false,
+      "sha256": "64332419279c59a79aebcfd1d17dd0a7f59c5ca292fcf37fc4724d65e4ddf4ac"
+    },
+    {
+      "path": "tests/postgres-xero-mutation-foundation.integration.test.ts",
+      "size_bytes": 36379,
+      "executable": false,
+      "sha256": "7c630f500dee2dbac9e54413b3db4a14f20a586fe2e333b758e4bd0b919d7bfe"
+    },
+    {
+      "path": "tests/postgres-xero-provenance.integration.test.ts",
+      "size_bytes": 5770,
+      "executable": false,
+      "sha256": "9dcc42e0874559300fada69cd902b263399b260e3b30dd9f1972ae7c39873c3c"
+    },
+    {
+      "path": "tests/process-crash-evidence-replay.test.ts",
+      "size_bytes": 7538,
+      "executable": false,
+      "sha256": "4f0a9ebd7c056fca629af3a8ad204705561efbc3408237ff5aae7f1b0a20cb5a"
+    },
+    {
+      "path": "tests/production-deployment-admission.test.ts",
+      "size_bytes": 21042,
+      "executable": false,
+      "sha256": "a24ae7fefa3aa401bc26c821e9d85c6b70cde010e1ec1a2eb88abe1b05f61690"
+    },
+    {
+      "path": "tests/provider-contact-search.test.ts",
+      "size_bytes": 10755,
+      "executable": false,
+      "sha256": "5b991a4a5e8403668b48b65281e2f39b1ec6839d9481ed1adfa2dfa1f170c863"
+    },
+    {
+      "path": "tests/provider-credit-note-payment-read.test.ts",
+      "size_bytes": 10396,
+      "executable": false,
+      "sha256": "f75ff077719abbad9aed8640a6e4f796fc5ef5d2232e1e6f9bed59d781cf3e57"
+    },
+    {
+      "path": "tests/provider-extended-read.test.ts",
+      "size_bytes": 9762,
+      "executable": false,
+      "sha256": "d0a4123c71eb40cce2de04932122a1f154e71f23264c3b8ef99f48bc509eba90"
+    },
+    {
+      "path": "tests/provider-invoice-read.test.ts",
+      "size_bytes": 8586,
+      "executable": false,
+      "sha256": "04bbcc3097f748f8f7e2e795157c1a1f5fabc97e07f8ccf53c23ca8bbbf6e6f1"
+    },
+    {
+      "path": "tests/provider-neutral-ledger-conformance.test.ts",
+      "size_bytes": 25987,
+      "executable": false,
+      "sha256": "8c2d8419ed95ddbb10af2639675737ad55854f06362805e1207be5921651e54f"
+    },
+    {
+      "path": "tests/provider-organisation-binding.test.ts",
+      "size_bytes": 3157,
+      "executable": false,
+      "sha256": "52b40ee3908e4cf526d99f8e4f634a4ad727d7b8a7437684a31681e897324fdb"
+    },
+    {
+      "path": "tests/provider-write-recovery.test.ts",
+      "size_bytes": 14314,
+      "executable": false,
+      "sha256": "23e885d06217e8616f5822bc4d2dbdf7dfe19714c4c618e29aa6a45c5f05cd49"
+    },
+    {
+      "path": "tests/README.md",
+      "size_bytes": 1380,
+      "executable": false,
+      "sha256": "ed02fc3e0ccf9bfa9ac0dd657764316b65c80c2b5562f22de4bf161d746968ec"
+    },
+    {
+      "path": "tests/repository-contract.test.ts",
+      "size_bytes": 35203,
+      "executable": false,
+      "sha256": "ff060dba09332302c4aeeaf0254a9037c6d67d446386e7a8fde477a7ecc209ca"
+    },
+    {
+      "path": "tests/require-test-database-url.test.ts",
+      "size_bytes": 2488,
+      "executable": false,
+      "sha256": "0b9f0ad6cb4a7ded41481d63c6a906f65853d14c5a8a9d7b20e5b046ff140e75"
+    },
+    {
+      "path": "tests/required-http-release-gate.test.ts",
+      "size_bytes": 856,
+      "executable": false,
+      "sha256": "f1d92d80727552714aa044ee568ea6833c377b61cb2a4b28b482682eb7ec719a"
+    },
+    {
+      "path": "tests/required-migrations-release-gate.test.ts",
+      "size_bytes": 3144,
+      "executable": false,
+      "sha256": "214d74a3b3bdb771330c6154b6099511eba494e950c9a1bdef89256aa8045995"
+    },
+    {
+      "path": "tests/review-authorise-flow.test.ts",
+      "size_bytes": 21762,
+      "executable": false,
+      "sha256": "0321c7eb5be301b55e804930012a7f0358070f33364f366f132bbc76d2aba393"
+    },
+    {
+      "path": "tests/reviewer-host-trust.test.ts",
+      "size_bytes": 4664,
+      "executable": false,
+      "sha256": "100dea717440be0877f78244aacc24f62e635f12ba4e1f6702d8849c309ce3c8"
+    },
+    {
+      "path": "tests/runtime-readiness-evidence.test.ts",
+      "size_bytes": 12959,
+      "executable": false,
+      "sha256": "b94c1ff38b9535d0f81d0b8eac0ab0a845c57d4ddc5814317ec448d0f0ccf230"
+    },
+    {
+      "path": "tests/schema-contract.test.ts",
+      "size_bytes": 9470,
+      "executable": false,
+      "sha256": "89e6dc62f63e48558e6751f21cb4b5fef61afb5c38829c61e6ec916d0f5dd1bc"
+    },
+    {
+      "path": "tests/security-contract.test.ts",
+      "size_bytes": 21176,
+      "executable": false,
+      "sha256": "6ddcc0b7617a48e8ee8018c7f1b2a7402ebaa91d4b0da8c38a77a70792c6786a"
+    },
+    {
+      "path": "tests/smoke-mcp.mjs",
+      "size_bytes": 7914,
+      "executable": false,
+      "sha256": "b2b9e141f11e57648ac744ed2419b00e797a949d34367a14fcdafa0c3c015601"
+    },
+    {
+      "path": "tests/static-oauth-clients.test.ts",
+      "size_bytes": 9258,
+      "executable": false,
+      "sha256": "af61c604d52ac560b0d8fd8488cc42c33b17ef98d91601e8f6c13c078e1633e6"
+    },
+    {
+      "path": "tests/synthetic-invoice-detail-consistency.test.ts",
+      "size_bytes": 2337,
+      "executable": false,
+      "sha256": "582f9740be401f05d7ec4d65375baf54206f910be0930efa27933135ae354b1c"
+    },
+    {
+      "path": "tests/traceability-validator.test.ts",
+      "size_bytes": 22753,
+      "executable": false,
+      "sha256": "fff253980038d1f68781da9e29bdf4700173d0339a42ed073a3ba3d8b7ec4190"
+    },
+    {
+      "path": "tests/verify-live-connect-boundary.mjs",
+      "size_bytes": 3000,
+      "executable": false,
+      "sha256": "d0832b625a52f98e80999a3b546980f3b6c47e0915e7b5b0011690783688a333"
+    },
+    {
+      "path": "tests/xero-accounting-case-ap-kernel-e2e.test.ts",
+      "size_bytes": 26171,
+      "executable": false,
+      "sha256": "32a05f506f3705a36962c06153a0f2f4dfeaa70c79c8e2eff0792478058d8669"
+    },
+    {
+      "path": "tests/xero-accounting-case-business-intake.test.ts",
+      "size_bytes": 26971,
+      "executable": false,
+      "sha256": "9f18a60ada6a6b5b266e55101288fa045141ade5d0be41e517a2d43a37323c67"
+    },
+    {
+      "path": "tests/xero-accounting-case-kernel-e2e.test.ts",
+      "size_bytes": 17769,
+      "executable": false,
+      "sha256": "080d5d169e34f37524dd55473e20d35aefc4aad192665a750a084e43e73cb854"
+    },
+    {
+      "path": "tests/xero-accounting-case-service.test.ts",
+      "size_bytes": 198825,
+      "executable": false,
+      "sha256": "2b92537ad1d191c1852bf45a1eecc274d4bb730522173316588dc7cd0bf61e73"
+    },
+    {
+      "path": "tests/xero-accounting-case-tool-contract.test.ts",
+      "size_bytes": 10492,
+      "executable": false,
+      "sha256": "e0ce2d7c0f79c31c16e52da4df04df78b4bfdbf8c5ca625db0de3e297ef782b0"
+    },
+    {
+      "path": "tests/xero-ap-ar-duplicate-semantics.test.ts",
+      "size_bytes": 5278,
+      "executable": false,
+      "sha256": "1fbab03a9525918dbf9e0cfa564bac488deb7e391bb4340545442d570711dfd5"
+    },
+    {
+      "path": "tests/xero-authentication-event.test.ts",
+      "size_bytes": 3525,
+      "executable": false,
+      "sha256": "61fca0bd5f83b02398089ce54530aaf012962737fb7bad841e0e08da026b2064"
+    },
+    {
+      "path": "tests/xero-autonomous-authorization-migration.test.ts",
+      "size_bytes": 1888,
+      "executable": false,
+      "sha256": "49c9f769ab2c09b1b171913758a7ceb0b4dc76bf41bb8338c5800be5e33626fe"
+    },
+    {
+      "path": "tests/xero-broker-scopes.test.ts",
+      "size_bytes": 5585,
+      "executable": false,
+      "sha256": "67ea2ed2ffaf15bd8522991a0f389799121358e6be943c5ac659c3e973279ebd"
+    },
+    {
+      "path": "tests/xero-build-identity.test.ts",
+      "size_bytes": 23578,
+      "executable": false,
+      "sha256": "a20622afbd8e63b44d6811c0f36330c1abe8316962acd0290afd4e935dac533d"
+    },
+    {
+      "path": "tests/xero-business-coordinate-history.test.ts",
+      "size_bytes": 17452,
+      "executable": false,
+      "sha256": "1a8c8039db539f059e6fde4e6add6955ccba77bcd3124671a84c1c27843e912e"
+    },
+    {
+      "path": "tests/xero-capability-policy.test.ts",
+      "size_bytes": 7557,
+      "executable": false,
+      "sha256": "c0c3902f3a68fcba8b6dfed18621c083c55c1a1af6c9772d2babd410f22f78b7"
+    },
+    {
+      "path": "tests/xero-client-manager.test.ts",
+      "size_bytes": 7646,
+      "executable": false,
+      "sha256": "be2bcace26dbab7f49dba96883a609f7fbfd035b694a12f5f3d11558e71da41f"
+    },
+    {
+      "path": "tests/xero-contact-identity.test.ts",
+      "size_bytes": 3433,
+      "executable": false,
+      "sha256": "313ddbeaea797b69492c9a6acd0da607c75494dec75f01bf4be1319289be5b0c"
+    },
+    {
+      "path": "tests/xero-contact-item-mutation-service.test.ts",
+      "size_bytes": 25859,
+      "executable": false,
+      "sha256": "941c533377043c08309ef724769bb43d969c501d66c3733a143893f37980bdbf"
+    },
+    {
+      "path": "tests/xero-contact-item-primitives.test.ts",
+      "size_bytes": 31940,
+      "executable": false,
+      "sha256": "922555026ce240ea97c88cdf05d90d82f2b5d4f45b80846736b452d74f09e77e"
+    },
+    {
+      "path": "tests/xero-controlled-draft-service.test.ts",
+      "size_bytes": 31527,
+      "executable": false,
+      "sha256": "342f5b5cb34ee984f464e4d06afc6f0a96738c265d7574d243f157de7e274542"
+    },
+    {
+      "path": "tests/xero-credit-note-manual-journal-draft-primitives.test.ts",
+      "size_bytes": 33564,
+      "executable": false,
+      "sha256": "32a6cceacfeca3cd67ba826a723cd11b454ee3931a07736f463411776a6cc7c9"
+    },
+    {
+      "path": "tests/xero-credit-note-manual-journal-provider.test.ts",
+      "size_bytes": 11537,
+      "executable": false,
+      "sha256": "1d48fd1a1b975ceb9e199d031565e8b923fec885a4a47023f3ad442ef01cf493"
+    },
+    {
+      "path": "tests/xero-credit-note-manual-journal-service.test.ts",
+      "size_bytes": 27660,
+      "executable": false,
+      "sha256": "025ae4017081e56b7942b50004aa40ebee646822afeddef9bd823ac4f9fa4ca1"
+    },
+    {
+      "path": "tests/xero-deep-links.test.ts",
+      "size_bytes": 1363,
+      "executable": false,
+      "sha256": "380f5308aaf6a112290518f70cf302e11589d15d5304b34e19c96a7768be281e"
+    },
+    {
+      "path": "tests/xero-document-type-duplicate-migration.test.ts",
+      "size_bytes": 1719,
+      "executable": false,
+      "sha256": "244e990255285ca82a3e2d7ad8d065cab39a445ae2232e016566b7f543641ab6"
+    },
+    {
+      "path": "tests/xero-duplicate-index-readiness.test.ts",
+      "size_bytes": 3873,
+      "executable": false,
+      "sha256": "7f32be26681b66af231aba4825bb92a30c6a6a42a6317008f1f392bfe0c78984"
+    },
+    {
+      "path": "tests/xero-effective-capability.test.ts",
+      "size_bytes": 8171,
+      "executable": false,
+      "sha256": "bf12994a730a34b216ebfd72e04e8c289e1e50e0d1cd37be41d500167ecc8629"
+    },
+    {
+      "path": "tests/xero-error-taxonomy.test.ts",
+      "size_bytes": 7646,
+      "executable": false,
+      "sha256": "9167fd73e45ff617909b86efd49438e66cee765c9f7ff9531a3d78a5647b7fb9"
+    },
+    {
+      "path": "tests/xero-existing-document-no-write-evidence.test.ts",
+      "size_bytes": 3960,
+      "executable": false,
+      "sha256": "df2c5a0be811c7b1d45e3cc9c9870147c5a04b2a0a18d2e2260930c1b6c44523"
+    },
+    {
+      "path": "tests/xero-extended-read-mapper.test.ts",
+      "size_bytes": 16988,
+      "executable": false,
+      "sha256": "1e38e4aaf473d067b8f9e6ea4f258c417bcd7561a3e28f497ef7a623a936e566"
+    },
+    {
+      "path": "tests/xero-extended-read-schemas.test.ts",
+      "size_bytes": 8176,
+      "executable": false,
+      "sha256": "2b65fc4b2716bdb56f7bcc1e3b99863a27e24908e16810c83895c079611e1764"
+    },
+    {
+      "path": "tests/xero-external-governance-authority.test.ts",
+      "size_bytes": 8086,
+      "executable": false,
+      "sha256": "b0f078b2dae4b955f604eddd545c8c165bedefbf539ffcd2cdd2977080e59a2a"
+    },
+    {
+      "path": "tests/xero-invoice-draft-one-time-confirmation.test.ts",
+      "size_bytes": 48008,
+      "executable": false,
+      "sha256": "02c505b945ce827a946e2790f2ed21a97a8750eac3bbb011b54dac29d97e5a22"
+    },
+    {
+      "path": "tests/xero-ledger-target-migration.test.ts",
+      "size_bytes": 925,
+      "executable": false,
+      "sha256": "3d9a90b6b1d81197d8a67964a9e16732959c8043062432e6904d39ed8e8fa440"
+    },
+    {
+      "path": "tests/xero-native-idempotency-recovery-migration.test.ts",
+      "size_bytes": 946,
+      "executable": false,
+      "sha256": "91b23a0bbf6b6bc10c3f105f77fb897a6a40c3ea0c6b554a8bd8c6740dc47a4c"
+    },
+    {
+      "path": "tests/xero-native-route-contract.test.ts",
+      "size_bytes": 5139,
+      "executable": false,
+      "sha256": "d62316dbabb8fc2dd4cdb23ea2de42773753063ab19e2cb6aa986130f3676912"
+    },
+    {
+      "path": "tests/xero-oauth-principal.test.ts",
+      "size_bytes": 15588,
+      "executable": false,
+      "sha256": "460ee4414290c602a857bbaec775de99ea6166b9ea72827f654c7c6a646e16c2"
+    },
+    {
+      "path": "tests/xero-oauth-service.test.ts",
+      "size_bytes": 11105,
+      "executable": false,
+      "sha256": "7b33f486312f9517e0934c1d06a35a511b6c0f09d609f802556c42315d8e9fa6"
+    },
+    {
+      "path": "tests/xero-original-transaction-evidence.test.ts",
+      "size_bytes": 14349,
+      "executable": false,
+      "sha256": "c502f17d7336ce1a0bae45cac7e69fe3711fafa4c42bd7b0a08c41c6241235c3"
+    },
+    {
+      "path": "tests/xero-posting-provenance-migration.test.ts",
+      "size_bytes": 1884,
+      "executable": false,
+      "sha256": "d9ad9f3854ccfd5653af648fb6016d62c6194d19a0c3cf676b310b0b6dbcb2f8"
+    },
+    {
+      "path": "tests/xero-provider-write-permit-boundary.test.ts",
+      "size_bytes": 45660,
+      "executable": false,
+      "sha256": "af625bc3144bc9d704cebc668439a93a29b4e1768344106e43deb7498d662748"
+    },
+    {
+      "path": "tests/xero-quote-purchase-order-draft-primitives.test.ts",
+      "size_bytes": 24475,
+      "executable": false,
+      "sha256": "dadd6bad45ca8b97ebaba8f92fa926ba8032de58f33dc72eb439775bc4d84396"
+    },
+    {
+      "path": "tests/xero-release-attestation.test.ts",
+      "size_bytes": 2471,
+      "executable": false,
+      "sha256": "932ca089060221249de1da1890f6a179e498bd85ff8babebb8385855cabdeee0"
+    },
+    {
+      "path": "tests/xero-runtime-readiness-compatibility-migration.test.ts",
+      "size_bytes": 4028,
+      "executable": false,
+      "sha256": "9c32ae2153f32e9ed1e8f3fb45d3a01d0b7a2d298cebd8a2665f4ea87f35c3bb"
+    },
+    {
+      "path": "tests/xero-sales-invoice-draft.test.ts",
+      "size_bytes": 27874,
+      "executable": false,
+      "sha256": "29c5a69d60837c88b9e6865319fc6c83973bc9f4f9673dddbcc679d1d8827387"
+    },
+    {
+      "path": "tests/xero-supplier-bill-draft-preparation.test.ts",
+      "size_bytes": 13232,
+      "executable": false,
+      "sha256": "86e5e634c87edcb4c08cae6d4d52fc56af8371ed5c6c62b0918c659b657f8957"
+    },
+    {
+      "path": "tests/xero-tax-rate-resolver.test.ts",
+      "size_bytes": 3591,
+      "executable": false,
+      "sha256": "2e8ce0fb79eb0f44dafe4d925f81eddedac74dbf47f6efde46e98b3836cf759a"
+    },
+    {
+      "path": "tests/xero-tenant-coa-profile.test.ts",
+      "size_bytes": 8659,
+      "executable": false,
+      "sha256": "11297fa537fda3f10d0d14ee19471e5f525f28d443e7ae7084d4f1cd93142988"
+    },
+    {
+      "path": "tests/xero-tenant-duplicate-migration.test.ts",
+      "size_bytes": 3054,
+      "executable": false,
+      "sha256": "0fb2177fb576aeb80ab77271d4e1e2c367964a032e62da6ad7129aa2b51ca208"
+    },
+    {
+      "path": "tests/xero-tool-policy-contract.test.ts",
+      "size_bytes": 7424,
+      "executable": false,
+      "sha256": "b1302d9ece23ac5f816da6015517ba767c02cb84b7b6b93cb8d540e6bdac8a24"
+    },
+    {
+      "path": "tests/xero-trial-balance-bounds.test.ts",
+      "size_bytes": 22210,
+      "executable": false,
+      "sha256": "cb3b8479946005674581d415294baf484827f055432fbe2f950a05decc0e8e5c"
+    },
+    {
+      "path": "tests/xero-trial-balance-provider-transport.test.ts",
+      "size_bytes": 10562,
+      "executable": false,
+      "sha256": "990d34ad348ec7c74e238fca5d202a7f06a1ed15b222adc5fd89a1b1e9636fd6"
+    },
+    {
+      "path": "tests/xero-write-outcome.test.ts",
+      "size_bytes": 1404,
+      "executable": false,
+      "sha256": "c428c007203b535ddb0591b815896f889a763ca7c38d5dba159d063a4f1ecf4d"
+    },
+    {
+      "path": "tsconfig.build.json",
+      "size_bytes": 196,
+      "executable": false,
+      "sha256": "7ea50d219a9dfe94979df60bd5ab4a95e768529572e7fc3273ca0bd2fedfcd67"
+    },
+    {
+      "path": "tsconfig.json",
+      "size_bytes": 707,
+      "executable": false,
+      "sha256": "a82df99ecdc99e5b7dbaebda8e9b471899a2195d0bdbf5225db021ff5e8027bc"
+    }
+  ],
+  "execution_inputs": {
+    "source_roots_read_only": true,
+    "dependencies_copied_not_linked": true,
+    "git_metadata_copied_not_linked": true,
+    "mutation_guard_algorithm": "sha256-path-type-device-inode-mode-size-ctime-mtime-v1",
+    "original_watcher_armed": true,
+    "snapshot_watcher_armed": true
+  }
+}

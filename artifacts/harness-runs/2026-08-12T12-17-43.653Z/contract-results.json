@@ -1,0 +1,410 @@
+{
+  "schemaVersion": "1.0",
+  "runId": "2026-08-12T12-17-43.653Z",
+  "generatedAt": "2026-08-12T12:17:43.654Z",
+  "executionMode": "LOCAL_IN_MEMORY_NO_XERO_NETWORK",
+  "guardrails": {
+    "realXeroUsed": false,
+    "remoteWriteEnabled": false,
+    "requestScopes": [
+      "xero.read"
+    ],
+    "providerWriteAttempts": 0
+  },
+  "manifest": {
+    "path": "harness/manifests/contract-v1.json",
+    "schemaVersion": "1.0"
+  },
+  "protocol": {
+    "serverVersion": {
+      "name": "zcloak-xero-accounting-mcp-demo",
+      "version": "0.4.0-rc.1"
+    },
+    "serverCapabilities": {
+      "logging": {},
+      "tools": {
+        "listChanged": true
+      }
+    }
+  },
+  "toolSurface": {
+    "expected": [
+      "xero_connection_status",
+      "xero_create_contact",
+      "xero_create_credit_note_draft",
+      "xero_create_draft_sales_invoice",
+      "xero_create_draft_supplier_bill",
+      "xero_create_item",
+      "xero_create_manual_journal_draft",
+      "xero_create_purchase_order_draft",
+      "xero_create_quote_draft",
+      "xero_get_bank_transaction",
+      "xero_get_contact",
+      "xero_get_invoice",
+      "xero_get_item",
+      "xero_get_manual_journal",
+      "xero_get_organisation",
+      "xero_get_purchase_order",
+      "xero_get_quote",
+      "xero_get_supplier_bill",
+      "xero_get_trial_balance",
+      "xero_list_accounts",
+      "xero_list_bank_transactions",
+      "xero_list_contacts",
+      "xero_list_credit_notes",
+      "xero_list_invoices",
+      "xero_list_items",
+      "xero_list_manual_journals",
+      "xero_list_payments",
+      "xero_list_purchase_orders",
+      "xero_list_quotes",
+      "xero_list_tax_rates",
+      "xero_pin_current_organisation",
+      "xero_prepare_contact_create",
+      "xero_prepare_contact_update",
+      "xero_prepare_credit_note_draft",
+      "xero_prepare_item_create",
+      "xero_prepare_item_update",
+      "xero_prepare_manual_journal_draft",
+      "xero_prepare_purchase_order_draft",
+      "xero_prepare_quote_draft",
+      "xero_prepare_sales_invoice_draft",
+      "xero_prepare_supplier_bill_draft",
+      "xero_search_contacts",
+      "xero_start_organisation_switch",
+      "xero_update_contact",
+      "xero_update_item"
+    ],
+    "actual": [
+      "xero_connection_status",
+      "xero_create_contact",
+      "xero_create_credit_note_draft",
+      "xero_create_draft_sales_invoice",
+      "xero_create_draft_supplier_bill",
+      "xero_create_item",
+      "xero_create_manual_journal_draft",
+      "xero_create_purchase_order_draft",
+      "xero_create_quote_draft",
+      "xero_get_bank_transaction",
+      "xero_get_contact",
+      "xero_get_invoice",
+      "xero_get_item",
+      "xero_get_manual_journal",
+      "xero_get_organisation",
+      "xero_get_purchase_order",
+      "xero_get_quote",
+      "xero_get_supplier_bill",
+      "xero_get_trial_balance",
+      "xero_list_accounts",
+      "xero_list_bank_transactions",
+      "xero_list_contacts",
+      "xero_list_credit_notes",
+      "xero_list_invoices",
+      "xero_list_items",
+      "xero_list_manual_journals",
+      "xero_list_payments",
+      "xero_list_purchase_orders",
+      "xero_list_quotes",
+      "xero_list_tax_rates",
+      "xero_pin_current_organisation",
+      "xero_prepare_contact_create",
+      "xero_prepare_contact_update",
+      "xero_prepare_credit_note_draft",
+      "xero_prepare_item_create",
+      "xero_prepare_item_update",
+      "xero_prepare_manual_journal_draft",
+      "xero_prepare_purchase_order_draft",
+      "xero_prepare_quote_draft",
+      "xero_prepare_sales_invoice_draft",
+      "xero_prepare_supplier_bill_draft",
+      "xero_search_contacts",
+      "xero_start_organisation_switch",
+      "xero_update_contact",
+      "xero_update_item"
+    ],
+    "missing": [],
+    "unexpected": [],
+    "dangerousPresent": []
+  },
+  "summary": {
+    "total": 40,
+    "passed": 40,
+    "failed": 0,
+    "status": "PASS"
+  },
+  "cases": [
+    {
+      "id": "protocol.initialize",
+      "dimension": "PROTOCOL",
+      "status": "PASS",
+      "detail": "initialize negotiated zcloak-xero-accounting-mcp-demo@0.4.0-rc.1"
+    },
+    {
+      "id": "version.one-source",
+      "dimension": "VERSION",
+      "status": "PASS",
+      "detail": "package, MCP initialize, health and readiness share 0.4.0-rc.1 via XERO_RELEASE_VERSION"
+    },
+    {
+      "id": "protocol.ping",
+      "dimension": "PROTOCOL",
+      "status": "PASS",
+      "detail": "ping returned successfully"
+    },
+    {
+      "id": "surface.exact-reviewed-tools",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "tools/list exactly matches the pinned 45-tool production allowlist"
+    },
+    {
+      "id": "surface.no-dangerous-tools",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "authorise, pay, reconcile, void, delete, and tax-file tools are absent"
+    },
+    {
+      "id": "surface.no-destructive-annotations",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "no advertised tool declares destructiveHint=true"
+    },
+    {
+      "id": "read.connection-status",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to connectionStatus",
+      "tool": "xero_connection_status"
+    },
+    {
+      "id": "read.organisation",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to getOrganisation",
+      "tool": "xero_get_organisation"
+    },
+    {
+      "id": "read.accounts-with-filter",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to listAccounts",
+      "tool": "xero_list_accounts"
+    },
+    {
+      "id": "read.tax-rates",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to listTaxRates",
+      "tool": "xero_list_tax_rates"
+    },
+    {
+      "id": "read.list-contacts",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to listContacts",
+      "tool": "xero_list_contacts"
+    },
+    {
+      "id": "read.contact-exact",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to getContact",
+      "tool": "xero_get_contact"
+    },
+    {
+      "id": "read.search-contacts",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to searchContacts",
+      "tool": "xero_search_contacts"
+    },
+    {
+      "id": "read.invoices-bounded",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to listInvoices",
+      "tool": "xero_list_invoices"
+    },
+    {
+      "id": "read.credit-notes-bounded",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to listCreditNotes",
+      "tool": "xero_list_credit_notes"
+    },
+    {
+      "id": "read.payments-bounded",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to listPayments",
+      "tool": "xero_list_payments"
+    },
+    {
+      "id": "read.invoice-exact",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to getInvoice",
+      "tool": "xero_get_invoice"
+    },
+    {
+      "id": "read.supplier-bill-exact",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to getSupplierBill",
+      "tool": "xero_get_supplier_bill"
+    },
+    {
+      "id": "read.prepare-draft",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to prepareSupplierBillDraft",
+      "tool": "xero_prepare_supplier_bill_draft"
+    },
+    {
+      "id": "read.trial-balance",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to getTrialBalance",
+      "tool": "xero_get_trial_balance"
+    },
+    {
+      "id": "schema.no-input-rejects-routing",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before connectionStatus",
+      "tool": "xero_connection_status"
+    },
+    {
+      "id": "schema.invoice-list-rejects-raw-where",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before listInvoices",
+      "tool": "xero_list_invoices"
+    },
+    {
+      "id": "schema.contact-list-rejects-caller-tenant",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before listContacts",
+      "tool": "xero_list_contacts"
+    },
+    {
+      "id": "schema.contact-exact-rejects-non-uuid",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before getContact",
+      "tool": "xero_get_contact"
+    },
+    {
+      "id": "schema.invoice-list-rejects-page-size-101",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before listInvoices",
+      "tool": "xero_list_invoices"
+    },
+    {
+      "id": "schema.invoice-list-rejects-reversed-dates",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before listInvoices",
+      "tool": "xero_list_invoices"
+    },
+    {
+      "id": "schema.payment-contact-requires-reviewed-type",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before listPayments",
+      "tool": "xero_list_payments"
+    },
+    {
+      "id": "schema.exact-invoice-rejects-non-uuid",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before getInvoice",
+      "tool": "xero_get_invoice"
+    },
+    {
+      "id": "schema.prepare-rejects-caller-tenant",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before prepareSupplierBillDraft",
+      "tool": "xero_prepare_supplier_bill_draft"
+    },
+    {
+      "id": "schema.create-requires-explicit-confirmation",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before createDraftSupplierBill",
+      "tool": "xero_create_draft_supplier_bill"
+    },
+    {
+      "id": "schema.create-rejects-false-confirmation",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before createDraftSupplierBill",
+      "tool": "xero_create_draft_supplier_bill"
+    },
+    {
+      "id": "schema.create-rejects-reversed-dates",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before createDraftSupplierBill",
+      "tool": "xero_create_draft_supplier_bill"
+    },
+    {
+      "id": "surface.invoke-absent.xero_authorise_supplier_bill",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised dangerous tool invocation was rejected",
+      "tool": "xero_authorise_supplier_bill"
+    },
+    {
+      "id": "surface.invoke-absent.xero_create_payment",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised dangerous tool invocation was rejected",
+      "tool": "xero_create_payment"
+    },
+    {
+      "id": "surface.invoke-absent.xero_reconcile_payment",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised dangerous tool invocation was rejected",
+      "tool": "xero_reconcile_payment"
+    },
+    {
+      "id": "surface.invoke-absent.xero_void_invoice",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised dangerous tool invocation was rejected",
+      "tool": "xero_void_invoice"
+    },
+    {
+      "id": "surface.invoke-absent.xero_delete_invoice",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised dangerous tool invocation was rejected",
+      "tool": "xero_delete_invoice"
+    },
+    {
+      "id": "surface.invoke-absent.xero_file_tax_return",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised dangerous tool invocation was rejected",
+      "tool": "xero_file_tax_return"
+    },
+    {
+      "id": "write-gate.read-only-scope-denies-valid-draft",
+      "dimension": "WRITE_GATE",
+      "status": "PASS",
+      "detail": "schema-valid confirmed DRAFT was denied by xero.draft.write scope before the write service method",
+      "tool": "xero_create_draft_supplier_bill"
+    },
+    {
+      "id": "write-gate.zero-provider-writes",
+      "dimension": "WRITE_GATE",
+      "status": "PASS",
+      "detail": "the entire run reached zero provider write methods"
+    }
+  ]
+}

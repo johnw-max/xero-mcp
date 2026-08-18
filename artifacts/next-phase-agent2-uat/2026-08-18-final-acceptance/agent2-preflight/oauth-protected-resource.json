@@ -1,0 +1,1 @@
+{"resource":"https://mcp.jiayuanwang.xyz/mcp","authorization_servers":["https://mcp.jiayuanwang.xyz/"],"bearer_methods_supported":["header"],"scopes_supported":["xero.read","xero.draft.write"],"resource_name":"zCloak Xero Accounting MCP"}

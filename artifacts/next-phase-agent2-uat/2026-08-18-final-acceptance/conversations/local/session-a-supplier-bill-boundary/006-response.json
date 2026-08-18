@@ -1,0 +1,113 @@
+{
+  "started": "2026-08-18T05:40:00.610Z",
+  "spec": {
+    "method": "tools/call",
+    "params": {
+      "name": "xero_prepare_accounting_case",
+      "arguments": {
+        "case_id": "case-local-claude-20260731-bill-001",
+        "expected_version": 1,
+        "source_label": "客户交来的供应商账单 NCS-2026-0731",
+        "source_set_complete": true,
+        "target_session_ref": "xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0",
+        "documents": [
+          {
+            "document_type": "SUPPLIER_BILL",
+            "reference": "NCS-2026-0731",
+            "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+            "document_date": "2026-07-31",
+            "due_date": "2026-08-30",
+            "currency": "SGD",
+            "contact": {
+              "name": "Exact Customer"
+            },
+            "transition_review_required": false,
+            "declared_net": "1200.00",
+            "declared_tax": "108.00",
+            "declared_gross": "1308.00",
+            "document_validity": "TEST_OR_NOT_VALID",
+            "line_accounting_mode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+            "accounting_category": "CLOUD_SUBSCRIPTIONS",
+            "tax_class": "SG_STANDARD_RATED",
+            "effective_tax_rate_percent": "9",
+            "lines": [
+              {
+                "description": "云服务订阅 2026 年 7 月",
+                "quantity": "1",
+                "unit_amount_excluding_tax": "1200.00",
+                "source_tax_amount": "108.00"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"result\":{\"case_id\":\"case-local-claude-20260731-bill-001\",\"case_version\":2,\"state\":\"PLANNED_NEEDS_PREFLIGHT\",\"source_revision_hash\":\"f7e1eb0998eca56a4ce4bb7a46db471f7c4a4e11f29bbcfd571fc06a9611d803\",\"compiled_plan_hash\":\"5e886577414e5b44b2d2f3c91bef3b04fcd0707d2d568662dcbcbe82d7be0b6d\",\"compiler_version\":\"0.11.0\",\"policy_version\":\"xero-sg-accounting-policy-v8-2026h2\",\"coverage\":{\"supplied_set\":\"COMPLETE\",\"expected_artifacts\":1,\"expected_source_units\":1,\"expected_fact_requirements\":1,\"satisfied_fact_requirements\":1,\"missing_fact_requirements\":[]},\"events\":[{\"event_id\":\"evt_5e7719a3d07d6e408ef44e8f\",\"event_key\":\"event-f74a9b6fe101834abf23b26a3886c660\",\"disposition\":\"AUTO_EXECUTE\",\"route\":\"SUPPLIER_BILL\",\"reason_codes\":[]}],\"operations\":[{\"operation_id\":\"op_cb4b18108339550a46babb76\",\"event_id\":\"evt_5e7719a3d07d6e408ef44e8f\",\"action_id\":\"supplier_bill.create_draft\",\"state\":\"PENDING\",\"provider_receipt_recorded\":false,\"exact_readback_recorded\":false}],\"residual_event_count\":0,\"source_claim\":{\"trust\":\"UNVERIFIED_SUBMITTED_FACTS\",\"source_truth_claim\":\"NOT_VERIFIED\",\"original_file_verified\":false,\"fact_origins\":[\"MODEL_EXTRACTED\"],\"document_validity_basis\":\"SUBMITTED_ASSERTION\"},\"completion_claim\":{\"supplied_set_coverage\":\"COMPLETE\",\"eligible_write_status\":\"NONE\",\"whole_business_completeness\":\"NOT_ASSERTED\",\"ledger_write_claim\":\"NOT_WRITTEN\"},\"persistence_mode\":\"ADVANCED\"}}"
+        }
+      ],
+      "structuredContent": {
+        "result": {
+          "case_id": "case-local-claude-20260731-bill-001",
+          "case_version": 2,
+          "state": "PLANNED_NEEDS_PREFLIGHT",
+          "source_revision_hash": "f7e1eb0998eca56a4ce4bb7a46db471f7c4a4e11f29bbcfd571fc06a9611d803",
+          "compiled_plan_hash": "5e886577414e5b44b2d2f3c91bef3b04fcd0707d2d568662dcbcbe82d7be0b6d",
+          "compiler_version": "0.11.0",
+          "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+          "coverage": {
+            "supplied_set": "COMPLETE",
+            "expected_artifacts": 1,
+            "expected_source_units": 1,
+            "expected_fact_requirements": 1,
+            "satisfied_fact_requirements": 1,
+            "missing_fact_requirements": []
+          },
+          "events": [
+            {
+              "event_id": "evt_5e7719a3d07d6e408ef44e8f",
+              "event_key": "event-f74a9b6fe101834abf23b26a3886c660",
+              "disposition": "AUTO_EXECUTE",
+              "route": "SUPPLIER_BILL",
+              "reason_codes": []
+            }
+          ],
+          "operations": [
+            {
+              "operation_id": "op_cb4b18108339550a46babb76",
+              "event_id": "evt_5e7719a3d07d6e408ef44e8f",
+              "action_id": "supplier_bill.create_draft",
+              "state": "PENDING",
+              "provider_receipt_recorded": false,
+              "exact_readback_recorded": false
+            }
+          ],
+          "residual_event_count": 0,
+          "source_claim": {
+            "trust": "UNVERIFIED_SUBMITTED_FACTS",
+            "source_truth_claim": "NOT_VERIFIED",
+            "original_file_verified": false,
+            "fact_origins": [
+              "MODEL_EXTRACTED"
+            ],
+            "document_validity_basis": "SUBMITTED_ASSERTION"
+          },
+          "completion_claim": {
+            "supplied_set_coverage": "COMPLETE",
+            "eligible_write_status": "NONE",
+            "whole_business_completeness": "NOT_ASSERTED",
+            "ledger_write_claim": "NOT_WRITTEN"
+          },
+          "persistence_mode": "ADVANCED"
+        }
+      }
+    },
+    "jsonrpc": "2.0",
+    "id": 9
+  }
+}

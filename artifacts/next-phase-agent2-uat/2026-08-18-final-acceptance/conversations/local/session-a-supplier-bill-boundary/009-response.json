@@ -1,0 +1,38 @@
+{
+  "started": "2026-08-18T05:56:04.599Z",
+  "spec": {
+    "method": "tools/call",
+    "params": {
+      "name": "xero_execute_accounting_case",
+      "arguments": {
+        "case_id": "case-local-claude-20260731-inv-dup",
+        "case_version": 1,
+        "request_id": "req-inv-dup-first",
+        "target_session_ref": "xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0"
+      }
+    }
+  },
+  "response": {
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Accounting Case preflight preparation identity is invalid.\",\"retryable\":false,\"failure_layer\":\"DETERMINISTIC_VALIDATION\",\"provider_mutation_possible\":false,\"recovery_action\":\"CORRECT_CASE_FACTS\"}}"
+        }
+      ],
+      "structuredContent": {
+        "error": {
+          "code": "VALIDATION_FAILED",
+          "message": "Accounting Case preflight preparation identity is invalid.",
+          "retryable": false,
+          "failure_layer": "DETERMINISTIC_VALIDATION",
+          "provider_mutation_possible": false,
+          "recovery_action": "CORRECT_CASE_FACTS"
+        }
+      },
+      "isError": true
+    },
+    "jsonrpc": "2.0",
+    "id": 12
+  }
+}

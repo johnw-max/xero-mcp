@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "round_id": "round-2026-08-13-local",
+  "generated_at": "2026-08-13T18:55:00+08:00",
+  "stage": "LOCAL_FIXED_POINT_PENDING_REVIEW",
+  "release_version": "0.4.0-rc.1",
+  "static_release_attestation": {
+    "controlKernel": "ledger-control-kernel-v1",
+    "ledgerAuthoritySnapshot": "ledger-authority-snapshot:v1",
+    "accountingCaseCompiler": "0.4.0",
+    "accountingPolicy": "xero-sg-test-policy-v4-2026h2",
+    "accountingCaseReadbackValidator": "accounting-case-economic-readback-v1",
+    "xeroNativeRouteContract": "xero-native-route-contract-v1",
+    "xeroContactIdentityContract": "xero-contact-identity-v1",
+    "requiredMigration": "032_ledger_authority_snapshots.sql",
+    "publicToolProfile": "xero-accounting-case-v1",
+    "executionAuthority": "STANDING_DELEGATION",
+    "writeCompletion": "PROVIDER_ID_RECEIPT_EXACT_READBACK"
+  },
+  "static_release_attestation_hash": "8e4dc53eafdc718b94c40c2ead4a2efc5b29d2884ca2f6490ba9318a573226cf",
+  "public_tool_count": 28,
+  "public_toolset_hash": "a43155caabe2f4f4ba0c23f1ad37d6abdfdb4761bad3527884d1e9969b730e87",
+  "required_migration_head": "032_ledger_authority_snapshots.sql",
+  "local_runtime_attestation": {
+    "source": "artifacts/harness-runs/p0-readonly-final-authority/evidence.jsonl#local-readyz",
+    "status": "ready",
+    "writeMode": "READ_ONLY",
+    "processWriteGateEnabled": false,
+    "authoritySnapshotRevision": 1,
+    "authoritySnapshotHash": "949a872e19acbcf1a1981d9cdc18eecca685600c205634bdb8ac4e898cc8d147",
+    "authorityWriteKillSwitchEnabled": false,
+    "storageMode": "IN_MEMORY",
+    "repositoryReady": true,
+    "requiredMigrationStatus": "NOT_APPLICABLE",
+    "migrationHead": null,
+    "runtimeAttestationHash": "d7bd6e4cce580b3770021182b46447e613aa74fa0db8316ebccf74ecc0dfc15f",
+    "limitations": "This executable receipt proves the local in-memory read-only control plane. PostgreSQL migration 032 was proven separately by the 73-test required PG gate; no deployed PostgreSQL readyz receipt was captured."
+  },
+  "build_identity": {
+    "git_commit": null,
+    "image_digest": null,
+    "source_bundle_sha256": "ee2dbd1f87a8ca85957243c97e12d86f6ae5735c8d2fba1ec3bb3ca9a3604f0f",
+    "reason": "The shared dirty worktree was intentionally not staged or committed. The deterministic source-bundle digest identifies this local fixed point but is not a deployed image digest."
+  },
+  "gate_status": {
+    "local": "PASS_PENDING_ORIGINAL_REVIEWER_CLOSURE",
+    "agent2": "NOT_RUN",
+    "work": "NOT_RUN"
+  },
+  "promotion_decision": "NO_GO_UNTIL_GATE_A2_AND_GATE_W_HAVE_MATCHING_LIVE_ATTESTATION_AND_RECEIPTS"
+}

@@ -1,0 +1,271 @@
+{
+  "schema_version": "1.0",
+  "run_id": "p0-accounting-case-2026-08-13T06-04-49.328Z",
+  "suite_id": "xero-accounting-case-deterministic-p0",
+  "layer": "DETERMINISTIC_CONTRACT",
+  "started_at": "2026-08-13T06:04:49.328Z",
+  "finished_at": "2026-08-13T06:04:49.358Z",
+  "environment": {
+    "target": "IN_MEMORY",
+    "data_class": "SYNTHETIC_ONLY",
+    "write_gate_start": "CLOSED",
+    "write_gate_end": "CLOSED",
+    "secrets_redacted": true,
+    "mcp_server_version": "0.4.0-rc.1",
+    "oauth_binding_fingerprint": "synthetic-exact-binding-v7"
+  },
+  "case_results": [
+    {
+      "case_id": "AC-SURFACE-001",
+      "persona_id": "protocol_security_agent",
+      "repeat_index": 1,
+      "baseline_expectation": "PASS",
+      "actual_status": "PASS",
+      "hard_gate_passed": true,
+      "expected_red_observed": false,
+      "oracle_results": [
+        {
+          "oracle_id": "exact_28_tools",
+          "strength": "HARD",
+          "status": "PASS",
+          "observed": {
+            "expectedCount": 28,
+            "actualCount": 28
+          },
+          "evidence_refs": [
+            "evidence.jsonl#ev_00001"
+          ],
+          "message": "The Agent-facing MCP surface must equal the reviewed 28-tool allowlist."
+        },
+        {
+          "oracle_id": "legacy_mutation_tools_absent",
+          "strength": "HARD",
+          "status": "PASS",
+          "observed": {
+            "advertised": false,
+            "directCallRejected": true
+          },
+          "evidence_refs": [
+            "evidence.jsonl#ev_00002",
+            "evidence.jsonl#ev_00003"
+          ],
+          "message": "An unadvertised object-level writer must remain uncallable."
+        },
+        {
+          "oracle_id": "execute_payload_injection_rejected",
+          "strength": "HARD",
+          "status": "PASS",
+          "observed": {
+            "rejected": true,
+            "caseServiceExecuteCalls": 0
+          },
+          "evidence_refs": [
+            "evidence.jsonl#ev_00004",
+            "evidence.jsonl#ev_00005"
+          ],
+          "message": "Execute must reject Agent-supplied accounting payload before the Case service."
+        }
+      ],
+      "evidence_refs": [
+        "evidence.jsonl#ev_00001",
+        "evidence.jsonl#ev_00002",
+        "evidence.jsonl#ev_00003",
+        "evidence.jsonl#ev_00004",
+        "evidence.jsonl#ev_00005"
+      ]
+    },
+    {
+      "case_id": "AC-CASE-PREPARE-002",
+      "persona_id": "protocol_security_agent",
+      "repeat_index": 1,
+      "baseline_expectation": "PASS",
+      "actual_status": "PASS",
+      "hard_gate_passed": true,
+      "expected_red_observed": false,
+      "oracle_results": [
+        {
+          "oracle_id": "prepare_called_once",
+          "strength": "HARD",
+          "status": "PASS",
+          "observed": {
+            "isError": false,
+            "caseServicePrepareCalls": 1
+          },
+          "evidence_refs": [
+            "evidence.jsonl#ev_00006",
+            "evidence.jsonl#ev_00007"
+          ],
+          "message": "The public Case prepare tool must call the Case service exactly once."
+        },
+        {
+          "oracle_id": "prepare_not_written",
+          "strength": "HARD",
+          "status": "PASS",
+          "observed": {
+            "providerWriteAttemptsBefore": 0,
+            "providerWriteAttemptsAfter": 0,
+            "ledgerWriteClaim": "NOT_WRITTEN"
+          },
+          "evidence_refs": [
+            "evidence.jsonl#ev_00006",
+            "evidence.jsonl#ev_00007",
+            "evidence.jsonl#ev_00008"
+          ],
+          "message": "Prepare must persist a plan but never claim or perform a Xero write."
+        }
+      ],
+      "evidence_refs": [
+        "evidence.jsonl#ev_00006",
+        "evidence.jsonl#ev_00007",
+        "evidence.jsonl#ev_00008"
+      ]
+    },
+    {
+      "case_id": "AC-DELEGATION-003",
+      "persona_id": "controller_recovery_agent",
+      "repeat_index": 1,
+      "baseline_expectation": "PASS",
+      "actual_status": "PASS",
+      "hard_gate_passed": true,
+      "expected_red_observed": false,
+      "oracle_results": [
+        {
+          "oracle_id": "execute_identity_only",
+          "strength": "HARD",
+          "status": "PASS",
+          "observed": {
+            "keys": [
+              "case_id",
+              "case_version",
+              "request_id"
+            ]
+          },
+          "evidence_refs": [
+            "evidence.jsonl#ev_00010",
+            "evidence.jsonl#ev_00011"
+          ],
+          "message": "Execute must receive only immutable Case and idempotent request identity."
+        },
+        {
+          "oracle_id": "standing_delegation_preflight",
+          "strength": "HARD",
+          "status": "PASS",
+          "observed": {
+            "preflights": [
+              [
+                "customer_invoice.create_draft"
+              ]
+            ],
+            "durableReceiptHash": "f34a1cb6eb37bd92bc95eaf6e39f82f8442dd24ec16ea140af74582bc3175197",
+            "delegationBindingRevision": 7
+          },
+          "evidence_refs": [
+            "evidence.jsonl#ev_00013",
+            "evidence.jsonl#ev_00015"
+          ],
+          "message": "The full stored plan must persist its Standing Delegation preflight receipt before writing."
+        },
+        {
+          "oracle_id": "durable_mutation_projection",
+          "strength": "HARD",
+          "status": "PASS",
+          "observed": {
+            "linked": true,
+            "operationState": "READBACK_VERIFIED",
+            "preparationState": "CONSUMED",
+            "mutationState": "READBACK_VERIFIED"
+          },
+          "evidence_refs": [
+            "evidence.jsonl#ev_00013",
+            "evidence.jsonl#ev_00014",
+            "evidence.jsonl#ev_00016"
+          ],
+          "message": "Terminal Case evidence must be projected from one fully bound durable Xero preparation and mutation request."
+        },
+        {
+          "oracle_id": "terminal_requires_receipt_and_readback",
+          "strength": "HARD",
+          "status": "PASS",
+          "observed": {
+            "state": "TERMINAL",
+            "ledgerWriteClaim": "ALL_ELIGIBLE_WRITES_READBACK_VERIFIED",
+            "readbackVerified": true,
+            "providerRecords": 1
+          },
+          "evidence_refs": [
+            "evidence.jsonl#ev_00016",
+            "evidence.jsonl#ev_00010",
+            "evidence.jsonl#ev_00011"
+          ],
+          "message": "Success requires one provider receipt and exact same-ID readback."
+        },
+        {
+          "oracle_id": "same_request_idempotent_replay",
+          "strength": "HARD",
+          "status": "PASS",
+          "observed": {
+            "caseServiceExecuteCalls": 2,
+            "providerWriteAttempts": 1
+          },
+          "evidence_refs": [
+            "evidence.jsonl#ev_00017",
+            "evidence.jsonl#ev_00018"
+          ],
+          "message": "The same execution request must replay terminal evidence without another provider write."
+        },
+        {
+          "oracle_id": "status_preserves_terminal_evidence",
+          "strength": "HARD",
+          "status": "PASS",
+          "observed": {
+            "state": "TERMINAL",
+            "ledgerWriteClaim": "ALL_ELIGIBLE_WRITES_READBACK_VERIFIED"
+          },
+          "evidence_refs": [
+            "evidence.jsonl#ev_00019",
+            "evidence.jsonl#ev_00020"
+          ],
+          "message": "Case status must preserve the receipt/readback-bounded terminal claim."
+        },
+        {
+          "oracle_id": "write_gate_closed_after_run",
+          "strength": "HARD",
+          "status": "PASS",
+          "observed": {
+            "state": "CLOSED"
+          },
+          "evidence_refs": [
+            "evidence.jsonl#ev_00012"
+          ],
+          "message": "The isolated synthetic write gate must close after execution."
+        }
+      ],
+      "evidence_refs": [
+        "evidence.jsonl#ev_00009",
+        "evidence.jsonl#ev_00010",
+        "evidence.jsonl#ev_00011",
+        "evidence.jsonl#ev_00012",
+        "evidence.jsonl#ev_00013",
+        "evidence.jsonl#ev_00014",
+        "evidence.jsonl#ev_00015",
+        "evidence.jsonl#ev_00016",
+        "evidence.jsonl#ev_00017",
+        "evidence.jsonl#ev_00018",
+        "evidence.jsonl#ev_00019",
+        "evidence.jsonl#ev_00020"
+      ]
+    }
+  ],
+  "summary": {
+    "total": 3,
+    "pass": 3,
+    "fail": 0,
+    "blocked_model_provider": 0,
+    "blocked_env": 0,
+    "blocked_test_data": 0,
+    "unsupported": 0,
+    "flaky": 0,
+    "not_run": 0
+  },
+  "claim_guardrail_violations": []
+}

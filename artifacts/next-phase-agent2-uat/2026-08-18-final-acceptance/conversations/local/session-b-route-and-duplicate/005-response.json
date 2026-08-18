@@ -1,0 +1,113 @@
+{
+  "started": "2026-08-18T06:00:06.937Z",
+  "spec": {
+    "method": "tools/call",
+    "params": {
+      "name": "xero_prepare_accounting_case",
+      "arguments": {
+        "case_id": "case-local-claude-inv-20260731-002",
+        "expected_version": 0,
+        "source_label": "客户交来的销售发票 EXC-2026-0731",
+        "source_set_complete": true,
+        "target_session_ref": "xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0",
+        "documents": [
+          {
+            "document_type": "CUSTOMER_INVOICE",
+            "reference": "EXC-2026-0731",
+            "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+            "document_date": "2026-07-31",
+            "due_date": "2026-08-30",
+            "currency": "SGD",
+            "contact": {
+              "name": "Exact Customer"
+            },
+            "transition_review_required": false,
+            "declared_net": "1200.00",
+            "declared_tax": "108.00",
+            "declared_gross": "1308.00",
+            "document_validity": "TEST_OR_NOT_VALID",
+            "line_accounting_mode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+            "accounting_category": "CONSULTING_REVENUE",
+            "tax_class": "SG_STANDARD_RATED",
+            "effective_tax_rate_percent": "9",
+            "lines": [
+              {
+                "description": "咨询服务 2026 年 7 月",
+                "quantity": "1",
+                "unit_amount_excluding_tax": "1200.00",
+                "source_tax_amount": "108.00"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"result\":{\"case_id\":\"case-local-claude-inv-20260731-002\",\"case_version\":1,\"state\":\"PLANNED_NEEDS_PREFLIGHT\",\"source_revision_hash\":\"d387a5e8662f5cf0870003793c9d8b996527842ae50170aaa30beb64335be6e1\",\"compiled_plan_hash\":\"1947a61cde5d944b0e82c0ab87bb61fa34d0ffadf7d89aa3ee0e571f44a2d59b\",\"compiler_version\":\"0.11.0\",\"policy_version\":\"xero-sg-accounting-policy-v8-2026h2\",\"coverage\":{\"supplied_set\":\"COMPLETE\",\"expected_artifacts\":1,\"expected_source_units\":1,\"expected_fact_requirements\":1,\"satisfied_fact_requirements\":1,\"missing_fact_requirements\":[]},\"events\":[{\"event_id\":\"evt_5a16215e956b596dd9abcabd\",\"event_key\":\"event-5c91cb7655445c425c5c65c106fb3f40\",\"disposition\":\"AUTO_EXECUTE\",\"route\":\"SALES_INVOICE\",\"reason_codes\":[]}],\"operations\":[{\"operation_id\":\"op_047a8769667b10484ae51915\",\"event_id\":\"evt_5a16215e956b596dd9abcabd\",\"action_id\":\"customer_invoice.create_draft\",\"state\":\"PENDING\",\"provider_receipt_recorded\":false,\"exact_readback_recorded\":false}],\"residual_event_count\":0,\"source_claim\":{\"trust\":\"UNVERIFIED_SUBMITTED_FACTS\",\"source_truth_claim\":\"NOT_VERIFIED\",\"original_file_verified\":false,\"fact_origins\":[\"MODEL_EXTRACTED\"],\"document_validity_basis\":\"SUBMITTED_ASSERTION\"},\"completion_claim\":{\"supplied_set_coverage\":\"COMPLETE\",\"eligible_write_status\":\"NONE\",\"whole_business_completeness\":\"NOT_ASSERTED\",\"ledger_write_claim\":\"NOT_WRITTEN\"},\"persistence_mode\":\"CREATED\"}}"
+        }
+      ],
+      "structuredContent": {
+        "result": {
+          "case_id": "case-local-claude-inv-20260731-002",
+          "case_version": 1,
+          "state": "PLANNED_NEEDS_PREFLIGHT",
+          "source_revision_hash": "d387a5e8662f5cf0870003793c9d8b996527842ae50170aaa30beb64335be6e1",
+          "compiled_plan_hash": "1947a61cde5d944b0e82c0ab87bb61fa34d0ffadf7d89aa3ee0e571f44a2d59b",
+          "compiler_version": "0.11.0",
+          "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+          "coverage": {
+            "supplied_set": "COMPLETE",
+            "expected_artifacts": 1,
+            "expected_source_units": 1,
+            "expected_fact_requirements": 1,
+            "satisfied_fact_requirements": 1,
+            "missing_fact_requirements": []
+          },
+          "events": [
+            {
+              "event_id": "evt_5a16215e956b596dd9abcabd",
+              "event_key": "event-5c91cb7655445c425c5c65c106fb3f40",
+              "disposition": "AUTO_EXECUTE",
+              "route": "SALES_INVOICE",
+              "reason_codes": []
+            }
+          ],
+          "operations": [
+            {
+              "operation_id": "op_047a8769667b10484ae51915",
+              "event_id": "evt_5a16215e956b596dd9abcabd",
+              "action_id": "customer_invoice.create_draft",
+              "state": "PENDING",
+              "provider_receipt_recorded": false,
+              "exact_readback_recorded": false
+            }
+          ],
+          "residual_event_count": 0,
+          "source_claim": {
+            "trust": "UNVERIFIED_SUBMITTED_FACTS",
+            "source_truth_claim": "NOT_VERIFIED",
+            "original_file_verified": false,
+            "fact_origins": [
+              "MODEL_EXTRACTED"
+            ],
+            "document_validity_basis": "SUBMITTED_ASSERTION"
+          },
+          "completion_claim": {
+            "supplied_set_coverage": "COMPLETE",
+            "eligible_write_status": "NONE",
+            "whole_business_completeness": "NOT_ASSERTED",
+            "ledger_write_claim": "NOT_WRITTEN"
+          },
+          "persistence_mode": "CREATED"
+        }
+      }
+    },
+    "jsonrpc": "2.0",
+    "id": 8
+  }
+}

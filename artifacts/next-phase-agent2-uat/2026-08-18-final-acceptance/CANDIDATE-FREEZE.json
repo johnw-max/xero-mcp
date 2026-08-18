@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0",
+  "kind": "LOCAL_CANDIDATE_FREEZE_ATTESTATION",
+  "generated_at": "2026-08-18T05:20:37.492Z",
+  "release_version": "0.4.0-rc.1",
+  "git": {
+    "branch": "codex/xero-org-switch-governance-20260810",
+    "head": "f7675cbc132b1dac7cc9983ed342f7e9af864614",
+    "worktree_clean": false,
+    "tracked_modified": 144,
+    "untracked": 345
+  },
+  "acceptance_source_fingerprint": {
+    "algorithm": "sha256-path-size-executable-content-v2",
+    "file_count": 566,
+    "sha256": "8d8371cf087d0ced5b81b81a7a928b7a106b2f62e40710ed5aca8e17eba64287",
+    "roots": [
+      ".dockerignore",
+      ".gitignore",
+      "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+      "README.md",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "tsconfig.build.json",
+      "agent-skills",
+      "config",
+      "deploy",
+      "docs",
+      "handoff",
+      "harness",
+      "migrations",
+      "schemas",
+      "scripts",
+      "src",
+      "tests"
+    ]
+  },
+  "acceptance_source_roots": [
+    ".dockerignore",
+    ".gitignore",
+    "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+    "README.md",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "agent-skills",
+    "config",
+    "deploy",
+    "docs",
+    "handoff",
+    "harness",
+    "migrations",
+    "schemas",
+    "scripts",
+    "src",
+    "tests"
+  ],
+  "tool_allowlist_sha256": "cce4620bb6a48622758a92de7cf4e256d98851426ba16f4ae8797553a808bbbf",
+  "tool_count": 28,
+  "migrations": {
+    "count": 36,
+    "latest": "040_xero_native_idempotency_recovery_claim.sql",
+    "first": "001_init.sql"
+  },
+  "file_count": 566,
+  "superseded_note": "Superseded fingerprint dbf0ce4da0818e217a6dc76a432b11d3e35e5be6a0ae4360781f86498395fd74 was frozen before the XF-019 harness extension (supplier-bill support in harness/runners/run-p0-accounting-case.ts). Re-frozen after that change.",
+  "refrozen_at": "2026-08-18T06:05:00Z"
+}

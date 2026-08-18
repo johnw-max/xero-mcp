@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.0",
+  "round_id": "round-2026-08-13-local",
+  "generated_at": "2026-08-13T18:55:00+08:00",
+  "gate": "LOCAL",
+  "overall_status": "PASS_PENDING_ORIGINAL_REVIEWER_CLOSURE",
+  "evidence_policy": "Counts below are from the final shared-tree fixed point. Local synthetic, PostgreSQL, HTTP, offline contract, Agent2 dry-run, and live Agent2/Work evidence are kept distinct.",
+  "current_results": [
+    {
+      "id": "typecheck",
+      "scope": "TypeScript typecheck",
+      "status": "PASS",
+      "command": "npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "scope": "Production TypeScript build and OAuth asset copy",
+      "status": "PASS",
+      "command": "npm run build",
+      "exit_code": 0
+    },
+    {
+      "id": "full-regression",
+      "scope": "Full Vitest regression with local PostgreSQL and loopback enabled",
+      "status": "PASS",
+      "command": "TEST_DATABASE_URL=<redacted-local-postgres-url> npm test -- --reporter=dot --maxWorkers=1",
+      "test_files_passed": 113,
+      "test_files_skipped": 1,
+      "tests_passed": 1132,
+      "tests_skipped": 3,
+      "tests_failed": 0,
+      "exit_code": 0
+    },
+    {
+      "id": "postgres-required",
+      "scope": "Required PostgreSQL migrations, repository, OAuth, target, authority, provenance, duplicate and recovery gates",
+      "status": "PASS",
+      "command": "TEST_DATABASE_URL=<redacted-local-postgres-url> npm run test:postgres:required",
+      "test_files_passed": 13,
+      "tests_passed": 73,
+      "tests_failed": 0,
+      "exit_code": 0
+    },
+    {
+      "id": "http-required",
+      "scope": "HTTP OAuth/readiness loopback gate",
+      "status": "PASS",
+      "command": "npm run test:http:required",
+      "test_files_passed": 1,
+      "tests_passed": 3,
+      "tests_failed": 0,
+      "exit_code": 0
+    },
+    {
+      "id": "p0-readonly",
+      "scope": "Production-boundary read-only deterministic runner",
+      "status": "PASS",
+      "command": "npm exec tsx harness/runners/run-p0-readonly.ts -- --run-id p0-readonly-final-authority-20260813 --output-dir artifacts/harness-runs/p0-readonly-final-authority",
+      "cases_passed": 6,
+      "cases_failed": 0,
+      "provider_write_attempts": 0,
+      "artifact_path": "artifacts/harness-runs/p0-readonly-final-authority"
+    },
+    {
+      "id": "p0-accounting-case",
+      "scope": "Public Accounting Case prepare/execute/status deterministic runner",
+      "status": "PASS",
+      "command": "npm exec tsx harness/runners/run-p0-accounting-case.ts -- --run-id p0-accounting-case-final-20260813 --out-dir artifacts/harness-runs/p0-accounting-case-final-20260813",
+      "cases_passed": 3,
+      "cases_failed": 0,
+      "provider_write_attempts": 1,
+      "artifact_path": "artifacts/harness-runs/p0-accounting-case-final-20260813"
+    },
+    {
+      "id": "provider-neutral-conformance",
+      "scope": "Non-Xero fake adapter uses the shared compiler, kernel, one-shot permit, receipt and exact-readback contract",
+      "status": "PASS",
+      "tests_passed": 2,
+      "tests_failed": 0,
+      "provenance": "Independent final reviewer rerun plus full regression"
+    },
+    {
+      "id": "agent2-runner-verifier",
+      "scope": "Agent2 runner schema, evidence linkage, exact call count and evidence-class isolation",
+      "status": "PASS_LOCAL_VERIFIER_ONLY",
+      "command": "node --test harness/remote-agents/verify-runner.mjs",
+      "tests_passed": 18,
+      "tests_failed": 0,
+      "exit_code": 0
+    },
+    {
+      "id": "agent2-negative-offline-contract",
+      "scope": "Offline fault-injection oracle for 12 negative cases",
+      "status": "PASS_OFFLINE_CONTRACT",
+      "cases_passed": 12,
+      "cases_failed": 0,
+      "limitations": "This is not live Agent2, MCP, OAuth, tenant or Provider evidence. Tool counts do not prove Provider request counts."
+    },
+    {
+      "id": "agent2-negative-live-plan",
+      "scope": "Live Agent2 negative acceptance plan validation",
+      "status": "NOT_RUN",
+      "cases_not_run": 12,
+      "http_attempts": 0,
+      "limitations": "Dry-run only; no credentials, current Agent IDs or Xero test-tenant execution were available."
+    },
+    {
+      "id": "static-release",
+      "scope": "Static release contract and dirty-diff whitespace check",
+      "status": "PASS",
+      "command": "bash deploy/scripts/verify-static.sh && git diff --check",
+      "exit_code": 0
+    },
+    {
+      "id": "release-bundle",
+      "scope": "Deterministic source bundle build and independent verification",
+      "status": "PASS",
+      "file_count": 163,
+      "archive_sha256": "ee2dbd1f87a8ca85957243c97e12d86f6ae5735c8d2fba1ec3bb3ca9a3604f0f",
+      "manifest_sha256": "f4036a77eaec7653edd09dbdd20a50ea5771a4452aff0bbfc1dd3e42e19e2a98",
+      "secret_findings": 0,
+      "legacy_domain_findings": 0,
+      "forbidden_path_findings": 0
+    }
+  ],
+  "higher_gates": {
+    "agent2": "NOT_RUN",
+    "work": "NOT_RUN"
+  }
+}

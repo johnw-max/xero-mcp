@@ -1,0 +1,59 @@
+{
+  "started": "2026-08-18T05:38:56.637Z",
+  "spec": {
+    "method": "tools/call",
+    "params": {
+      "name": "xero_get_organisation",
+      "arguments": {
+        "target_session_ref": "xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0"
+      }
+    }
+  },
+  "response": {
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"result\":{\"name\":\"Synthetic Case Company\",\"countryCode\":\"SG\",\"baseCurrency\":\"SGD\",\"paysTax\":true,\"organisationStatus\":\"ACTIVE\"},\"result_class\":\"succeeded\",\"fact_origin\":\"MCP_READ\",\"source_system\":\"xero\",\"capability_id\":\"ledger.target.resolve\",\"tool_call_or_audit_ref\":\"call_fcfb1334-8173-4320-94d2-d24218db8977\",\"capability_revision\":\"xero-mcp@0.4.0-rc.1\",\"observed_at\":\"2026-08-18T05:38:56.643Z\",\"query_bounds\":{\"target_scope\":\"active_server_bound_xero_organisation\",\"requested\":{}},\"completeness\":{\"status\":\"complete\",\"scope\":\"active_server_bound_xero_organisation\"},\"output_hash\":\"sha256:02e7149a8e47c2313b8decf823f6ab6f8ab2accfa805892ea46442a2671651a6\",\"fact_paths\":[\"/result/name\",\"/result/baseCurrency\"],\"base_currency\":\"SGD\",\"target_session_ref_safe\":\"xero-target-session:584bd9da4d9292810c4c6888972c8051\",\"destination_role\":\"ledger_sor\",\"bound_target_ref_safe\":\"xero-target:84eab90dc68b3570ae5436c85b715e06\",\"organisation_display_name\":\"Synthetic Case Company\",\"binding_revision\":\"xero-binding-revision:a71cdf7c38f840b5bd07941430e58876\"}"
+        }
+      ],
+      "structuredContent": {
+        "result": {
+          "name": "Synthetic Case Company",
+          "countryCode": "SG",
+          "baseCurrency": "SGD",
+          "paysTax": true,
+          "organisationStatus": "ACTIVE"
+        },
+        "result_class": "succeeded",
+        "fact_origin": "MCP_READ",
+        "source_system": "xero",
+        "capability_id": "ledger.target.resolve",
+        "tool_call_or_audit_ref": "call_fcfb1334-8173-4320-94d2-d24218db8977",
+        "capability_revision": "xero-mcp@0.4.0-rc.1",
+        "observed_at": "2026-08-18T05:38:56.643Z",
+        "query_bounds": {
+          "target_scope": "active_server_bound_xero_organisation",
+          "requested": {}
+        },
+        "completeness": {
+          "status": "complete",
+          "scope": "active_server_bound_xero_organisation"
+        },
+        "output_hash": "sha256:02e7149a8e47c2313b8decf823f6ab6f8ab2accfa805892ea46442a2671651a6",
+        "fact_paths": [
+          "/result/name",
+          "/result/baseCurrency"
+        ],
+        "base_currency": "SGD",
+        "target_session_ref_safe": "xero-target-session:584bd9da4d9292810c4c6888972c8051",
+        "destination_role": "ledger_sor",
+        "bound_target_ref_safe": "xero-target:84eab90dc68b3570ae5436c85b715e06",
+        "organisation_display_name": "Synthetic Case Company",
+        "binding_revision": "xero-binding-revision:a71cdf7c38f840b5bd07941430e58876"
+      }
+    },
+    "jsonrpc": "2.0",
+    "id": 6
+  }
+}

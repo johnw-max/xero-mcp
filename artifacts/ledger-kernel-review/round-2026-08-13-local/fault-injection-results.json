@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "round_id": "round-2026-08-13-local",
+  "generated_at": "2026-08-13T18:55:00+08:00",
+  "overall_status": "PASS_LOCAL_WITH_EXPLICIT_LIVE_RESIDUALS",
+  "results": [
+    {
+      "id": "economic-mismatch",
+      "failure_domain": "Wrong source amount, tax, total or self-consistent Provider readback including the OfficeHub 80/800 case",
+      "status": "PASS_LOCAL",
+      "evidence": ["tests/accounting-case-source-bridge.test.ts", "tests/accounting-case-readback-validator.test.ts", "tests/p0-controlled-write-scenario-runner.test.ts", "test-results.json#full-regression"],
+      "observed": "Source mutations fail before write; a deliberately wrong post-write economic readback converges to READBACK_MISMATCH/RECOVERY_REQUIRED and a second execute does not create again.",
+      "limitations": "Synthetic Provider only; real Xero economic readback remains Gate A2/W evidence."
+    },
+    {
+      "id": "unknown-result-recovery",
+      "failure_domain": "Provider success followed by timeout, response loss or readback mismatch",
+      "status": "PASS_LOCAL_AND_POSTGRES",
+      "evidence": ["tests/provider-write-recovery.test.ts", "tests/xero-accounting-case-service.test.ts", "tests/accounting-case-postgres-repository.integration.test.ts", "test-results.json#postgres-required"],
+      "observed": "Unknown/mismatch states are durable; recovery is exact GET only; no duplicate create is permitted.",
+      "limitations": "Live Provider request count requires server audit/Provider trace/Xero object count."
+    },
+    {
+      "id": "tenant-and-target-binding",
+      "failure_domain": "Wrong tenant, workspace, subject, agent, installation, binding revision, connection or target session",
+      "status": "PASS_LOCAL_AND_POSTGRES",
+      "evidence": ["tests/ledger-target-session-service.test.ts", "tests/xero-accounting-case-service.test.ts", "tests/postgres-ledger-target-session.integration.test.ts", "test-results.json#postgres-required"],
+      "observed": "Cross-boundary access fails before Provider mutation; same-organisation renewed targets allow status/GET-only recovery but not an old fresh create."
+    },
+    {
+      "id": "dynamic-authority-revocation",
+      "failure_domain": "Old process continues after delegation revocation or kill-switch revision",
+      "status": "PASS_LOCAL_AND_POSTGRES",
+      "evidence": ["tests/ledger-authority-snapshot.test.ts", "tests/postgres-ledger-authority.integration.test.ts", "tests/ledger-authority-migration.integration.test.ts", "tests/runtime-readiness-evidence.test.ts"],
+      "observed": "Every preflight/final claim rereads the durable snapshot; stale revision loses the bootstrap race; readyz reports the current revision/hash/effective mode."
+    },
+    {
+      "id": "raw-write-bypass",
+      "failure_domain": "Direct legacy writer, raw SDK call, permit reuse or Agent-supplied execute payload",
+      "status": "PASS_LOCAL",
+      "evidence": ["tests/xero-provider-write-permit-boundary.test.ts", "tests/ledger-provider-write-permit.test.ts", "artifacts/harness-runs/p0-accounting-case-final-20260813/oracle-results.json#AC-SURFACE-001"],
+      "observed": "Public surface is 28 tools; raw writers require a poison-first one-shot permit bound to identity/action/payload/request; execute accepts Case identifiers only."
+    },
+    {
+      "id": "contact-tax-route-drift",
+      "failure_domain": "Same-name contact swap, strong-key collision, inactive/duplicate/wrong-rate tax code or unsupported provider route",
+      "status": "PASS_LOCAL",
+      "evidence": ["tests/xero-contact-identity.test.ts", "tests/xero-tax-rate-resolver.test.ts", "tests/xero-native-route-contract.test.ts", "tests/xero-accounting-case-service.test.ts"],
+      "observed": "Server-owned identity and provider references are sealed and rechecked; ambiguous or stale decisions fail before permit/write."
+    },
+    {
+      "id": "permission-connection-taxonomy",
+      "failure_domain": "MCP scope, connection, Provider access, tenant policy, kill switch, rate limit and response uncertainty",
+      "status": "PASS_LOCAL_CONTRACT",
+      "evidence": ["tests/xero-error-taxonomy.test.ts", "tests/http-oauth-edge.test.ts", "harness/remote-agents/manifests/mock-v040rc-negative-contract.json"],
+      "observed": "Local envelopes preserve distinct safe layers/reasons/recovery actions; twelve offline negative contracts pass.",
+      "limitations": "The twelve matching live Agent2 cases are dry-run NOT_RUN."
+    },
+    {
+      "id": "agent-false-success",
+      "failure_domain": "Prompt injection, contact-only result or prose success without five document receipts/readbacks",
+      "status": "PASS_LOCAL_VERIFIER_ONLY",
+      "evidence": ["harness/remote-agents/verify-runner.mjs", "harness/remote-agents/manifests/agent2-xero-v040rc-accounting-case-uat.template.json", "harness/remote-agents/manifests/agent2-xero-v040rc-negative-acceptance.template.json"],
+      "observed": "Structured action multiset, exact execute count and receipt/readback assertions reject local false-green fixtures.",
+      "limitations": "Agent2 and Work conversations are NOT_RUN; tool-call counts do not prove Provider-call counts."
+    }
+  ]
+}

@@ -1,0 +1,174 @@
+{
+  "schema_version": "1.1",
+  "gate": "LOCAL_RELEASE_ACCEPTANCE",
+  "gate_l_claim": "NOT_IMPLIED",
+  "independent_review_authority": "LOCAL_EVIDENCE_UNTRUSTED",
+  "gate_run_id": "43be947a-ce97-417f-86d0-8a89245f4673",
+  "live_review_challenge_sha256": "8660f0e04c4637a7a7574d63264c9b2490a52fae61795cbe3527a9954d95e027",
+  "approved_review_codex_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "approved_review_runtime_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "status": "FAIL",
+  "started_at": "2026-08-18T05:21:49.948Z",
+  "finished_at": "2026-08-18T05:21:50.095Z",
+  "test_database": {
+    "database_name": "xero_mcp_test_gatel_20260818",
+    "protocol": "postgres:",
+    "host_hash": "641ad241009361767f2f84dd6fe209f02d45771b2b6e052a07e2c9b26a3ec0bc"
+  },
+  "execution_boundary": "DIGEST_NAMED_READ_ONLY_SOURCE_SNAPSHOT",
+  "approved_control_catalog_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "source_snapshot": {
+    "fingerprint": {
+      "algorithm": "sha256-path-size-executable-content-v2",
+      "file_count": 566,
+      "sha256": "dbf0ce4da0818e217a6dc76a432b11d3e35e5be6a0ae4360781f86498395fd74",
+      "roots": [
+        ".dockerignore",
+        ".gitignore",
+        "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+        "README.md",
+        "package.json",
+        "package-lock.json",
+        "tsconfig.json",
+        "tsconfig.build.json",
+        "agent-skills",
+        "config",
+        "deploy",
+        "docs",
+        "handoff",
+        "harness",
+        "migrations",
+        "schemas",
+        "scripts",
+        "src",
+        "tests"
+      ]
+    },
+    "original_mutation_guard": {
+      "algorithm": "sha256-path-type-device-inode-mode-size-ctime-mtime-v1",
+      "entry_count": 652,
+      "sha256": "54186a97c1d94bfb67c71e14052adcb7b4e97cc5d8ed7a099949345ed32e3d25"
+    },
+    "immutable_snapshot_mutation_guard": {
+      "algorithm": "sha256-path-type-device-inode-mode-size-ctime-mtime-v1",
+      "entry_count": 652,
+      "sha256": "175aa3b742d49a4a45a468d5b5d33437c9daab8b3a589ff9cb08df9f0ef1c998"
+    },
+    "manifest_file": "source-snapshot.manifest.json",
+    "manifest_sha256": "bdb7ef326fa0732e12917ea655b111f9aa593ba523276fd75fd474d334434261",
+    "file_count": 566,
+    "dependencies_copied_not_linked": true,
+    "git_metadata_copied_not_linked": true
+  },
+  "source_fingerprint_before": {
+    "algorithm": "sha256-path-size-executable-content-v2",
+    "file_count": 566,
+    "sha256": "dbf0ce4da0818e217a6dc76a432b11d3e35e5be6a0ae4360781f86498395fd74",
+    "roots": [
+      ".dockerignore",
+      ".gitignore",
+      "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+      "README.md",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "tsconfig.build.json",
+      "agent-skills",
+      "config",
+      "deploy",
+      "docs",
+      "handoff",
+      "harness",
+      "migrations",
+      "schemas",
+      "scripts",
+      "src",
+      "tests"
+    ]
+  },
+  "source_fingerprint_after": {
+    "algorithm": "sha256-path-size-executable-content-v2",
+    "file_count": 566,
+    "sha256": "dbf0ce4da0818e217a6dc76a432b11d3e35e5be6a0ae4360781f86498395fd74",
+    "roots": [
+      ".dockerignore",
+      ".gitignore",
+      "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+      "README.md",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "tsconfig.build.json",
+      "agent-skills",
+      "config",
+      "deploy",
+      "docs",
+      "handoff",
+      "harness",
+      "migrations",
+      "schemas",
+      "scripts",
+      "src",
+      "tests"
+    ]
+  },
+  "snapshot_fingerprint_after": {
+    "algorithm": "sha256-path-size-executable-content-v2",
+    "file_count": 566,
+    "sha256": "dbf0ce4da0818e217a6dc76a432b11d3e35e5be6a0ae4360781f86498395fd74",
+    "roots": [
+      ".dockerignore",
+      ".gitignore",
+      "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+      "README.md",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "tsconfig.build.json",
+      "agent-skills",
+      "config",
+      "deploy",
+      "docs",
+      "handoff",
+      "harness",
+      "migrations",
+      "schemas",
+      "scripts",
+      "src",
+      "tests"
+    ]
+  },
+  "source_mutation_events": [],
+  "snapshot_mutation_events": [],
+  "source_watcher_errors": [],
+  "snapshot_watcher_errors": [],
+  "generated_artifact_snapshots": [],
+  "final_integrity_error": null,
+  "source_stable": true,
+  "release_artifact_identity": null,
+  "failed_step_id": "independent-review-live",
+  "steps": [
+    {
+      "id": "independent-review-live",
+      "status": "LOCAL_EVIDENCE_UNTRUSTED",
+      "command": "/Users/jiayuanwang/.hermes/node/bin/node scripts/review/require-host-independent-review-attestation.mjs --gate-run-id 43be947a-ce97-417f-86d0-8a89245f4673 --live-challenge-sha256 8660f0e04c4637a7a7574d63264c9b2490a52fae61795cbe3527a9954d95e027 --source-fingerprint dbf0ce4da0818e217a6dc76a432b11d3e35e5be6a0ae4360781f86498395fd74 --source-snapshot-manifest-sha256 bdb7ef326fa0732e12917ea655b111f9aa593ba523276fd75fd474d334434261 --approved-review-codex-sha256 0000000000000000000000000000000000000000000000000000000000000000 --approved-review-runtime-sha256 0000000000000000000000000000000000000000000000000000000000000000",
+      "execution_cwd": "CONTENT_ADDRESSED_SOURCE_SNAPSHOT",
+      "started_at": "2026-08-18T05:21:49.949Z",
+      "finished_at": "2026-08-18T05:21:49.972Z",
+      "exit_code": 78,
+      "signal": null,
+      "spawn_error": null,
+      "evidence_sha256": null,
+      "stdout": {
+        "file": "independent-review-live.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0
+      },
+      "stderr": {
+        "file": "independent-review-live.stderr.log",
+        "sha256": "98f84fb97d29063f8e02bad94997d182ff598ec32ed5c2c725c6a024ab77ff90",
+        "size_bytes": 1151
+      }
+    }
+  ]
+}

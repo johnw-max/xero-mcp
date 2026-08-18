@@ -1,0 +1,1105 @@
+{
+  "schema_version": "1.0",
+  "evidence_boundary": "LOCAL_SYNTHETIC_PROVIDER_SDK_BOUNDARY",
+  "release_version": "0.4.0-rc.1",
+  "server_pid": 8693,
+  "started_at": "2026-08-18T05:36:01.129Z",
+  "mcp_protocol_calls": [
+    {
+      "jsonrpc_id": 5,
+      "method": "tools/call",
+      "tool": "xero_pin_current_organisation",
+      "public_arguments": {},
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:38:42.571Z",
+      "finished_at": "2026-08-18T05:38:42.590Z",
+      "status": "PASS",
+      "raw_structured_result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"result\":{\"target_session_ref\":\"<redacted-target-session-ref>\",\"target_ref_safe\":\"xero-target-session:584bd9da4d9292810c4c6888972c8051\",\"binding_revision\":1,\"organisation_name\":\"Synthetic Case Company\",\"expires_at\":\"2026-08-18T07:36:01.123Z\"}}"
+          }
+        ],
+        "structuredContent": {
+          "result": {
+            "target_session_ref": "<redacted-target-session-ref>",
+            "target_ref_safe": "xero-target-session:584bd9da4d9292810c4c6888972c8051",
+            "binding_revision": 1,
+            "organisation_name": "Synthetic Case Company",
+            "expires_at": "2026-08-18T07:36:01.123Z"
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "jsonrpc_id": 6,
+      "method": "tools/call",
+      "tool": "xero_get_organisation",
+      "public_arguments": {
+        "target_session_ref": "<redacted-target-session-ref>"
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:38:56.638Z",
+      "finished_at": "2026-08-18T05:38:56.644Z",
+      "status": "PASS",
+      "raw_structured_result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"result\":{\"name\":\"Synthetic Case Company\",\"countryCode\":\"SG\",\"baseCurrency\":\"SGD\",\"paysTax\":true,\"organisationStatus\":\"ACTIVE\"},\"result_class\":\"succeeded\",\"fact_origin\":\"MCP_READ\",\"source_system\":\"xero\",\"capability_id\":\"ledger.target.resolve\",\"tool_call_or_audit_ref\":\"call_fcfb1334-8173-4320-94d2-d24218db8977\",\"capability_revision\":\"xero-mcp@0.4.0-rc.1\",\"observed_at\":\"2026-08-18T05:38:56.643Z\",\"query_bounds\":{\"target_scope\":\"active_server_bound_xero_organisation\",\"requested\":{}},\"completeness\":{\"status\":\"complete\",\"scope\":\"active_server_bound_xero_organisation\"},\"output_hash\":\"sha256:02e7149a8e47c2313b8decf823f6ab6f8ab2accfa805892ea46442a2671651a6\",\"fact_paths\":[\"/result/name\",\"/result/baseCurrency\"],\"base_currency\":\"SGD\",\"target_session_ref_safe\":\"xero-target-session:584bd9da4d9292810c4c6888972c8051\",\"destination_role\":\"ledger_sor\",\"bound_target_ref_safe\":\"xero-target:84eab90dc68b3570ae5436c85b715e06\",\"organisation_display_name\":\"Synthetic Case Company\",\"binding_revision\":\"xero-binding-revision:a71cdf7c38f840b5bd07941430e58876\"}"
+          }
+        ],
+        "structuredContent": {
+          "result": {
+            "name": "Synthetic Case Company",
+            "countryCode": "SG",
+            "baseCurrency": "SGD",
+            "paysTax": true,
+            "organisationStatus": "ACTIVE"
+          },
+          "result_class": "succeeded",
+          "fact_origin": "MCP_READ",
+          "source_system": "xero",
+          "capability_id": "ledger.target.resolve",
+          "tool_call_or_audit_ref": "call_fcfb1334-8173-4320-94d2-d24218db8977",
+          "capability_revision": "xero-mcp@0.4.0-rc.1",
+          "observed_at": "2026-08-18T05:38:56.643Z",
+          "query_bounds": {
+            "target_scope": "active_server_bound_xero_organisation",
+            "requested": {}
+          },
+          "completeness": {
+            "status": "complete",
+            "scope": "active_server_bound_xero_organisation"
+          },
+          "output_hash": "sha256:02e7149a8e47c2313b8decf823f6ab6f8ab2accfa805892ea46442a2671651a6",
+          "fact_paths": [
+            "/result/name",
+            "/result/baseCurrency"
+          ],
+          "base_currency": "SGD",
+          "target_session_ref_safe": "xero-target-session:584bd9da4d9292810c4c6888972c8051",
+          "destination_role": "ledger_sor",
+          "bound_target_ref_safe": "xero-target:84eab90dc68b3570ae5436c85b715e06",
+          "organisation_display_name": "Synthetic Case Company",
+          "binding_revision": "xero-binding-revision:a71cdf7c38f840b5bd07941430e58876"
+        }
+      },
+      "error": null
+    },
+    {
+      "jsonrpc_id": 7,
+      "method": "tools/call",
+      "tool": "xero_prepare_accounting_case",
+      "public_arguments": {
+        "case_id": "case-local-claude-20260731-bill-001",
+        "expected_version": 0,
+        "source_label": "客户交来的供应商账单 NCS-2026-0731",
+        "source_set_complete": true,
+        "target_session_ref": "<redacted-target-session-ref>",
+        "documents": [
+          {
+            "document_type": "SUPPLIER_BILL",
+            "reference": "NCS-2026-0731",
+            "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+            "document_date": "2026-07-31",
+            "due_date": "2026-08-30",
+            "currency": "SGD",
+            "contact": {
+              "name": "Nimbus Cloud Services"
+            },
+            "transition_review_required": false,
+            "declared_net": "1200.00",
+            "declared_tax": "108.00",
+            "declared_gross": "1308.00",
+            "document_validity": "TEST_OR_NOT_VALID",
+            "line_accounting_mode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+            "accounting_category": "CLOUD_SUBSCRIPTIONS",
+            "tax_class": "SG_STANDARD_RATED",
+            "effective_tax_rate_percent": "9",
+            "lines": [
+              {
+                "description": "云服务订阅 2026 年 7 月",
+                "quantity": "1",
+                "unit_amount_excluding_tax": "1200.00",
+                "source_tax_amount": "108.00"
+              }
+            ]
+          }
+        ]
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:39:18.424Z",
+      "finished_at": "2026-08-18T05:39:18.452Z",
+      "status": "PASS",
+      "raw_structured_result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"result\":{\"case_id\":\"case-local-claude-20260731-bill-001\",\"case_version\":1,\"state\":\"PLANNED_WITH_EXCEPTIONS\",\"source_revision_hash\":\"77b5b1ab5b3ef54d3e71a416b8f31825a0b4edb9ad15c13ae897d581e42df562\",\"compiled_plan_hash\":\"d94b1f75d0bc248f0d1162b1cb100c81e1ce6fa7b1e6c9f6fc672cb9c856ea9f\",\"compiler_version\":\"0.11.0\",\"policy_version\":\"xero-sg-accounting-policy-v8-2026h2\",\"coverage\":{\"supplied_set\":\"COMPLETE\",\"expected_artifacts\":1,\"expected_source_units\":1,\"expected_fact_requirements\":1,\"satisfied_fact_requirements\":1,\"missing_fact_requirements\":[]},\"events\":[{\"event_id\":\"evt_5e7719a3d07d6e408ef44e8f\",\"event_key\":\"event-f74a9b6fe101834abf23b26a3886c660\",\"disposition\":\"REVIEW_REQUIRED\",\"route\":\"SUPPLIER_BILL\",\"reason_codes\":[\"EXACT_XERO_CONTACT_REQUIRED\"]}],\"operations\":[],\"residual_event_count\":1,\"source_claim\":{\"trust\":\"UNVERIFIED_SUBMITTED_FACTS\",\"source_truth_claim\":\"NOT_VERIFIED\",\"original_file_verified\":false,\"fact_origins\":[\"MODEL_EXTRACTED\"],\"document_validity_basis\":\"SUBMITTED_ASSERTION\"},\"completion_claim\":{\"supplied_set_coverage\":\"COMPLETE\",\"eligible_write_status\":\"NONE\",\"whole_business_completeness\":\"NOT_ASSERTED\",\"ledger_write_claim\":\"NOT_WRITTEN\"},\"persistence_mode\":\"CREATED\"}}"
+          }
+        ],
+        "structuredContent": {
+          "result": {
+            "case_id": "case-local-claude-20260731-bill-001",
+            "case_version": 1,
+            "state": "PLANNED_WITH_EXCEPTIONS",
+            "source_revision_hash": "77b5b1ab5b3ef54d3e71a416b8f31825a0b4edb9ad15c13ae897d581e42df562",
+            "compiled_plan_hash": "d94b1f75d0bc248f0d1162b1cb100c81e1ce6fa7b1e6c9f6fc672cb9c856ea9f",
+            "compiler_version": "0.11.0",
+            "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+            "coverage": {
+              "supplied_set": "COMPLETE",
+              "expected_artifacts": 1,
+              "expected_source_units": 1,
+              "expected_fact_requirements": 1,
+              "satisfied_fact_requirements": 1,
+              "missing_fact_requirements": []
+            },
+            "events": [
+              {
+                "event_id": "evt_5e7719a3d07d6e408ef44e8f",
+                "event_key": "event-f74a9b6fe101834abf23b26a3886c660",
+                "disposition": "REVIEW_REQUIRED",
+                "route": "SUPPLIER_BILL",
+                "reason_codes": [
+                  "EXACT_XERO_CONTACT_REQUIRED"
+                ]
+              }
+            ],
+            "operations": [],
+            "residual_event_count": 1,
+            "source_claim": {
+              "trust": "UNVERIFIED_SUBMITTED_FACTS",
+              "source_truth_claim": "NOT_VERIFIED",
+              "original_file_verified": false,
+              "fact_origins": [
+                "MODEL_EXTRACTED"
+              ],
+              "document_validity_basis": "SUBMITTED_ASSERTION"
+            },
+            "completion_claim": {
+              "supplied_set_coverage": "COMPLETE",
+              "eligible_write_status": "NONE",
+              "whole_business_completeness": "NOT_ASSERTED",
+              "ledger_write_claim": "NOT_WRITTEN"
+            },
+            "persistence_mode": "CREATED"
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "jsonrpc_id": 8,
+      "method": "tools/call",
+      "tool": "xero_execute_accounting_case",
+      "public_arguments": {
+        "case_id": "case-local-claude-20260731-bill-001",
+        "case_version": 1,
+        "request_id": "req-local-claude-bill-001-a",
+        "target_session_ref": "<redacted-target-session-ref>"
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:39:40.933Z",
+      "finished_at": "2026-08-18T05:39:40.940Z",
+      "status": "PASS",
+      "raw_structured_result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"result\":{\"case_id\":\"case-local-claude-20260731-bill-001\",\"case_version\":1,\"state\":\"TERMINAL\",\"source_revision_hash\":\"77b5b1ab5b3ef54d3e71a416b8f31825a0b4edb9ad15c13ae897d581e42df562\",\"compiled_plan_hash\":\"d94b1f75d0bc248f0d1162b1cb100c81e1ce6fa7b1e6c9f6fc672cb9c856ea9f\",\"compiler_version\":\"0.11.0\",\"policy_version\":\"xero-sg-accounting-policy-v8-2026h2\",\"coverage\":{\"supplied_set\":\"COMPLETE\",\"expected_artifacts\":1,\"expected_source_units\":1,\"expected_fact_requirements\":1,\"satisfied_fact_requirements\":1,\"missing_fact_requirements\":[]},\"events\":[{\"event_id\":\"evt_5e7719a3d07d6e408ef44e8f\",\"event_key\":\"event-f74a9b6fe101834abf23b26a3886c660\",\"disposition\":\"REVIEW_REQUIRED\",\"route\":\"SUPPLIER_BILL\",\"reason_codes\":[\"EXACT_XERO_CONTACT_REQUIRED\"]}],\"operations\":[],\"residual_event_count\":1,\"source_claim\":{\"trust\":\"UNVERIFIED_SUBMITTED_FACTS\",\"source_truth_claim\":\"NOT_VERIFIED\",\"original_file_verified\":false,\"fact_origins\":[\"MODEL_EXTRACTED\"],\"document_validity_basis\":\"SUBMITTED_ASSERTION\"},\"completion_claim\":{\"supplied_set_coverage\":\"COMPLETE\",\"eligible_write_status\":\"NONE\",\"whole_business_completeness\":\"NOT_ASSERTED\",\"ledger_write_claim\":\"NOT_WRITTEN\"}}}"
+          }
+        ],
+        "structuredContent": {
+          "result": {
+            "case_id": "case-local-claude-20260731-bill-001",
+            "case_version": 1,
+            "state": "TERMINAL",
+            "source_revision_hash": "77b5b1ab5b3ef54d3e71a416b8f31825a0b4edb9ad15c13ae897d581e42df562",
+            "compiled_plan_hash": "d94b1f75d0bc248f0d1162b1cb100c81e1ce6fa7b1e6c9f6fc672cb9c856ea9f",
+            "compiler_version": "0.11.0",
+            "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+            "coverage": {
+              "supplied_set": "COMPLETE",
+              "expected_artifacts": 1,
+              "expected_source_units": 1,
+              "expected_fact_requirements": 1,
+              "satisfied_fact_requirements": 1,
+              "missing_fact_requirements": []
+            },
+            "events": [
+              {
+                "event_id": "evt_5e7719a3d07d6e408ef44e8f",
+                "event_key": "event-f74a9b6fe101834abf23b26a3886c660",
+                "disposition": "REVIEW_REQUIRED",
+                "route": "SUPPLIER_BILL",
+                "reason_codes": [
+                  "EXACT_XERO_CONTACT_REQUIRED"
+                ]
+              }
+            ],
+            "operations": [],
+            "residual_event_count": 1,
+            "source_claim": {
+              "trust": "UNVERIFIED_SUBMITTED_FACTS",
+              "source_truth_claim": "NOT_VERIFIED",
+              "original_file_verified": false,
+              "fact_origins": [
+                "MODEL_EXTRACTED"
+              ],
+              "document_validity_basis": "SUBMITTED_ASSERTION"
+            },
+            "completion_claim": {
+              "supplied_set_coverage": "COMPLETE",
+              "eligible_write_status": "NONE",
+              "whole_business_completeness": "NOT_ASSERTED",
+              "ledger_write_claim": "NOT_WRITTEN"
+            }
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "jsonrpc_id": 9,
+      "method": "tools/call",
+      "tool": "xero_prepare_accounting_case",
+      "public_arguments": {
+        "case_id": "case-local-claude-20260731-bill-001",
+        "expected_version": 1,
+        "source_label": "客户交来的供应商账单 NCS-2026-0731",
+        "source_set_complete": true,
+        "target_session_ref": "<redacted-target-session-ref>",
+        "documents": [
+          {
+            "document_type": "SUPPLIER_BILL",
+            "reference": "NCS-2026-0731",
+            "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+            "document_date": "2026-07-31",
+            "due_date": "2026-08-30",
+            "currency": "SGD",
+            "contact": {
+              "name": "Exact Customer"
+            },
+            "transition_review_required": false,
+            "declared_net": "1200.00",
+            "declared_tax": "108.00",
+            "declared_gross": "1308.00",
+            "document_validity": "TEST_OR_NOT_VALID",
+            "line_accounting_mode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+            "accounting_category": "CLOUD_SUBSCRIPTIONS",
+            "tax_class": "SG_STANDARD_RATED",
+            "effective_tax_rate_percent": "9",
+            "lines": [
+              {
+                "description": "云服务订阅 2026 年 7 月",
+                "quantity": "1",
+                "unit_amount_excluding_tax": "1200.00",
+                "source_tax_amount": "108.00"
+              }
+            ]
+          }
+        ]
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:40:00.610Z",
+      "finished_at": "2026-08-18T05:40:00.623Z",
+      "status": "PASS",
+      "raw_structured_result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"result\":{\"case_id\":\"case-local-claude-20260731-bill-001\",\"case_version\":2,\"state\":\"PLANNED_NEEDS_PREFLIGHT\",\"source_revision_hash\":\"f7e1eb0998eca56a4ce4bb7a46db471f7c4a4e11f29bbcfd571fc06a9611d803\",\"compiled_plan_hash\":\"5e886577414e5b44b2d2f3c91bef3b04fcd0707d2d568662dcbcbe82d7be0b6d\",\"compiler_version\":\"0.11.0\",\"policy_version\":\"xero-sg-accounting-policy-v8-2026h2\",\"coverage\":{\"supplied_set\":\"COMPLETE\",\"expected_artifacts\":1,\"expected_source_units\":1,\"expected_fact_requirements\":1,\"satisfied_fact_requirements\":1,\"missing_fact_requirements\":[]},\"events\":[{\"event_id\":\"evt_5e7719a3d07d6e408ef44e8f\",\"event_key\":\"event-f74a9b6fe101834abf23b26a3886c660\",\"disposition\":\"AUTO_EXECUTE\",\"route\":\"SUPPLIER_BILL\",\"reason_codes\":[]}],\"operations\":[{\"operation_id\":\"op_cb4b18108339550a46babb76\",\"event_id\":\"evt_5e7719a3d07d6e408ef44e8f\",\"action_id\":\"supplier_bill.create_draft\",\"state\":\"PENDING\",\"provider_receipt_recorded\":false,\"exact_readback_recorded\":false}],\"residual_event_count\":0,\"source_claim\":{\"trust\":\"UNVERIFIED_SUBMITTED_FACTS\",\"source_truth_claim\":\"NOT_VERIFIED\",\"original_file_verified\":false,\"fact_origins\":[\"MODEL_EXTRACTED\"],\"document_validity_basis\":\"SUBMITTED_ASSERTION\"},\"completion_claim\":{\"supplied_set_coverage\":\"COMPLETE\",\"eligible_write_status\":\"NONE\",\"whole_business_completeness\":\"NOT_ASSERTED\",\"ledger_write_claim\":\"NOT_WRITTEN\"},\"persistence_mode\":\"ADVANCED\"}}"
+          }
+        ],
+        "structuredContent": {
+          "result": {
+            "case_id": "case-local-claude-20260731-bill-001",
+            "case_version": 2,
+            "state": "PLANNED_NEEDS_PREFLIGHT",
+            "source_revision_hash": "f7e1eb0998eca56a4ce4bb7a46db471f7c4a4e11f29bbcfd571fc06a9611d803",
+            "compiled_plan_hash": "5e886577414e5b44b2d2f3c91bef3b04fcd0707d2d568662dcbcbe82d7be0b6d",
+            "compiler_version": "0.11.0",
+            "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+            "coverage": {
+              "supplied_set": "COMPLETE",
+              "expected_artifacts": 1,
+              "expected_source_units": 1,
+              "expected_fact_requirements": 1,
+              "satisfied_fact_requirements": 1,
+              "missing_fact_requirements": []
+            },
+            "events": [
+              {
+                "event_id": "evt_5e7719a3d07d6e408ef44e8f",
+                "event_key": "event-f74a9b6fe101834abf23b26a3886c660",
+                "disposition": "AUTO_EXECUTE",
+                "route": "SUPPLIER_BILL",
+                "reason_codes": []
+              }
+            ],
+            "operations": [
+              {
+                "operation_id": "op_cb4b18108339550a46babb76",
+                "event_id": "evt_5e7719a3d07d6e408ef44e8f",
+                "action_id": "supplier_bill.create_draft",
+                "state": "PENDING",
+                "provider_receipt_recorded": false,
+                "exact_readback_recorded": false
+              }
+            ],
+            "residual_event_count": 0,
+            "source_claim": {
+              "trust": "UNVERIFIED_SUBMITTED_FACTS",
+              "source_truth_claim": "NOT_VERIFIED",
+              "original_file_verified": false,
+              "fact_origins": [
+                "MODEL_EXTRACTED"
+              ],
+              "document_validity_basis": "SUBMITTED_ASSERTION"
+            },
+            "completion_claim": {
+              "supplied_set_coverage": "COMPLETE",
+              "eligible_write_status": "NONE",
+              "whole_business_completeness": "NOT_ASSERTED",
+              "ledger_write_claim": "NOT_WRITTEN"
+            },
+            "persistence_mode": "ADVANCED"
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "jsonrpc_id": 10,
+      "method": "tools/call",
+      "tool": "xero_execute_accounting_case",
+      "public_arguments": {
+        "case_id": "case-local-claude-20260731-bill-001",
+        "case_version": 2,
+        "request_id": "req-local-claude-bill-001-b",
+        "target_session_ref": "<redacted-target-session-ref>"
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:40:18.185Z",
+      "finished_at": "2026-08-18T05:40:18.196Z",
+      "status": "PASS",
+      "raw_structured_result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"code\":\"STANDING_DELEGATION_REQUIRED\",\"message\":\"The standing autonomous Xero authority is not effective for the full Accounting Case.\",\"retryable\":false,\"failure_layer\":\"STANDING_DELEGATION\",\"provider_mutation_possible\":false,\"recovery_action\":\"REFRESH_STANDING_DELEGATION\",\"reason_codes\":[\"STANDING_DELEGATION_ACTION_MISMATCH\"]}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "code": "STANDING_DELEGATION_REQUIRED",
+            "message": "The standing autonomous Xero authority is not effective for the full Accounting Case.",
+            "retryable": false,
+            "failure_layer": "STANDING_DELEGATION",
+            "provider_mutation_possible": false,
+            "recovery_action": "REFRESH_STANDING_DELEGATION",
+            "reason_codes": [
+              "STANDING_DELEGATION_ACTION_MISMATCH"
+            ]
+          }
+        },
+        "isError": true
+      },
+      "error": null
+    },
+    {
+      "jsonrpc_id": 11,
+      "method": "tools/call",
+      "tool": "xero_prepare_accounting_case",
+      "public_arguments": {
+        "case_id": "case-local-claude-20260731-inv-dup",
+        "expected_version": 0,
+        "source_label": "客户交来的销售发票 EXC-2026-0731",
+        "source_set_complete": true,
+        "target_session_ref": "<redacted-target-session-ref>",
+        "documents": [
+          {
+            "document_type": "CUSTOMER_INVOICE",
+            "reference": "EXC-2026-0731",
+            "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+            "document_date": "2026-07-31",
+            "due_date": "2026-08-30",
+            "currency": "SGD",
+            "contact": {
+              "name": "Exact Customer"
+            },
+            "transition_review_required": false,
+            "declared_net": "1200.00",
+            "declared_tax": "108.00",
+            "declared_gross": "1308.00",
+            "document_validity": "TEST_OR_NOT_VALID",
+            "line_accounting_mode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+            "accounting_category": "CONSULTING_REVENUE",
+            "tax_class": "SG_STANDARD_RATED",
+            "effective_tax_rate_percent": "9",
+            "lines": [
+              {
+                "description": "咨询服务 2026 年 7 月",
+                "quantity": "1",
+                "unit_amount_excluding_tax": "1200.00",
+                "source_tax_amount": "108.00"
+              }
+            ]
+          }
+        ]
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:55:27.374Z",
+      "finished_at": "2026-08-18T05:55:27.415Z",
+      "status": "PASS",
+      "raw_structured_result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"result\":{\"case_id\":\"case-local-claude-20260731-inv-dup\",\"case_version\":1,\"state\":\"PLANNED_NEEDS_PREFLIGHT\",\"source_revision_hash\":\"8d021c8f6958bd9ef6996e1236b69dc63d6166f35185bbc55ba5e070b70c1738\",\"compiled_plan_hash\":\"13447c34ae03f142cdf064261002c5ef114cb24de940f4d61774df8ae4fc65f8\",\"compiler_version\":\"0.11.0\",\"policy_version\":\"xero-sg-accounting-policy-v8-2026h2\",\"coverage\":{\"supplied_set\":\"COMPLETE\",\"expected_artifacts\":1,\"expected_source_units\":1,\"expected_fact_requirements\":1,\"satisfied_fact_requirements\":1,\"missing_fact_requirements\":[]},\"events\":[{\"event_id\":\"evt_139512c55fcd118f466d5d2c\",\"event_key\":\"event-7e9db84277e7e08aad2268b57e2d7b21\",\"disposition\":\"AUTO_EXECUTE\",\"route\":\"SALES_INVOICE\",\"reason_codes\":[]}],\"operations\":[{\"operation_id\":\"op_1508521f49af0005850f82cb\",\"event_id\":\"evt_139512c55fcd118f466d5d2c\",\"action_id\":\"customer_invoice.create_draft\",\"state\":\"PENDING\",\"provider_receipt_recorded\":false,\"exact_readback_recorded\":false}],\"residual_event_count\":0,\"source_claim\":{\"trust\":\"UNVERIFIED_SUBMITTED_FACTS\",\"source_truth_claim\":\"NOT_VERIFIED\",\"original_file_verified\":false,\"fact_origins\":[\"MODEL_EXTRACTED\"],\"document_validity_basis\":\"SUBMITTED_ASSERTION\"},\"completion_claim\":{\"supplied_set_coverage\":\"COMPLETE\",\"eligible_write_status\":\"NONE\",\"whole_business_completeness\":\"NOT_ASSERTED\",\"ledger_write_claim\":\"NOT_WRITTEN\"},\"persistence_mode\":\"CREATED\"}}"
+          }
+        ],
+        "structuredContent": {
+          "result": {
+            "case_id": "case-local-claude-20260731-inv-dup",
+            "case_version": 1,
+            "state": "PLANNED_NEEDS_PREFLIGHT",
+            "source_revision_hash": "8d021c8f6958bd9ef6996e1236b69dc63d6166f35185bbc55ba5e070b70c1738",
+            "compiled_plan_hash": "13447c34ae03f142cdf064261002c5ef114cb24de940f4d61774df8ae4fc65f8",
+            "compiler_version": "0.11.0",
+            "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+            "coverage": {
+              "supplied_set": "COMPLETE",
+              "expected_artifacts": 1,
+              "expected_source_units": 1,
+              "expected_fact_requirements": 1,
+              "satisfied_fact_requirements": 1,
+              "missing_fact_requirements": []
+            },
+            "events": [
+              {
+                "event_id": "evt_139512c55fcd118f466d5d2c",
+                "event_key": "event-7e9db84277e7e08aad2268b57e2d7b21",
+                "disposition": "AUTO_EXECUTE",
+                "route": "SALES_INVOICE",
+                "reason_codes": []
+              }
+            ],
+            "operations": [
+              {
+                "operation_id": "op_1508521f49af0005850f82cb",
+                "event_id": "evt_139512c55fcd118f466d5d2c",
+                "action_id": "customer_invoice.create_draft",
+                "state": "PENDING",
+                "provider_receipt_recorded": false,
+                "exact_readback_recorded": false
+              }
+            ],
+            "residual_event_count": 0,
+            "source_claim": {
+              "trust": "UNVERIFIED_SUBMITTED_FACTS",
+              "source_truth_claim": "NOT_VERIFIED",
+              "original_file_verified": false,
+              "fact_origins": [
+                "MODEL_EXTRACTED"
+              ],
+              "document_validity_basis": "SUBMITTED_ASSERTION"
+            },
+            "completion_claim": {
+              "supplied_set_coverage": "COMPLETE",
+              "eligible_write_status": "NONE",
+              "whole_business_completeness": "NOT_ASSERTED",
+              "ledger_write_claim": "NOT_WRITTEN"
+            },
+            "persistence_mode": "CREATED"
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "jsonrpc_id": 12,
+      "method": "tools/call",
+      "tool": "xero_execute_accounting_case",
+      "public_arguments": {
+        "case_id": "case-local-claude-20260731-inv-dup",
+        "case_version": 1,
+        "request_id": "req-inv-dup-first",
+        "target_session_ref": "<redacted-target-session-ref>"
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:56:04.600Z",
+      "finished_at": "2026-08-18T05:56:04.629Z",
+      "status": "PASS",
+      "raw_structured_result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Accounting Case preflight preparation identity is invalid.\",\"retryable\":false,\"failure_layer\":\"DETERMINISTIC_VALIDATION\",\"provider_mutation_possible\":false,\"recovery_action\":\"CORRECT_CASE_FACTS\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "code": "VALIDATION_FAILED",
+            "message": "Accounting Case preflight preparation identity is invalid.",
+            "retryable": false,
+            "failure_layer": "DETERMINISTIC_VALIDATION",
+            "provider_mutation_possible": false,
+            "recovery_action": "CORRECT_CASE_FACTS"
+          }
+        },
+        "isError": true
+      },
+      "error": null
+    }
+  ],
+  "tool_calls": [
+    {
+      "server_call_id": "local_mcp_d2c3b08ba26c95c63e5d01b4",
+      "tool": "xero_pin_current_organisation",
+      "normalized_input": {},
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:38:42.587Z",
+      "finished_at": "2026-08-18T05:38:42.589Z",
+      "status": "PASS",
+      "result": {
+        "target_session_ref": "<redacted-target-session-ref>",
+        "target_ref_safe": "xero-target-session:584bd9da4d9292810c4c6888972c8051",
+        "binding_revision": 1,
+        "organisation_name": "Synthetic Case Company",
+        "expires_at": "2026-08-18T07:36:01.123Z"
+      }
+    },
+    {
+      "server_call_id": "local_mcp_166762d6e1ed6eecc4abce1b",
+      "tool": "xero_get_organisation",
+      "normalized_input": {},
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:38:56.640Z",
+      "finished_at": "2026-08-18T05:38:56.640Z",
+      "status": "PASS",
+      "result": {
+        "organisationId": "11111111-1111-4111-8111-111111111111",
+        "name": "Synthetic Case Company",
+        "countryCode": "SG",
+        "baseCurrency": "SGD",
+        "paysTax": true,
+        "organisationStatus": "ACTIVE"
+      }
+    },
+    {
+      "server_call_id": "local_mcp_9c1ae24b5b22b0df38557726",
+      "tool": "xero_prepare_accounting_case",
+      "normalized_input": {
+        "case_id": "case-local-claude-20260731-bill-001",
+        "expected_version": 0,
+        "sources": [
+          {
+            "artifactId": "source-c6b7cab210ccad69ca1d5a6c74a4d138",
+            "label": "客户交来的供应商账单 NCS-2026-0731",
+            "units": [
+              {
+                "unitId": "unit-2ae518f5f2846a45808326b2069f52f3",
+                "expectedFactKinds": [
+                  "NATIVE_DOCUMENT"
+                ]
+              }
+            ]
+          }
+        ],
+        "facts": [
+          {
+            "factId": "fact-f74a9b6fe101834abf23b26a3886c660",
+            "lineageKey": "lineage-f74a9b6fe101834abf23b26a3886c660",
+            "eventKey": "event-f74a9b6fe101834abf23b26a3886c660",
+            "sourceUnitIds": [
+              "unit-2ae518f5f2846a45808326b2069f52f3"
+            ],
+            "origin": "MODEL_EXTRACTED",
+            "revision": 1,
+            "kind": "NATIVE_DOCUMENT",
+            "documentKind": "INVOICE",
+            "counterpartyRole": "SUPPLIER",
+            "reference": "NCS-2026-0731",
+            "referenceKind": "FORMAL_DOCUMENT_NUMBER",
+            "documentDate": "2026-07-31",
+            "dueDate": "2026-08-30",
+            "currency": "SGD",
+            "contactName": "Nimbus Cloud Services",
+            "accountingCategory": "CLOUD_SUBSCRIPTIONS",
+            "taxClass": "SG_STANDARD_RATED",
+            "taxPolicyBasis": "DOCUMENT_DATE_NON_TRANSITION",
+            "effectiveTaxRateBps": 900,
+            "lineAccountingMode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+            "lineAmountType": "EXCLUSIVE",
+            "lines": [
+              {
+                "lineId": "line-1bcf14cc19c8f3f34421696c8cf69c91",
+                "description": "云服务订阅 2026 年 7 月",
+                "quantity": "1",
+                "unitAmount": "1200.00",
+                "sourceTax": "108.00",
+                "accountingCategory": "CLOUD_SUBSCRIPTIONS",
+                "taxClass": "SG_STANDARD_RATED",
+                "effectiveTaxRateBps": 900
+              }
+            ],
+            "declaredNet": "1200.00",
+            "declaredTax": "108.00",
+            "declaredGross": "1308.00",
+            "documentValidity": "TEST_OR_NOT_VALID"
+          }
+        ]
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:39:18.436Z",
+      "finished_at": "2026-08-18T05:39:18.451Z",
+      "status": "PASS",
+      "result": {
+        "case_id": "case-local-claude-20260731-bill-001",
+        "case_version": 1,
+        "state": "PLANNED_WITH_EXCEPTIONS",
+        "source_revision_hash": "77b5b1ab5b3ef54d3e71a416b8f31825a0b4edb9ad15c13ae897d581e42df562",
+        "compiled_plan_hash": "d94b1f75d0bc248f0d1162b1cb100c81e1ce6fa7b1e6c9f6fc672cb9c856ea9f",
+        "compiler_version": "0.11.0",
+        "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+        "coverage": {
+          "supplied_set": "COMPLETE",
+          "expected_artifacts": 1,
+          "expected_source_units": 1,
+          "expected_fact_requirements": 1,
+          "satisfied_fact_requirements": 1,
+          "missing_fact_requirements": []
+        },
+        "events": [
+          {
+            "event_id": "evt_5e7719a3d07d6e408ef44e8f",
+            "event_key": "event-f74a9b6fe101834abf23b26a3886c660",
+            "disposition": "REVIEW_REQUIRED",
+            "route": "SUPPLIER_BILL",
+            "reason_codes": [
+              "EXACT_XERO_CONTACT_REQUIRED"
+            ]
+          }
+        ],
+        "operations": [],
+        "residual_event_count": 1,
+        "source_claim": {
+          "trust": "UNVERIFIED_SUBMITTED_FACTS",
+          "source_truth_claim": "NOT_VERIFIED",
+          "original_file_verified": false,
+          "fact_origins": [
+            "MODEL_EXTRACTED"
+          ],
+          "document_validity_basis": "SUBMITTED_ASSERTION"
+        },
+        "completion_claim": {
+          "supplied_set_coverage": "COMPLETE",
+          "eligible_write_status": "NONE",
+          "whole_business_completeness": "NOT_ASSERTED",
+          "ledger_write_claim": "NOT_WRITTEN"
+        },
+        "persistence_mode": "CREATED"
+      }
+    },
+    {
+      "server_call_id": "local_mcp_2ae2b1f4ccb93ed3d154975e",
+      "tool": "xero_execute_accounting_case",
+      "normalized_input": {
+        "case_id": "case-local-claude-20260731-bill-001",
+        "case_version": 1,
+        "request_id": "req-local-claude-bill-001-a"
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:39:40.934Z",
+      "finished_at": "2026-08-18T05:39:40.940Z",
+      "status": "PASS",
+      "result": {
+        "case_id": "case-local-claude-20260731-bill-001",
+        "case_version": 1,
+        "state": "TERMINAL",
+        "source_revision_hash": "77b5b1ab5b3ef54d3e71a416b8f31825a0b4edb9ad15c13ae897d581e42df562",
+        "compiled_plan_hash": "d94b1f75d0bc248f0d1162b1cb100c81e1ce6fa7b1e6c9f6fc672cb9c856ea9f",
+        "compiler_version": "0.11.0",
+        "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+        "coverage": {
+          "supplied_set": "COMPLETE",
+          "expected_artifacts": 1,
+          "expected_source_units": 1,
+          "expected_fact_requirements": 1,
+          "satisfied_fact_requirements": 1,
+          "missing_fact_requirements": []
+        },
+        "events": [
+          {
+            "event_id": "evt_5e7719a3d07d6e408ef44e8f",
+            "event_key": "event-f74a9b6fe101834abf23b26a3886c660",
+            "disposition": "REVIEW_REQUIRED",
+            "route": "SUPPLIER_BILL",
+            "reason_codes": [
+              "EXACT_XERO_CONTACT_REQUIRED"
+            ]
+          }
+        ],
+        "operations": [],
+        "residual_event_count": 1,
+        "source_claim": {
+          "trust": "UNVERIFIED_SUBMITTED_FACTS",
+          "source_truth_claim": "NOT_VERIFIED",
+          "original_file_verified": false,
+          "fact_origins": [
+            "MODEL_EXTRACTED"
+          ],
+          "document_validity_basis": "SUBMITTED_ASSERTION"
+        },
+        "completion_claim": {
+          "supplied_set_coverage": "COMPLETE",
+          "eligible_write_status": "NONE",
+          "whole_business_completeness": "NOT_ASSERTED",
+          "ledger_write_claim": "NOT_WRITTEN"
+        }
+      }
+    },
+    {
+      "server_call_id": "local_mcp_d55fcaee26f2df0f01f7f140",
+      "tool": "xero_prepare_accounting_case",
+      "normalized_input": {
+        "case_id": "case-local-claude-20260731-bill-001",
+        "expected_version": 1,
+        "sources": [
+          {
+            "artifactId": "source-c6b7cab210ccad69ca1d5a6c74a4d138",
+            "label": "客户交来的供应商账单 NCS-2026-0731",
+            "units": [
+              {
+                "unitId": "unit-0f0cef3fed2ab91d0505fb9e186bee89",
+                "expectedFactKinds": [
+                  "NATIVE_DOCUMENT"
+                ]
+              }
+            ]
+          }
+        ],
+        "facts": [
+          {
+            "factId": "fact-f74a9b6fe101834abf23b26a3886c660",
+            "lineageKey": "lineage-f74a9b6fe101834abf23b26a3886c660",
+            "eventKey": "event-f74a9b6fe101834abf23b26a3886c660",
+            "sourceUnitIds": [
+              "unit-0f0cef3fed2ab91d0505fb9e186bee89"
+            ],
+            "origin": "MODEL_EXTRACTED",
+            "revision": 1,
+            "kind": "NATIVE_DOCUMENT",
+            "documentKind": "INVOICE",
+            "counterpartyRole": "SUPPLIER",
+            "reference": "NCS-2026-0731",
+            "referenceKind": "FORMAL_DOCUMENT_NUMBER",
+            "documentDate": "2026-07-31",
+            "dueDate": "2026-08-30",
+            "currency": "SGD",
+            "contactName": "Exact Customer",
+            "accountingCategory": "CLOUD_SUBSCRIPTIONS",
+            "taxClass": "SG_STANDARD_RATED",
+            "taxPolicyBasis": "DOCUMENT_DATE_NON_TRANSITION",
+            "effectiveTaxRateBps": 900,
+            "lineAccountingMode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+            "lineAmountType": "EXCLUSIVE",
+            "lines": [
+              {
+                "lineId": "line-1bcf14cc19c8f3f34421696c8cf69c91",
+                "description": "云服务订阅 2026 年 7 月",
+                "quantity": "1",
+                "unitAmount": "1200.00",
+                "sourceTax": "108.00",
+                "accountingCategory": "CLOUD_SUBSCRIPTIONS",
+                "taxClass": "SG_STANDARD_RATED",
+                "effectiveTaxRateBps": 900
+              }
+            ],
+            "declaredNet": "1200.00",
+            "declaredTax": "108.00",
+            "declaredGross": "1308.00",
+            "documentValidity": "TEST_OR_NOT_VALID"
+          }
+        ]
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:40:00.613Z",
+      "finished_at": "2026-08-18T05:40:00.622Z",
+      "status": "PASS",
+      "result": {
+        "case_id": "case-local-claude-20260731-bill-001",
+        "case_version": 2,
+        "state": "PLANNED_NEEDS_PREFLIGHT",
+        "source_revision_hash": "f7e1eb0998eca56a4ce4bb7a46db471f7c4a4e11f29bbcfd571fc06a9611d803",
+        "compiled_plan_hash": "5e886577414e5b44b2d2f3c91bef3b04fcd0707d2d568662dcbcbe82d7be0b6d",
+        "compiler_version": "0.11.0",
+        "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+        "coverage": {
+          "supplied_set": "COMPLETE",
+          "expected_artifacts": 1,
+          "expected_source_units": 1,
+          "expected_fact_requirements": 1,
+          "satisfied_fact_requirements": 1,
+          "missing_fact_requirements": []
+        },
+        "events": [
+          {
+            "event_id": "evt_5e7719a3d07d6e408ef44e8f",
+            "event_key": "event-f74a9b6fe101834abf23b26a3886c660",
+            "disposition": "AUTO_EXECUTE",
+            "route": "SUPPLIER_BILL",
+            "reason_codes": []
+          }
+        ],
+        "operations": [
+          {
+            "operation_id": "op_cb4b18108339550a46babb76",
+            "event_id": "evt_5e7719a3d07d6e408ef44e8f",
+            "action_id": "supplier_bill.create_draft",
+            "state": "PENDING",
+            "provider_receipt_recorded": false,
+            "exact_readback_recorded": false
+          }
+        ],
+        "residual_event_count": 0,
+        "source_claim": {
+          "trust": "UNVERIFIED_SUBMITTED_FACTS",
+          "source_truth_claim": "NOT_VERIFIED",
+          "original_file_verified": false,
+          "fact_origins": [
+            "MODEL_EXTRACTED"
+          ],
+          "document_validity_basis": "SUBMITTED_ASSERTION"
+        },
+        "completion_claim": {
+          "supplied_set_coverage": "COMPLETE",
+          "eligible_write_status": "NONE",
+          "whole_business_completeness": "NOT_ASSERTED",
+          "ledger_write_claim": "NOT_WRITTEN"
+        },
+        "persistence_mode": "ADVANCED"
+      }
+    },
+    {
+      "server_call_id": "local_mcp_3a57212c68bcb9524d509f71",
+      "tool": "xero_execute_accounting_case",
+      "normalized_input": {
+        "case_id": "case-local-claude-20260731-bill-001",
+        "case_version": 2,
+        "request_id": "req-local-claude-bill-001-b"
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:40:18.186Z",
+      "finished_at": "2026-08-18T05:40:18.194Z",
+      "status": "FAIL",
+      "error": {
+        "name": "AppError",
+        "message": "The standing autonomous Xero authority is not effective for the full Accounting Case."
+      }
+    },
+    {
+      "server_call_id": "local_mcp_90789ddbfcb1fd90f949c8d6",
+      "tool": "xero_prepare_accounting_case",
+      "normalized_input": {
+        "case_id": "case-local-claude-20260731-inv-dup",
+        "expected_version": 0,
+        "sources": [
+          {
+            "artifactId": "source-22ca748b02a543293d7d94e1082b786a",
+            "label": "客户交来的销售发票 EXC-2026-0731",
+            "units": [
+              {
+                "unitId": "unit-040b9f177ed9e76241203afc44ea8a99",
+                "expectedFactKinds": [
+                  "NATIVE_DOCUMENT"
+                ]
+              }
+            ]
+          }
+        ],
+        "facts": [
+          {
+            "factId": "fact-7e9db84277e7e08aad2268b57e2d7b21",
+            "lineageKey": "lineage-7e9db84277e7e08aad2268b57e2d7b21",
+            "eventKey": "event-7e9db84277e7e08aad2268b57e2d7b21",
+            "sourceUnitIds": [
+              "unit-040b9f177ed9e76241203afc44ea8a99"
+            ],
+            "origin": "MODEL_EXTRACTED",
+            "revision": 1,
+            "kind": "NATIVE_DOCUMENT",
+            "documentKind": "INVOICE",
+            "counterpartyRole": "CUSTOMER",
+            "reference": "EXC-2026-0731",
+            "referenceKind": "FORMAL_DOCUMENT_NUMBER",
+            "documentDate": "2026-07-31",
+            "dueDate": "2026-08-30",
+            "currency": "SGD",
+            "contactName": "Exact Customer",
+            "accountingCategory": "CONSULTING_REVENUE",
+            "taxClass": "SG_STANDARD_RATED",
+            "taxPolicyBasis": "DOCUMENT_DATE_NON_TRANSITION",
+            "effectiveTaxRateBps": 900,
+            "lineAccountingMode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+            "lineAmountType": "EXCLUSIVE",
+            "lines": [
+              {
+                "lineId": "line-df84d63de0699e8021ce053666b8ff46",
+                "description": "咨询服务 2026 年 7 月",
+                "quantity": "1",
+                "unitAmount": "1200.00",
+                "sourceTax": "108.00",
+                "accountingCategory": "CONSULTING_REVENUE",
+                "taxClass": "SG_STANDARD_RATED",
+                "effectiveTaxRateBps": 900
+              }
+            ],
+            "declaredNet": "1200.00",
+            "declaredTax": "108.00",
+            "declaredGross": "1308.00",
+            "documentValidity": "TEST_OR_NOT_VALID"
+          }
+        ]
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:55:27.397Z",
+      "finished_at": "2026-08-18T05:55:27.412Z",
+      "status": "PASS",
+      "result": {
+        "case_id": "case-local-claude-20260731-inv-dup",
+        "case_version": 1,
+        "state": "PLANNED_NEEDS_PREFLIGHT",
+        "source_revision_hash": "8d021c8f6958bd9ef6996e1236b69dc63d6166f35185bbc55ba5e070b70c1738",
+        "compiled_plan_hash": "13447c34ae03f142cdf064261002c5ef114cb24de940f4d61774df8ae4fc65f8",
+        "compiler_version": "0.11.0",
+        "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+        "coverage": {
+          "supplied_set": "COMPLETE",
+          "expected_artifacts": 1,
+          "expected_source_units": 1,
+          "expected_fact_requirements": 1,
+          "satisfied_fact_requirements": 1,
+          "missing_fact_requirements": []
+        },
+        "events": [
+          {
+            "event_id": "evt_139512c55fcd118f466d5d2c",
+            "event_key": "event-7e9db84277e7e08aad2268b57e2d7b21",
+            "disposition": "AUTO_EXECUTE",
+            "route": "SALES_INVOICE",
+            "reason_codes": []
+          }
+        ],
+        "operations": [
+          {
+            "operation_id": "op_1508521f49af0005850f82cb",
+            "event_id": "evt_139512c55fcd118f466d5d2c",
+            "action_id": "customer_invoice.create_draft",
+            "state": "PENDING",
+            "provider_receipt_recorded": false,
+            "exact_readback_recorded": false
+          }
+        ],
+        "residual_event_count": 0,
+        "source_claim": {
+          "trust": "UNVERIFIED_SUBMITTED_FACTS",
+          "source_truth_claim": "NOT_VERIFIED",
+          "original_file_verified": false,
+          "fact_origins": [
+            "MODEL_EXTRACTED"
+          ],
+          "document_validity_basis": "SUBMITTED_ASSERTION"
+        },
+        "completion_claim": {
+          "supplied_set_coverage": "COMPLETE",
+          "eligible_write_status": "NONE",
+          "whole_business_completeness": "NOT_ASSERTED",
+          "ledger_write_claim": "NOT_WRITTEN"
+        },
+        "persistence_mode": "CREATED"
+      }
+    },
+    {
+      "server_call_id": "local_mcp_7b229a32eed26d51b2bad200",
+      "tool": "xero_execute_accounting_case",
+      "normalized_input": {
+        "case_id": "case-local-claude-20260731-inv-dup",
+        "case_version": 1,
+        "request_id": "req-inv-dup-first"
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T05:56:04.601Z",
+      "finished_at": "2026-08-18T05:56:04.628Z",
+      "status": "FAIL",
+      "error": {
+        "name": "AppError",
+        "message": "Accounting Case preflight preparation identity is invalid."
+      }
+    }
+  ],
+  "target_session_evidence": {
+    "status": "PASS",
+    "issuance_tool": "xero_pin_current_organisation",
+    "verification_tool": "xero_get_organisation",
+    "base_context_unpinned": true,
+    "required_by_server": true,
+    "raw_capability_persisted_in_server_audit": false,
+    "binding_scope": "OAUTH_INSTALLATION_PRINCIPAL_AND_IMMUTABLE_BINDING_CAPABILITY",
+    "conversation_binding": "NOT_CLAIMED_NO_TRUSTED_SERVER_CONVERSATION_ID",
+    "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+    "target_ref_safe": "xero-target-session:584bd9da4d9292810c4c6888972c8051",
+    "binding_revision": 1
+  },
+  "provider_write_count": 0,
+  "provider_records": [],
+  "standing_delegation_preflights": [
+    [],
+    [
+      "supplier_bill.create_draft"
+    ],
+    [
+      "customer_invoice.create_draft"
+    ]
+  ],
+  "release_attestation": {
+    "controlKernel": "ledger-control-kernel-v2",
+    "ledgerAuthoritySnapshot": "ledger-authority-snapshot:v2",
+    "accountingCaseCompiler": "0.11.0",
+    "accountingPolicy": "xero-sg-accounting-policy-v8-2026h2",
+    "accountingPolicyProjection": "xero-sg-accounting-policy-projection:v4",
+    "accountingCaseProviderContract": "xero-accounting-case-provider-v13",
+    "accountingCaseProviderProjection": "xero-accounting-case-provider-projection:v8",
+    "accountingCaseBusinessAuthorityProjection": "xero-accounting-case-business-authority:v4",
+    "accountingCaseReadbackValidator": "accounting-case-observed-line-readback-v4",
+    "xeroNativeRouteContract": "xero-native-route-contract-v1",
+    "xeroContactIdentityContract": "xero-contact-identity-v3",
+    "requiredMigration": "040_xero_native_idempotency_recovery_claim.sql",
+    "publicToolProfile": "xero-accounting-case-business-intake-v3",
+    "executionAuthority": "STANDING_DELEGATION",
+    "writeCompletion": "PROVIDER_ID_RECEIPT_EXACT_READBACK"
+  },
+  "release_attestation_hash": "6c10c33273546119debeb79aef2a1b75c6b0d4aeb90085da5e253ea882956822",
+  "runtime_attestation": {
+    "releaseAttestationHash": "6c10c33273546119debeb79aef2a1b75c6b0d4aeb90085da5e253ea882956822",
+    "buildIdentityHash": null,
+    "acceptanceSourceSha256": null,
+    "sourceArchiveSha256": null,
+    "writeMode": "WRITE_ENABLED",
+    "processWriteGateEnabled": true,
+    "authoritySnapshotRevision": 1,
+    "authoritySnapshotHash": "52d4a6e42d387442aba673a4d0534970f41b7c1ee87b03a46f881c22849b868d",
+    "authorityWriteKillSwitchEnabled": true,
+    "storageMode": "IN_MEMORY",
+    "repositoryReady": true,
+    "requiredMigration": "040_xero_native_idempotency_recovery_claim.sql",
+    "requiredMigrationStatus": "NOT_APPLICABLE",
+    "migrationHead": null
+  },
+  "runtime_attestation_hash": "89082756fdd694b07addac24b49e0116aff00dc4aa0f6b1ae0fc111eb5d29613"
+}

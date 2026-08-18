@@ -1,0 +1,2129 @@
+{
+  "started": "2026-08-18T05:36:55.876Z",
+  "spec": {
+    "method": "tools/list",
+    "params": {}
+  },
+  "response": {
+    "result": {
+      "tools": [
+        {
+          "name": "xero_prepare_accounting_case",
+          "title": "Prepare a governed Xero Accounting Case",
+          "description": "Accepts ordinary source-document fields and compiles them into one tenant-bound, versioned Accounting Case. The server deterministically derives internal fact, lineage, event, source-unit and line IDs. Supply source-declared amounts only; Xero IDs, account codes, tax types, routes, computed ledger payloads and target identity remain server-side. First creation uses expected_version 0. This step performs no Xero write and always reports ledger_write as NOT_WRITTEN. Submitted/model-extracted facts remain source_truth_claim=NOT_VERIFIED and original_file_verified=false.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "case_id": {
+                "description": "Agent-chosen stable Case identity; it is not a provider or tenant ID.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9._:/-]+$"
+              },
+              "expected_version": {
+                "description": "Use 0 when creating the first Case version.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "continuation_token": {
+                "description": "Opaque server-issued continuation token. Never construct or modify it.",
+                "type": "string",
+                "pattern": "^(?:acc|acr)_[0-9a-f]{64}$"
+              },
+              "source_label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "source_set_complete": {
+                "description": "True only when this submitted Case's bounded source set is complete. It never asserts the whole business, ledger, period, or real-world document population is complete.",
+                "type": "boolean",
+                "const": true
+              },
+              "documents": {
+                "maxItems": 256,
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "document_type": {
+                          "description": "Business document direction and kind; this is not a provider action or route ID.",
+                          "type": "string",
+                          "enum": [
+                            "CUSTOMER_INVOICE",
+                            "SUPPLIER_BILL",
+                            "CUSTOMER_CREDIT_NOTE",
+                            "SUPPLIER_CREDIT_NOTE"
+                          ]
+                        },
+                        "reference": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 255
+                        },
+                        "reference_kind": {
+                          "description": "Meaning of the source reference. FORMAL_DOCUMENT_NUMBER is an issuer-assigned number for one document; GENERIC_RECURRING_REFERENCE is a reusable label that may recur on different dates. This is source evidence, not a provider ID, and must never be inferred from the string format.",
+                          "type": "string",
+                          "enum": [
+                            "FORMAL_DOCUMENT_NUMBER",
+                            "GENERIC_RECURRING_REFERENCE"
+                          ]
+                        },
+                        "document_date": {
+                          "type": "string",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "due_date": {
+                          "type": "string",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "currency": {
+                          "type": "string",
+                          "pattern": "^[A-Z]{3}$"
+                        },
+                        "contact": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "description": "Counterparty name exactly as shown by the source document. Existing contacts are resolved server-side by this identity.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 255
+                            },
+                            "email": {
+                              "description": "Source-supported contact email; omit when the source does not contain it.",
+                              "type": "string",
+                              "format": "email",
+                              "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                            },
+                            "durable_identity": {
+                              "description": "Typed durable identity. Omit unless the source supports every namespace field; a bare number must never be upgraded by inference.",
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "LEGAL_REGISTRY"
+                                    },
+                                    "jurisdiction": {
+                                      "description": "Registration jurisdiction supported by the source, for example SG or US.",
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 128,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$"
+                                    },
+                                    "registry_scheme": {
+                                      "description": "Issuing registry or scheme, for example ACRA_UEN or IRS_EIN.",
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 128,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$"
+                                    },
+                                    "number": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 128
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "jurisdiction",
+                                    "registry_scheme",
+                                    "number"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "PROVIDER_TENANT_ACCOUNT"
+                                    },
+                                    "provider": {
+                                      "type": "string",
+                                      "const": "xero"
+                                    },
+                                    "scope": {
+                                      "type": "string",
+                                      "const": "PROVIDER_TENANT"
+                                    },
+                                    "namespace": {
+                                      "description": "Explicit account-number namespace whose uniqueness is guaranteed inside this Xero tenant.",
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 128,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$"
+                                    },
+                                    "number": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 128
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "provider",
+                                    "scope",
+                                    "namespace",
+                                    "number"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            },
+                            "company_number": {
+                              "description": "Legacy bare provider field. It is collision/read-back evidence only; use durable_identity for a namespaced legal identity.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "account_number": {
+                              "description": "Legacy bare provider field. It is collision/read-back evidence only and is not a provider contact ID.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            }
+                          },
+                          "required": [
+                            "name"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "invoice_exchange_rate": {
+                          "description": "Optional source-supported invoice exchange rate. Omit rather than guess; the server will block a foreign-currency route when required evidence is absent.",
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                        },
+                        "transition_review_required": {
+                          "description": "Required source-review conclusion. Use true when GST transition facts are present or unresolved; use false only when the transaction has been reviewed as non-transitional. Never decide this from invoice date alone.",
+                          "type": "boolean"
+                        },
+                        "declared_net": {
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                        },
+                        "declared_tax": {
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                        },
+                        "declared_gross": {
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                        },
+                        "document_validity": {
+                          "type": "string",
+                          "enum": [
+                            "VALID_FOR_LIVE_BOOKS",
+                            "TEST_OR_NOT_VALID",
+                            "UNKNOWN"
+                          ]
+                        },
+                        "original_document": {
+                          "description": "Provider-neutral historical linkage. The server resolves the exact original from complete provider history; this coordinate carries no provider ID.",
+                          "type": "object",
+                          "properties": {
+                            "reference": {
+                              "description": "Ordinary issuer reference of the historical original invoice or bill. Never supply a provider object ID.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 255
+                            },
+                            "reference_kind": {
+                              "description": "Source-supported meaning of the historical original reference.",
+                              "type": "string",
+                              "enum": [
+                                "FORMAL_DOCUMENT_NUMBER",
+                                "GENERIC_RECURRING_REFERENCE"
+                              ]
+                            },
+                            "document_date": {
+                              "description": "Date of the historical original invoice or bill.",
+                              "type": "string",
+                              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                            }
+                          },
+                          "required": [
+                            "reference",
+                            "reference_kind",
+                            "document_date"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "line_accounting_mode": {
+                          "type": "string",
+                          "const": "DOCUMENT_DEFAULT_FOR_ALL_LINES"
+                        },
+                        "accounting_category": {
+                          "description": "Explicit document line default. Used only in DOCUMENT_DEFAULT_FOR_ALL_LINES mode: CONSULTING_REVENUE, OFFICE_SUPPLIES, CLOUD_SUBSCRIPTIONS.",
+                          "type": "string",
+                          "enum": [
+                            "CONSULTING_REVENUE",
+                            "OFFICE_SUPPLIES",
+                            "CLOUD_SUBSCRIPTIONS"
+                          ]
+                        },
+                        "tax_class": {
+                          "description": "Explicit document line default. Used only in DOCUMENT_DEFAULT_FOR_ALL_LINES mode: SG_STANDARD_RATED, NO_TAX, ZERO_RATED, OUT_OF_SCOPE, EXEMPT.",
+                          "type": "string",
+                          "enum": [
+                            "SG_STANDARD_RATED",
+                            "NO_TAX",
+                            "ZERO_RATED",
+                            "OUT_OF_SCOPE",
+                            "EXEMPT"
+                          ]
+                        },
+                        "effective_tax_rate_percent": {
+                          "description": "Explicit document line default effective tax percentage. Used only in DOCUMENT_DEFAULT_FOR_ALL_LINES mode.",
+                          "type": "string",
+                          "pattern": "^(?:100(?:\\.0{1,2})?|(?:0|[1-9]\\d?)(?:\\.\\d{1,2})?)$"
+                        },
+                        "exempt_classification": {
+                          "type": "string",
+                          "enum": [
+                            "REGULATION_33",
+                            "NON_REGULATION_33"
+                          ]
+                        },
+                        "lines": {
+                          "minItems": 1,
+                          "maxItems": 100,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "description": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1000
+                              },
+                              "quantity": {
+                                "description": "Positive decimal string, for example 1 or 2.5000.",
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                              },
+                              "unit_amount_excluding_tax": {
+                                "description": "Per-unit amount before tax, as a decimal string.",
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                              },
+                              "source_tax_amount": {
+                                "description": "Tax printed for this source line, as a decimal string.",
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                              }
+                            },
+                            "required": [
+                              "description",
+                              "quantity",
+                              "unit_amount_excluding_tax",
+                              "source_tax_amount"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "document_type",
+                        "reference",
+                        "reference_kind",
+                        "document_date",
+                        "currency",
+                        "contact",
+                        "transition_review_required",
+                        "declared_net",
+                        "declared_tax",
+                        "declared_gross",
+                        "document_validity",
+                        "line_accounting_mode",
+                        "accounting_category",
+                        "tax_class",
+                        "effective_tax_rate_percent",
+                        "lines"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "document_type": {
+                          "description": "Business document direction and kind; this is not a provider action or route ID.",
+                          "type": "string",
+                          "enum": [
+                            "CUSTOMER_INVOICE",
+                            "SUPPLIER_BILL",
+                            "CUSTOMER_CREDIT_NOTE",
+                            "SUPPLIER_CREDIT_NOTE"
+                          ]
+                        },
+                        "reference": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 255
+                        },
+                        "reference_kind": {
+                          "description": "Meaning of the source reference. FORMAL_DOCUMENT_NUMBER is an issuer-assigned number for one document; GENERIC_RECURRING_REFERENCE is a reusable label that may recur on different dates. This is source evidence, not a provider ID, and must never be inferred from the string format.",
+                          "type": "string",
+                          "enum": [
+                            "FORMAL_DOCUMENT_NUMBER",
+                            "GENERIC_RECURRING_REFERENCE"
+                          ]
+                        },
+                        "document_date": {
+                          "type": "string",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "due_date": {
+                          "type": "string",
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "currency": {
+                          "type": "string",
+                          "pattern": "^[A-Z]{3}$"
+                        },
+                        "contact": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "description": "Counterparty name exactly as shown by the source document. Existing contacts are resolved server-side by this identity.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 255
+                            },
+                            "email": {
+                              "description": "Source-supported contact email; omit when the source does not contain it.",
+                              "type": "string",
+                              "format": "email",
+                              "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                            },
+                            "durable_identity": {
+                              "description": "Typed durable identity. Omit unless the source supports every namespace field; a bare number must never be upgraded by inference.",
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "LEGAL_REGISTRY"
+                                    },
+                                    "jurisdiction": {
+                                      "description": "Registration jurisdiction supported by the source, for example SG or US.",
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 128,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$"
+                                    },
+                                    "registry_scheme": {
+                                      "description": "Issuing registry or scheme, for example ACRA_UEN or IRS_EIN.",
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 128,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$"
+                                    },
+                                    "number": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 128
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "jurisdiction",
+                                    "registry_scheme",
+                                    "number"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "PROVIDER_TENANT_ACCOUNT"
+                                    },
+                                    "provider": {
+                                      "type": "string",
+                                      "const": "xero"
+                                    },
+                                    "scope": {
+                                      "type": "string",
+                                      "const": "PROVIDER_TENANT"
+                                    },
+                                    "namespace": {
+                                      "description": "Explicit account-number namespace whose uniqueness is guaranteed inside this Xero tenant.",
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 128,
+                                      "pattern": "^[A-Za-z0-9._:/-]+$"
+                                    },
+                                    "number": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 128
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "provider",
+                                    "scope",
+                                    "namespace",
+                                    "number"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            },
+                            "company_number": {
+                              "description": "Legacy bare provider field. It is collision/read-back evidence only; use durable_identity for a namespaced legal identity.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "account_number": {
+                              "description": "Legacy bare provider field. It is collision/read-back evidence only and is not a provider contact ID.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            }
+                          },
+                          "required": [
+                            "name"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "invoice_exchange_rate": {
+                          "description": "Optional source-supported invoice exchange rate. Omit rather than guess; the server will block a foreign-currency route when required evidence is absent.",
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                        },
+                        "transition_review_required": {
+                          "description": "Required source-review conclusion. Use true when GST transition facts are present or unresolved; use false only when the transaction has been reviewed as non-transitional. Never decide this from invoice date alone.",
+                          "type": "boolean"
+                        },
+                        "declared_net": {
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                        },
+                        "declared_tax": {
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                        },
+                        "declared_gross": {
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                        },
+                        "document_validity": {
+                          "type": "string",
+                          "enum": [
+                            "VALID_FOR_LIVE_BOOKS",
+                            "TEST_OR_NOT_VALID",
+                            "UNKNOWN"
+                          ]
+                        },
+                        "original_document": {
+                          "description": "Provider-neutral historical linkage. The server resolves the exact original from complete provider history; this coordinate carries no provider ID.",
+                          "type": "object",
+                          "properties": {
+                            "reference": {
+                              "description": "Ordinary issuer reference of the historical original invoice or bill. Never supply a provider object ID.",
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 255
+                            },
+                            "reference_kind": {
+                              "description": "Source-supported meaning of the historical original reference.",
+                              "type": "string",
+                              "enum": [
+                                "FORMAL_DOCUMENT_NUMBER",
+                                "GENERIC_RECURRING_REFERENCE"
+                              ]
+                            },
+                            "document_date": {
+                              "description": "Date of the historical original invoice or bill.",
+                              "type": "string",
+                              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                            }
+                          },
+                          "required": [
+                            "reference",
+                            "reference_kind",
+                            "document_date"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "line_accounting_mode": {
+                          "type": "string",
+                          "const": "PER_LINE"
+                        },
+                        "lines": {
+                          "minItems": 1,
+                          "maxItems": 100,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "description": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1000
+                              },
+                              "quantity": {
+                                "description": "Positive decimal string, for example 1 or 2.5000.",
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                              },
+                              "unit_amount_excluding_tax": {
+                                "description": "Per-unit amount before tax, as a decimal string.",
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                              },
+                              "source_tax_amount": {
+                                "description": "Tax printed for this source line, as a decimal string.",
+                                "type": "string",
+                                "pattern": "^(?:0|[1-9]\\d{0,15})(?:\\.\\d{1,4})?$"
+                              },
+                              "accounting_category": {
+                                "description": "The policy category supported for this exact source line.",
+                                "type": "string",
+                                "enum": [
+                                  "CONSULTING_REVENUE",
+                                  "OFFICE_SUPPLIES",
+                                  "CLOUD_SUBSCRIPTIONS"
+                                ]
+                              },
+                              "tax_class": {
+                                "description": "The tax class supported for this exact source line.",
+                                "type": "string",
+                                "enum": [
+                                  "SG_STANDARD_RATED",
+                                  "NO_TAX",
+                                  "ZERO_RATED",
+                                  "OUT_OF_SCOPE",
+                                  "EXEMPT"
+                                ]
+                              },
+                              "effective_tax_rate_percent": {
+                                "description": "The source-supported effective tax percentage for this exact line.",
+                                "type": "string",
+                                "pattern": "^(?:100(?:\\.0{1,2})?|(?:0|[1-9]\\d?)(?:\\.\\d{1,2})?)$"
+                              },
+                              "exempt_classification": {
+                                "description": "Line-specific exemption evidence; valid only with a complete PER_LINE accounting override.",
+                                "type": "string",
+                                "enum": [
+                                  "REGULATION_33",
+                                  "NON_REGULATION_33"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "description",
+                              "quantity",
+                              "unit_amount_excluding_tax",
+                              "source_tax_amount",
+                              "accounting_category",
+                              "tax_class",
+                              "effective_tax_rate_percent"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "document_type",
+                        "reference",
+                        "reference_kind",
+                        "document_date",
+                        "currency",
+                        "contact",
+                        "transition_review_required",
+                        "declared_net",
+                        "declared_tax",
+                        "declared_gross",
+                        "document_validity",
+                        "line_accounting_mode",
+                        "lines"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "new_contacts": {
+                "description": "Omit for known existing counterparties. Include only genuinely new contacts that this exact submitted Case must create; the server resolves existing identities and same-Case dependencies.",
+                "maxItems": 100,
+                "type": "array",
+                "items": {
+                  "description": "Use only when this submitted Case explicitly requires creation of a genuinely new contact, including a server-issued contact recovery continuation. Do not repeat a known existing contact.",
+                  "type": "object",
+                  "properties": {
+                    "usage_roles": {
+                      "description": "Optional usage directions for contact-only recovery. For documents, the server derives customer/supplier usage from those documents.",
+                      "minItems": 1,
+                      "maxItems": 2,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "CUSTOMER",
+                          "SUPPLIER"
+                        ]
+                      }
+                    },
+                    "contact": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "description": "Counterparty name exactly as shown by the source document. Existing contacts are resolved server-side by this identity.",
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 255
+                        },
+                        "email": {
+                          "description": "Source-supported contact email; omit when the source does not contain it.",
+                          "type": "string",
+                          "format": "email",
+                          "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                        },
+                        "durable_identity": {
+                          "description": "Typed durable identity. Omit unless the source supports every namespace field; a bare number must never be upgraded by inference.",
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "LEGAL_REGISTRY"
+                                },
+                                "jurisdiction": {
+                                  "description": "Registration jurisdiction supported by the source, for example SG or US.",
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 128,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$"
+                                },
+                                "registry_scheme": {
+                                  "description": "Issuing registry or scheme, for example ACRA_UEN or IRS_EIN.",
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 128,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$"
+                                },
+                                "number": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 128
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "jurisdiction",
+                                "registry_scheme",
+                                "number"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "PROVIDER_TENANT_ACCOUNT"
+                                },
+                                "provider": {
+                                  "type": "string",
+                                  "const": "xero"
+                                },
+                                "scope": {
+                                  "type": "string",
+                                  "const": "PROVIDER_TENANT"
+                                },
+                                "namespace": {
+                                  "description": "Explicit account-number namespace whose uniqueness is guaranteed inside this Xero tenant.",
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 128,
+                                  "pattern": "^[A-Za-z0-9._:/-]+$"
+                                },
+                                "number": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 128
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "provider",
+                                "scope",
+                                "namespace",
+                                "number"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        },
+                        "company_number": {
+                          "description": "Legacy bare provider field. It is collision/read-back evidence only; use durable_identity for a namespaced legal identity.",
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "account_number": {
+                          "description": "Legacy bare provider field. It is collision/read-back evidence only and is not a provider contact ID.",
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "contact"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "case_id",
+              "expected_version",
+              "source_label",
+              "source_set_complete",
+              "documents",
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": false,
+            "idempotentHint": false,
+            "destructiveHint": false,
+            "openWorldHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_execute_accounting_case",
+          "title": "Execute eligible Xero Accounting Case drafts",
+          "description": "Executes only the immutable eligible operations stored in the exact current Accounting Case version under standing delegation. It accepts no payload, tenant, action, account, tax, receipt or confirmation phrase, stops on uncertain writes, and reports ledger success only with provider receipt plus exact readback for each eligible write. Ledger readback never verifies the submitted source or original file; source_truth_claim remains NOT_VERIFIED.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "case_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9._:/-]+$"
+              },
+              "case_version": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "request_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9._:/-]+$"
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "case_id",
+              "case_version",
+              "request_id",
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": false,
+            "idempotentHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_get_accounting_case_status",
+          "title": "Get governed Xero Accounting Case status",
+          "description": "Returns bounded case coverage, residual exceptions, source-truth status and per-operation receipt/readback status. It distinguishes unverified submitted-source truth, supplied-set coverage and verified ledger writes, and never claims original-file or whole-business completeness.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "case_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9._:/-]+$"
+              },
+              "case_version": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "case_id",
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_connection_status",
+          "title": "Xero connection status",
+          "description": "Returns connector control-plane health and the current compatibility selection. It does not prove a ledger target; first call xero_pin_current_organisation, then verify with xero_get_organisation using that target_session_ref. Organisation changes require a separate short-lived user confirmation page and never happen silently from chat text.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_start_organisation_switch",
+          "title": "Switch Xero organisation",
+          "description": "Creates a short-lived one-time link where the user can explicitly choose another Xero organisation already covered by the current Xero authorization. This tool only starts the confirmation flow; it does not switch from chat text alone. After the page completes, call xero_pin_current_organisation before continuing ledger work.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": false,
+            "idempotentHint": false,
+            "destructiveHint": false,
+            "openWorldHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_pin_current_organisation",
+          "title": "Pin current Xero organisation",
+          "description": "Call this before ledger work and again after an organisation switch or target expiry. It pins the current Xero organisation into a short-lived opaque target_session_ref scoped to the verified OAuth installation principal and immutable ledger binding; pass that capability to every subsequent ledger tool. The server does not trust client-supplied conversation headers as identity.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": false,
+            "idempotentHint": false,
+            "destructiveHint": false,
+            "openWorldHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_get_organisation",
+          "title": "Get Xero organisation",
+          "description": "Reads and verifies the exact Xero organisation pinned by target_session_ref, including its base currency.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_list_accounts",
+          "title": "List Xero accounts",
+          "description": "Lists active Xero accounts and can filter them by account class.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "account_class": {
+                "type": "string",
+                "enum": [
+                  "ASSET",
+                  "EQUITY",
+                  "EXPENSE",
+                  "LIABILITY",
+                  "REVENUE"
+                ]
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_list_tax_rates",
+          "title": "List Xero tax rates",
+          "description": "Lists active Xero tax types available to the connected organisation.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_list_contacts",
+          "title": "List Xero contacts",
+          "description": "Lists one bounded page of contacts from the server-bound Xero organisation without requiring guessed search terms. Defaults to ACTIVE contacts and supports reviewed supplier/customer filters.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "status": {
+                "default": "ACTIVE",
+                "type": "string",
+                "enum": [
+                  "ACTIVE",
+                  "ARCHIVED",
+                  "GDPRREQUEST"
+                ]
+              },
+              "is_supplier": {
+                "type": "boolean"
+              },
+              "is_customer": {
+                "type": "boolean"
+              },
+              "page": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "limit": {
+                "default": 25,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_get_contact",
+          "title": "Get exact Xero contact",
+          "description": "Reads one contact from the server-bound Xero organisation by its exact Xero ContactID.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "contact_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "contact_id",
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_search_contacts",
+          "title": "Search Xero contacts",
+          "description": "Searches one caller-selected bounded Xero contact page by text, returning safe supplier fields plus explicit pagination/completeness evidence.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 100
+              },
+              "limit": {
+                "default": 10,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 25
+              },
+              "page": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "query",
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_list_invoices",
+          "title": "List Xero invoices and bills",
+          "description": "Lists bounded ACCREC sales invoices and ACCPAY supplier bills using reviewed filters and pagination.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ACCPAY",
+                  "ACCREC"
+                ]
+              },
+              "contact_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "statuses": {
+                "minItems": 1,
+                "maxItems": 6,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "DRAFT",
+                    "SUBMITTED",
+                    "DELETED",
+                    "AUTHORISED",
+                    "PAID",
+                    "VOIDED"
+                  ]
+                }
+              },
+              "date_from": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "date_to": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "page": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000
+              },
+              "page_size": {
+                "default": 50,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "search_term": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "include_archived": {
+                "default": false,
+                "type": "boolean"
+              },
+              "order": {
+                "default": "DATE_DESC",
+                "type": "string",
+                "enum": [
+                  "DATE_ASC",
+                  "DATE_DESC",
+                  "UPDATED_AT_ASC",
+                  "UPDATED_AT_DESC"
+                ]
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_list_credit_notes",
+          "title": "List Xero credit notes",
+          "description": "Reads a bounded page of customer or supplier credit-note history from the bound Xero organisation. Filters are fixed to contact, date, status, and type; this tool never creates, allocates, voids, or deletes a credit note.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "contact_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "date_from": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "date_to": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "DRAFT",
+                  "SUBMITTED",
+                  "DELETED",
+                  "AUTHORISED",
+                  "PAID",
+                  "VOIDED"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ACCPAYCREDIT",
+                  "ACCRECCREDIT"
+                ]
+              },
+              "page": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "page_size": {
+                "default": 50,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_list_payments",
+          "title": "List Xero payments",
+          "description": "Reads a bounded page of payment and receipt history from the bound Xero organisation, including exact linked invoice or credit-note IDs when Xero returns them. It never creates, reconciles, reverses, or deletes a payment.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "contact_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "date_from": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "date_to": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "AUTHORISED",
+                  "DELETED"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ACCRECPAYMENT",
+                  "ACCPAYPAYMENT",
+                  "ARCREDITPAYMENT",
+                  "APCREDITPAYMENT",
+                  "AROVERPAYMENTPAYMENT",
+                  "ARPREPAYMENTPAYMENT",
+                  "APPREPAYMENTPAYMENT",
+                  "APOVERPAYMENTPAYMENT"
+                ]
+              },
+              "page": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "page_size": {
+                "default": 50,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_list_quotes",
+          "title": "List Xero quotes",
+          "description": "Reads a bounded logical page of Xero quotes using reviewed contact, date, expiry, status, and quote-number filters. Pagination evidence remains explicit because Xero serves Quotes in fixed provider pages; this tool never creates, sends, accepts, or invoices a quote.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "DRAFT",
+                  "SENT",
+                  "DECLINED",
+                  "ACCEPTED",
+                  "INVOICED",
+                  "DELETED"
+                ]
+              },
+              "contact_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "date_from": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "date_to": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "expiry_date_from": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "expiry_date_to": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "quote_number": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "page": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "page_size": {
+                "default": 50,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "sort": {
+                "default": "DATE_DESC",
+                "type": "string",
+                "enum": [
+                  "DATE_ASC",
+                  "DATE_DESC",
+                  "EXPIRY_DATE_ASC",
+                  "EXPIRY_DATE_DESC",
+                  "UPDATED_AT_ASC",
+                  "UPDATED_AT_DESC"
+                ]
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_get_quote",
+          "title": "Get exact Xero quote",
+          "description": "Reads one bounded quote snapshot by its exact Xero QuoteID, including safe line and tracking projections plus explicit omitted-field evidence.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "quote_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "quote_id",
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_list_purchase_orders",
+          "title": "List Xero purchase orders",
+          "description": "Reads one bounded Xero purchase-order page using reviewed status and date filters. It never creates, submits, authorises, bills, sends, or deletes a purchase order.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "DRAFT",
+                  "SUBMITTED",
+                  "AUTHORISED",
+                  "BILLED",
+                  "DELETED"
+                ]
+              },
+              "date_from": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "date_to": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "page": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "page_size": {
+                "default": 50,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "sort": {
+                "default": "DATE_DESC",
+                "type": "string",
+                "enum": [
+                  "DATE_ASC",
+                  "DATE_DESC",
+                  "DELIVERY_DATE_ASC",
+                  "DELIVERY_DATE_DESC",
+                  "UPDATED_AT_ASC",
+                  "UPDATED_AT_DESC"
+                ]
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_get_purchase_order",
+          "title": "Get exact Xero purchase order",
+          "description": "Reads one bounded purchase-order snapshot by its exact Xero PurchaseOrderID, without exposing delivery contact details omitted by the reviewed projection.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "purchase_order_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "purchase_order_id",
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_list_manual_journals",
+          "title": "List Xero manual journals",
+          "description": "Reads one bounded Xero manual-journal page using reviewed date, status, narration, and sort controls. It never creates, posts, voids, archives, or deletes a journal.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "DRAFT",
+                  "POSTED",
+                  "DELETED",
+                  "VOIDED"
+                ]
+              },
+              "date_from": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "date_to": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "search_term": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 100
+              },
+              "page": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "page_size": {
+                "default": 50,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "sort": {
+                "default": "DATE_DESC",
+                "type": "string",
+                "enum": [
+                  "DATE_ASC",
+                  "DATE_DESC",
+                  "UPDATED_AT_ASC",
+                  "UPDATED_AT_DESC"
+                ]
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_get_manual_journal",
+          "title": "Get exact Xero manual journal",
+          "description": "Reads one bounded manual-journal snapshot by its exact Xero ManualJournalID, including safe debit/credit line evidence.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "manual_journal_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "manual_journal_id",
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_list_items",
+          "title": "List Xero items",
+          "description": "Reads a true local offset page from Xero's non-paginated Items response using reviewed sale, purchase, inventory, search, and sort filters. End-of-collection completeness remains conservative because Xero supplies no page metadata.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "is_sold": {
+                "type": "boolean"
+              },
+              "is_purchased": {
+                "type": "boolean"
+              },
+              "is_tracked_as_inventory": {
+                "type": "boolean"
+              },
+              "search_term": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 100
+              },
+              "page": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "page_size": {
+                "default": 50,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "sort": {
+                "default": "CODE_ASC",
+                "type": "string",
+                "enum": [
+                  "CODE_ASC",
+                  "CODE_DESC",
+                  "NAME_ASC",
+                  "NAME_DESC",
+                  "UPDATED_AT_ASC",
+                  "UPDATED_AT_DESC"
+                ]
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_get_item",
+          "title": "Get exact Xero item",
+          "description": "Reads one item and its safe sales, purchase, and inventory accounting defaults by the exact Xero ItemID.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "item_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "item_id",
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_list_bank_transactions",
+          "title": "List Xero bank transactions",
+          "description": "Reads one bounded page of spent/received-money transactions for reconciliation analysis, including Xero's IsReconciled evidence and exact IDs. RECEIVE-PREPAYMENT searches use InvoiceNumber as the primary business reference. It never creates, edits, reconciles, transfers, voids, or deletes money activity.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "RECEIVE",
+                  "RECEIVE-OVERPAYMENT",
+                  "RECEIVE-PREPAYMENT",
+                  "SPEND",
+                  "SPEND-OVERPAYMENT",
+                  "SPEND-PREPAYMENT",
+                  "RECEIVE-TRANSFER",
+                  "SPEND-TRANSFER"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "AUTHORISED",
+                  "DELETED"
+                ]
+              },
+              "is_reconciled": {
+                "type": "boolean"
+              },
+              "contact_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "bank_account_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "invoice_number": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "date_from": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "date_to": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "search_term": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 100
+              },
+              "page": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "page_size": {
+                "default": 50,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "sort": {
+                "default": "DATE_DESC",
+                "type": "string",
+                "enum": [
+                  "DATE_ASC",
+                  "DATE_DESC",
+                  "UPDATED_AT_ASC",
+                  "UPDATED_AT_DESC"
+                ]
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_get_bank_transaction",
+          "title": "Get exact Xero bank transaction",
+          "description": "Reads one bounded bank-transaction snapshot by its exact Xero BankTransactionID for reconciliation analysis; bank-account numbers and provider URLs are never projected.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "bank_transaction_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "bank_transaction_id",
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_get_invoice",
+          "title": "Get exact Xero invoice or bill",
+          "description": "Reads one bounded ACCREC sales invoice or ACCPAY supplier bill by its exact Xero InvoiceID.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "invoice_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ACCPAY",
+                  "ACCREC"
+                ]
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "invoice_id",
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_get_supplier_bill",
+          "title": "Get exact Xero supplier bill",
+          "description": "Reads one ACCPAY supplier bill by its exact Xero InvoiceID.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "invoice_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "invoice_id",
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "xero_get_trial_balance",
+          "title": "Get Xero trial balance",
+          "description": "Reads a bounded Xero Trial Balance view for ledger evidence. The one canonical model output is content-only: result.pagination independently reports the model-text and complete CallToolResult byte limits, visited JSON-node counts, bounded source-inspection status, MCP truncation, and the explicit provider/audit completeness boundary.",
+          "inputSchema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "date": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+              },
+              "target_session_ref": {
+                "description": "Short-lived opaque reference returned by xero_pin_current_organisation for this OAuth installation principal and immutable ledger binding.",
+                "type": "string",
+                "pattern": "^xts_[A-Za-z0-9_-]{43}$"
+              }
+            },
+            "required": [
+              "target_session_ref"
+            ],
+            "additionalProperties": false
+          },
+          "annotations": {
+            "readOnlyHint": true,
+            "idempotentHint": true,
+            "destructiveHint": false
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        }
+      ]
+    },
+    "jsonrpc": "2.0",
+    "id": 4
+  }
+}

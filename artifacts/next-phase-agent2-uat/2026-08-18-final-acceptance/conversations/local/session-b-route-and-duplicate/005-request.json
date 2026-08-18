@@ -1,0 +1,25 @@
+{"method":"tools/call","params":{"name":"xero_prepare_accounting_case","arguments":{
+ "case_id":"case-local-claude-inv-20260731-002",
+ "expected_version":0,
+ "source_label":"客户交来的销售发票 EXC-2026-0731",
+ "source_set_complete":true,
+ "target_session_ref":"xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0",
+ "documents":[{
+   "document_type":"CUSTOMER_INVOICE",
+   "reference":"EXC-2026-0731",
+   "reference_kind":"FORMAL_DOCUMENT_NUMBER",
+   "document_date":"2026-07-31",
+   "due_date":"2026-08-30",
+   "currency":"SGD",
+   "contact":{"name":"Exact Customer"},
+   "transition_review_required":false,
+   "declared_net":"1200.00",
+   "declared_tax":"108.00",
+   "declared_gross":"1308.00",
+   "document_validity":"TEST_OR_NOT_VALID",
+   "line_accounting_mode":"DOCUMENT_DEFAULT_FOR_ALL_LINES",
+   "accounting_category":"CONSULTING_REVENUE",
+   "tax_class":"SG_STANDARD_RATED",
+   "effective_tax_rate_percent":"9",
+   "lines":[{"description":"咨询服务 2026 年 7 月","quantity":"1","unit_amount_excluding_tax":"1200.00","source_tax_amount":"108.00"}]
+ }]}}}

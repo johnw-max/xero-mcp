@@ -1,0 +1,111 @@
+{
+  "schema_version": "1.0",
+  "round_id": "round-2026-08-13-local",
+  "generated_at": "2026-08-13T18:55:00+08:00",
+  "closure_rule": "Only the original reviewer may move FIXED_PENDING_REVIEW to CLOSED.",
+  "findings": [
+    {
+      "id": "ARCH-001",
+      "severity": "P0",
+      "owner_role": "Chief Architect",
+      "status": "FIXED_PENDING_REVIEW",
+      "finding": "All public mutations and all raw Xero SDK writers must pass through the Case/kernel/one-shot-permit boundary.",
+      "fix_evidence": ["tests/xero-provider-write-permit-boundary.test.ts", "artifacts/harness-runs/p0-accounting-case-final-20260813/oracle-results.json#AC-SURFACE-001"]
+    },
+    {
+      "id": "ARCH-002",
+      "severity": "P1",
+      "owner_role": "Chief Architect",
+      "status": "FIXED_PENDING_REVIEW",
+      "finding": "The shared layer must be provider-neutral and pass a non-Xero conformance lifecycle.",
+      "fix_evidence": ["tests/provider-neutral-ledger-conformance.test.ts"],
+      "re_review_evidence": ["Independent final reviewer: 2/2 conformance PASS; no Xero import under shared control-kernel contract."],
+      "residual_risk": "The shared code remains in this repository rather than a separately versioned package; package extraction is deferred until a second provider integrates."
+    },
+    {
+      "id": "BUS-001",
+      "severity": "P0",
+      "owner_role": "Accounting Business Reviewer",
+      "status": "FIXED_PENDING_REVIEW",
+      "finding": "OfficeHub 80/800 and self-consistent wrong economics must not become a success claim.",
+      "fix_evidence": ["fault-injection-results.json#economic-mismatch", "tests/accounting-case-source-bridge.test.ts", "tests/accounting-case-readback-validator.test.ts"]
+    },
+    {
+      "id": "BUS-002",
+      "severity": "P1",
+      "owner_role": "Accounting Business Reviewer",
+      "status": "FIXED_PENDING_REVIEW",
+      "finding": "Golden14 submitted-set coverage and residual events must remain explicit.",
+      "fix_evidence": ["tests/accounting-case-golden-14.test.ts", "tests/accounting-case-public-golden-14.test.ts", "harness/fixtures/xero/golden-14-expected.v1.json"],
+      "residual_risk": "Coverage proves the submitted/frozen manifest, not unsubmitted real-world documents."
+    },
+    {
+      "id": "BUS-003",
+      "severity": "P1",
+      "owner_role": "Accounting Business Reviewer",
+      "status": "FIXED_PENDING_REVIEW",
+      "finding": "Credits, unsupported payments, No Tax/Exempt, tax periods and FX require typed provider-expressible policy.",
+      "fix_evidence": ["tests/accounting-case-tax-semantics.test.ts", "tests/xero-tax-rate-resolver.test.ts", "tests/xero-native-route-contract.test.ts"],
+      "residual_risk": "Real Xero tax/contact/reference behavior remains Gate A2/W."
+    },
+    {
+      "id": "REL-001",
+      "severity": "P0",
+      "owner_role": "Reliability & Security Red Team",
+      "status": "FIXED_PENDING_REVIEW",
+      "finding": "Unknown or mismatched writes must be recover-only and never duplicate a create.",
+      "fix_evidence": ["fault-injection-results.json#unknown-result-recovery", "test-results.json#postgres-required", "tests/p0-controlled-write-scenario-runner.test.ts"]
+    },
+    {
+      "id": "REL-002",
+      "severity": "P1",
+      "owner_role": "Reliability & Security Red Team",
+      "status": "FIXED_PENDING_REVIEW",
+      "finding": "Connection, scope, Provider access, policy and tenant failures require stable typed envelopes.",
+      "fix_evidence": ["tests/xero-error-taxonomy.test.ts", "tests/http-oauth-edge.test.ts", "harness/remote-agents/manifests/mock-v040rc-negative-contract.json"],
+      "residual_risk": "Live Agent2 permission/provider matrix is NOT_RUN."
+    },
+    {
+      "id": "SEC-001",
+      "severity": "P0",
+      "owner_role": "Reliability & Security Red Team",
+      "status": "FIXED_PENDING_REVIEW",
+      "finding": "Wrong tenant/binding/target, stale authority and raw adapter invocation must fail before mutation.",
+      "fix_evidence": ["fault-injection-results.json#tenant-and-target-binding", "fault-injection-results.json#dynamic-authority-revocation", "test-results.json#postgres-required"]
+    },
+    {
+      "id": "PROD-001",
+      "severity": "P0",
+      "owner_role": "Product Reviewer",
+      "status": "FIXED_PENDING_REVIEW",
+      "finding": "Execute uses Standing Delegation and identifiers only; no per-item confirmation phrase or mutable payload.",
+      "fix_evidence": ["tests/xero-accounting-case-tool-contract.test.ts", "artifacts/harness-runs/p0-accounting-case-final-20260813/oracle-results.json#AC-SURFACE-001"]
+    },
+    {
+      "id": "PROD-002",
+      "severity": "P1",
+      "owner_role": "Product Reviewer",
+      "status": "FIXED_PENDING_REVIEW",
+      "finding": "Agent prose without exact document receipts/readbacks cannot satisfy the acceptance oracle.",
+      "fix_evidence": ["harness/remote-agents/verify-runner.mjs", "test-results.json#agent2-runner-verifier"],
+      "residual_risk": "Actual Agent2 and Work behavior is NOT_RUN."
+    },
+    {
+      "id": "UAT-001",
+      "severity": "P1",
+      "owner_role": "Acceptance Operator",
+      "status": "OPEN",
+      "finding": "Local, Agent2 and Work must prove the same build/toolset/policy/migration/kernel with live receipts.",
+      "fix_evidence": ["attestation.json", "test-results.json"],
+      "residual_risk": "Local Gate L evidence is ready for review; Agent2 credentials/current Agent IDs/test tenant and Work execution evidence are absent."
+    },
+    {
+      "id": "OBS-001",
+      "severity": "P2",
+      "owner_role": "Reliability & Security Red Team",
+      "status": "OPEN",
+      "finding": "Specific durable economic mismatch reason codes are not yet projected into public Case status.",
+      "residual_risk": "Safety is fail-closed, but operator diagnostics show generic READBACK_MISMATCH until a follow-up migration/API projection is added."
+    }
+  ]
+}

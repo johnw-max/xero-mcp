@@ -1,0 +1,314 @@
+{
+  "schema_version": "1.0",
+  "evidence_boundary": "LOCAL_SYNTHETIC_PROVIDER_SDK_BOUNDARY",
+  "release_version": "0.4.0-rc.1",
+  "server_pid": 13274,
+  "started_at": "2026-08-13T12:19:51.016Z",
+  "tool_calls": [
+    {
+      "server_call_id": "local_mcp_dfa8fdc54d1acd14ac992c90",
+      "tool": "xero_prepare_accounting_case",
+      "input": {
+        "case_id": "case-local-agent-inv-001-20260813",
+        "expected_version": 0,
+        "sources": [
+          {
+            "artifactId": "source-b0752e329434503baf91d39823735e63",
+            "label": "Local Agent synthetic customer invoice",
+            "units": [
+              {
+                "unitId": "unit-c0cdeceaca6d97cfc6a8c5b3d60f07db",
+                "expectedFactKinds": [
+                  "NATIVE_DOCUMENT"
+                ]
+              }
+            ]
+          }
+        ],
+        "facts": [
+          {
+            "factId": "fact-c1497f784786a05970041569448aaca2",
+            "lineageKey": "lineage-c1497f784786a05970041569448aaca2",
+            "eventKey": "event-c1497f784786a05970041569448aaca2",
+            "sourceUnitIds": [
+              "unit-c0cdeceaca6d97cfc6a8c5b3d60f07db"
+            ],
+            "origin": "MODEL_EXTRACTED",
+            "revision": 1,
+            "kind": "NATIVE_DOCUMENT",
+            "documentKind": "INVOICE",
+            "counterpartyRole": "CUSTOMER",
+            "reference": "INV-LOCAL-AGENT-001",
+            "documentDate": "2026-07-20",
+            "dueDate": "2026-08-20",
+            "currency": "SGD",
+            "contactName": "Exact Customer",
+            "accountingCategory": "CONSULTING_REVENUE",
+            "taxClass": "SG_STANDARD_RATED",
+            "taxPolicyBasis": "DOCUMENT_DATE_NON_TRANSITION",
+            "effectiveTaxRateBps": 900,
+            "lineAmountType": "EXCLUSIVE",
+            "lines": [
+              {
+                "lineId": "line-fe3192da3cca324ad41c09b6ed03ef56",
+                "description": "咨询服务",
+                "quantity": "1",
+                "unitAmount": "100.00",
+                "sourceTax": "9.00"
+              }
+            ],
+            "declaredNet": "100.00",
+            "declaredTax": "9.00",
+            "declaredGross": "109.00",
+            "documentValidity": "TEST_OR_NOT_VALID"
+          }
+        ]
+      },
+      "started_at": "2026-08-13T12:20:11.912Z",
+      "finished_at": "2026-08-13T12:20:11.921Z",
+      "status": "PASS",
+      "result": {
+        "case_id": "case-local-agent-inv-001-20260813",
+        "case_version": 1,
+        "state": "PLANNED_NEEDS_PREFLIGHT",
+        "source_revision_hash": "756abe5d3b850d5fd3c436eb058c81e56a16fc970cbed5722b6cfc3c2120eaa4",
+        "compiled_plan_hash": "b954662fa011a10ac82bbfa2fd728981231efa31c47d945f5611082b5b004824",
+        "compiler_version": "0.4.0",
+        "policy_version": "xero-sg-accounting-policy-v5-2026h2",
+        "coverage": {
+          "supplied_set": "COMPLETE",
+          "expected_artifacts": 1,
+          "expected_source_units": 1,
+          "expected_fact_requirements": 1,
+          "satisfied_fact_requirements": 1,
+          "missing_fact_requirements": []
+        },
+        "events": [
+          {
+            "event_id": "evt_630bcdad5efdcb397e006350",
+            "event_key": "event-c1497f784786a05970041569448aaca2",
+            "disposition": "AUTO_EXECUTE",
+            "route": "SALES_INVOICE",
+            "reason_codes": []
+          }
+        ],
+        "operations": [
+          {
+            "operation_id": "op_612ace72cf079ef08694bc43",
+            "event_id": "evt_630bcdad5efdcb397e006350",
+            "action_id": "customer_invoice.create_draft",
+            "state": "PENDING",
+            "provider_receipt_recorded": false,
+            "exact_readback_recorded": false
+          }
+        ],
+        "residual_event_count": 0,
+        "completion_claim": {
+          "supplied_set_coverage": "COMPLETE",
+          "eligible_write_status": "NONE",
+          "whole_business_completeness": "NOT_ASSERTED",
+          "ledger_write_claim": "NOT_WRITTEN"
+        },
+        "persistence_mode": "CREATED"
+      }
+    },
+    {
+      "server_call_id": "local_mcp_f56738cfdb6fa800827b9481",
+      "tool": "xero_execute_accounting_case",
+      "input": {
+        "case_id": "case-local-agent-inv-001-20260813",
+        "case_version": 1,
+        "request_id": "req-local-agent-inv-001-exec-20260813"
+      },
+      "started_at": "2026-08-13T12:20:17.855Z",
+      "finished_at": "2026-08-13T12:20:17.883Z",
+      "status": "PASS",
+      "result": {
+        "case_id": "case-local-agent-inv-001-20260813",
+        "case_version": 1,
+        "state": "TERMINAL",
+        "source_revision_hash": "756abe5d3b850d5fd3c436eb058c81e56a16fc970cbed5722b6cfc3c2120eaa4",
+        "compiled_plan_hash": "b954662fa011a10ac82bbfa2fd728981231efa31c47d945f5611082b5b004824",
+        "compiler_version": "0.4.0",
+        "policy_version": "xero-sg-accounting-policy-v5-2026h2",
+        "coverage": {
+          "supplied_set": "COMPLETE",
+          "expected_artifacts": 1,
+          "expected_source_units": 1,
+          "expected_fact_requirements": 1,
+          "satisfied_fact_requirements": 1,
+          "missing_fact_requirements": []
+        },
+        "events": [
+          {
+            "event_id": "evt_630bcdad5efdcb397e006350",
+            "event_key": "event-c1497f784786a05970041569448aaca2",
+            "disposition": "AUTO_EXECUTE",
+            "route": "SALES_INVOICE",
+            "reason_codes": []
+          }
+        ],
+        "operations": [
+          {
+            "operation_id": "op_612ace72cf079ef08694bc43",
+            "event_id": "evt_630bcdad5efdcb397e006350",
+            "action_id": "customer_invoice.create_draft",
+            "state": "READBACK_VERIFIED",
+            "xero_object_id": "44444444-4444-4444-8444-444444444444",
+            "provider_receipt_recorded": true,
+            "exact_readback_recorded": true
+          }
+        ],
+        "residual_event_count": 0,
+        "completion_claim": {
+          "supplied_set_coverage": "COMPLETE",
+          "eligible_write_status": "ALL_READBACK_VERIFIED",
+          "whole_business_completeness": "NOT_ASSERTED",
+          "ledger_write_claim": "ALL_ELIGIBLE_WRITES_READBACK_VERIFIED"
+        }
+      }
+    },
+    {
+      "server_call_id": "local_mcp_dcbf167ea12dc119ea4982ff",
+      "tool": "xero_get_accounting_case_status",
+      "input": {
+        "case_id": "case-local-agent-inv-001-20260813",
+        "case_version": 1
+      },
+      "started_at": "2026-08-13T12:20:23.607Z",
+      "finished_at": "2026-08-13T12:20:23.609Z",
+      "status": "PASS",
+      "result": {
+        "case_id": "case-local-agent-inv-001-20260813",
+        "case_version": 1,
+        "state": "TERMINAL",
+        "source_revision_hash": "756abe5d3b850d5fd3c436eb058c81e56a16fc970cbed5722b6cfc3c2120eaa4",
+        "compiled_plan_hash": "b954662fa011a10ac82bbfa2fd728981231efa31c47d945f5611082b5b004824",
+        "compiler_version": "0.4.0",
+        "policy_version": "xero-sg-accounting-policy-v5-2026h2",
+        "coverage": {
+          "supplied_set": "COMPLETE",
+          "expected_artifacts": 1,
+          "expected_source_units": 1,
+          "expected_fact_requirements": 1,
+          "satisfied_fact_requirements": 1,
+          "missing_fact_requirements": []
+        },
+        "events": [
+          {
+            "event_id": "evt_630bcdad5efdcb397e006350",
+            "event_key": "event-c1497f784786a05970041569448aaca2",
+            "disposition": "AUTO_EXECUTE",
+            "route": "SALES_INVOICE",
+            "reason_codes": []
+          }
+        ],
+        "operations": [
+          {
+            "operation_id": "op_612ace72cf079ef08694bc43",
+            "event_id": "evt_630bcdad5efdcb397e006350",
+            "action_id": "customer_invoice.create_draft",
+            "state": "READBACK_VERIFIED",
+            "xero_object_id": "44444444-4444-4444-8444-444444444444",
+            "provider_receipt_recorded": true,
+            "exact_readback_recorded": true
+          }
+        ],
+        "residual_event_count": 0,
+        "completion_claim": {
+          "supplied_set_coverage": "COMPLETE",
+          "eligible_write_status": "ALL_READBACK_VERIFIED",
+          "whole_business_completeness": "NOT_ASSERTED",
+          "ledger_write_claim": "ALL_ELIGIBLE_WRITES_READBACK_VERIFIED"
+        }
+      }
+    }
+  ],
+  "startup_target_session_probe": {
+    "status": "PASS",
+    "organisation_name": "Synthetic Case Company",
+    "binding_revision": 1,
+    "target_session_id": "local-agent-pinned-target-session"
+  },
+  "provider_write_count": 1,
+  "provider_records": [
+    {
+      "case_id": "case-local-agent-inv-001-20260813",
+      "invoice_id": "44444444-4444-4444-8444-444444444444",
+      "status": "DRAFT",
+      "provider_receipt": {
+        "operation": "CREATE_ACCREC_DRAFT",
+        "invoiceId": "44444444-4444-4444-8444-444444444444",
+        "providerRequestId": "provider-request-case-001",
+        "tenantId": "11111111-1111-4111-8111-111111111111",
+        "idempotencyKey": "zc:create:ACCREC:9d68f90856c2209979d15eb8c36787789f0b961467cd39c252970a88668fe580"
+      },
+      "exact_readback": {
+        "tenantId": "11111111-1111-4111-8111-111111111111",
+        "invoiceId": "44444444-4444-4444-8444-444444444444",
+        "type": "ACCREC",
+        "status": "DRAFT",
+        "contact": {
+          "contactId": "22222222-2222-4222-8222-222222222222",
+          "name": "Exact Customer"
+        },
+        "invoiceDate": "2026-07-20",
+        "dueDate": "2026-08-20",
+        "currency": "SGD",
+        "reference": "INV-LOCAL-AGENT-001",
+        "lineAmountType": "Exclusive",
+        "lineItemCount": 1,
+        "linesTruncated": false,
+        "lines": [
+          {
+            "description": "咨询服务",
+            "quantity": "1.0000",
+            "unitAmount": "100.0000",
+            "lineAmount": "100.0000",
+            "taxAmount": "9.0000",
+            "accountCode": "200",
+            "taxType": "OUTPUTY24"
+          }
+        ],
+        "subTotal": "100.0000",
+        "totalTax": "9.0000",
+        "total": "109.0000"
+      }
+    }
+  ],
+  "standing_delegation_preflights": [
+    [
+      "customer_invoice.create_draft"
+    ]
+  ],
+  "release_attestation": {
+    "controlKernel": "ledger-control-kernel-v1",
+    "ledgerAuthoritySnapshot": "ledger-authority-snapshot:v1",
+    "accountingCaseCompiler": "0.4.0",
+    "accountingPolicy": "xero-sg-accounting-policy-v5-2026h2",
+    "accountingPolicyProjection": "xero-sg-accounting-policy-projection:v1",
+    "accountingCaseProviderContract": "xero-accounting-case-provider-v2",
+    "accountingCaseReadbackValidator": "accounting-case-economic-readback-v1",
+    "xeroNativeRouteContract": "xero-native-route-contract-v1",
+    "xeroContactIdentityContract": "xero-contact-identity-v1",
+    "requiredMigration": "032_ledger_authority_snapshots.sql",
+    "publicToolProfile": "xero-accounting-case-v1",
+    "executionAuthority": "STANDING_DELEGATION",
+    "writeCompletion": "PROVIDER_ID_RECEIPT_EXACT_READBACK"
+  },
+  "release_attestation_hash": "d27c5f90324fee87534f2b3df030e5675b1d8edeb2e2e6f4e09acf9ea32ca718",
+  "runtime_attestation": {
+    "releaseAttestationHash": "d27c5f90324fee87534f2b3df030e5675b1d8edeb2e2e6f4e09acf9ea32ca718",
+    "writeMode": "WRITE_ENABLED",
+    "processWriteGateEnabled": true,
+    "authoritySnapshotRevision": 1,
+    "authoritySnapshotHash": "b9139f8a9389ec6d65836b55a22165575bc7b2f2afb794f60c532f657e4f86f0",
+    "authorityWriteKillSwitchEnabled": true,
+    "storageMode": "IN_MEMORY",
+    "repositoryReady": true,
+    "requiredMigration": "032_ledger_authority_snapshots.sql",
+    "requiredMigrationStatus": "NOT_APPLICABLE",
+    "migrationHead": null
+  },
+  "runtime_attestation_hash": "87202577f92a630d70113f06f8b29f3a9d87e24435eb26527db1c6df2954cfe9"
+}

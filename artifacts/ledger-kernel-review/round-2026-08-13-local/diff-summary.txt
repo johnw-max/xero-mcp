@@ -1,0 +1,26 @@
+Round: round-2026-08-13-local
+Captured: 2026-08-13T18:55:00+08:00
+Evidence boundary: shared dirty worktree; no staging, commit, reset or cleanup performed.
+
+Baseline
+- Read-only fixed-point materialization: /tmp/xero-kernel-baseline.g9l2Sh/repo (reported source snapshot 8d2b5d2).
+- `diff -qr` excluding .git, node_modules, dist, artifacts, coverage and .DS_Store reported 179 changed/added/removed paths.
+- `git status --short` reported 192 entries in the current shared worktree.
+- Counts describe the shared state and do not assign authorship to this round.
+
+Final architectural change categories
+1. Provider-neutral embedded ledger-control contract, typed Accounting Case compiler and non-Xero conformance adapter.
+2. Exact actor/workspace/installation/binding/connection/tenant/target identity across Case, preparation, mutation, permit and receipt.
+3. Dynamic shared authority snapshot revision/hash, standing delegation and kill switch rechecked at preflight and final claim.
+4. Public 28-tool profile; only three public Accounting Case mutation tools; no per-item confirmation phrase.
+5. Durable Case/preflight/reseal/recovery state machine and PostgreSQL migrations 025 through 032.
+6. One-shot provider permit at all ten raw Xero SDK writer boundaries.
+7. Fixed-decimal source bridge, typed SG tax/date/FX/native-route/contact identity, Golden14 coverage and exact economic readback.
+8. Stable connection/scope/provider/tenant/policy failure taxonomy and dynamic health/readiness attestation.
+9. Deterministic local runners, Agent2 happy/negative structured oracles, and offline/live evidence-class isolation.
+10. Single required-migration manifest, static release gate and deterministic 163-file source bundle.
+
+Not claimed
+- No staged commit, pushed branch, deployed image, live Agent2 result or Work result.
+- No original-reviewer finding is marked CLOSED by the implementer.
+- Offline fault-injection tool calls are not evidence of Provider request counts.

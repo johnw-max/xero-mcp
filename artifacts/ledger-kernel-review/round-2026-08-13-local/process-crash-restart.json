@@ -1,0 +1,107 @@
+{
+  "captured_at": "2026-08-13T12:24:53.482Z",
+  "generator": {
+    "command": "node scripts/release/generate-process-crash-restart-evidence.mjs",
+    "executable_path": "scripts/release/generate-process-crash-restart-evidence.mjs",
+    "executable_sha256": "de42f7e556e84e0e6a56fc5a6a3715381963f0b04c0c98ef6273964e2bf16b33",
+    "kind": "PROCESS_CRASH_RESTART_HARNESS",
+    "version": "1.0.0"
+  },
+  "raw_artifacts": [
+    {
+      "artifact_type": "CRASH_SCENARIO_JSONL",
+      "path": "process-crash-restart.raw/AFTER_PREFLIGHT_PREPARED.jsonl",
+      "scenario_id": "AFTER_PREFLIGHT_PREPARED",
+      "sha256": "0ea42d3f294e948c864cc93ac405d898f1bc459e0ae52d215440d4821d463073",
+      "size_bytes": 16065
+    },
+    {
+      "artifact_type": "CRASH_SCENARIO_JSONL",
+      "path": "process-crash-restart.raw/AFTER_WRITE_CLAIM_BEFORE_PROVIDER.jsonl",
+      "scenario_id": "AFTER_WRITE_CLAIM_BEFORE_PROVIDER",
+      "sha256": "31f718bb041bc59fa84fadc11993831a2ac1ff7f9fc579207f339e01109e1cab",
+      "size_bytes": 14259
+    },
+    {
+      "artifact_type": "CRASH_SCENARIO_JSONL",
+      "path": "process-crash-restart.raw/AFTER_PROVIDER_ACCEPT_BEFORE_DURABLE_COMPLETION.jsonl",
+      "scenario_id": "AFTER_PROVIDER_ACCEPT_BEFORE_DURABLE_COMPLETION",
+      "sha256": "6eb417a9a0f9a16a3a06d8b82e056eac6288fafc71db71169d35c36679e43550",
+      "size_bytes": 17736
+    },
+    {
+      "artifact_type": "CRASH_SCENARIO_JSONL",
+      "path": "process-crash-restart.raw/AFTER_DURABLE_COMPLETION_BEFORE_RESPONSE.jsonl",
+      "scenario_id": "AFTER_DURABLE_COMPLETION_BEFORE_RESPONSE",
+      "sha256": "27062ab96dc1aa7cf19703d10ed7493fed69378d8a723de18c5f04d762e7d0f3",
+      "size_bytes": 17585
+    }
+  ],
+  "release_version": "0.4.0-rc.1",
+  "runtime_attestation_hash": "c46930d7521b5ebb17af0d4b26cd3428c8c6939916757defc0bf7e0e79c950dd",
+  "scenarios": [
+    {
+      "command": "node --import tsx harness/lifecycle/process-crash-worker.ts",
+      "evidence_refs": [
+        "process-crash-restart.raw/AFTER_PREFLIGHT_PREPARED.jsonl"
+      ],
+      "provider_write_count_after_restart": 1,
+      "recovery_outcome": "RECOVERED_READBACK_VERIFIED",
+      "restart_observed": true,
+      "scenario_id": "AFTER_PREFLIGHT_PREPARED",
+      "server_pid_after": 14772,
+      "server_pid_before": 14767,
+      "status": "PASS",
+      "termination": "PROCESS_KILL",
+      "termination_signal": "SIGKILL"
+    },
+    {
+      "command": "node --import tsx harness/lifecycle/process-crash-worker.ts",
+      "evidence_refs": [
+        "process-crash-restart.raw/AFTER_WRITE_CLAIM_BEFORE_PROVIDER.jsonl"
+      ],
+      "provider_write_count_after_restart": 0,
+      "recovery_outcome": "BLOCKED_SAFE_UNKNOWN",
+      "restart_observed": true,
+      "scenario_id": "AFTER_WRITE_CLAIM_BEFORE_PROVIDER",
+      "server_pid_after": 14779,
+      "server_pid_before": 14776,
+      "status": "PASS",
+      "termination": "PROCESS_KILL",
+      "termination_signal": "SIGKILL"
+    },
+    {
+      "command": "node --import tsx harness/lifecycle/process-crash-worker.ts",
+      "evidence_refs": [
+        "process-crash-restart.raw/AFTER_PROVIDER_ACCEPT_BEFORE_DURABLE_COMPLETION.jsonl"
+      ],
+      "provider_write_count_after_restart": 1,
+      "recovery_outcome": "RECOVERED_READBACK_VERIFIED",
+      "restart_observed": true,
+      "scenario_id": "AFTER_PROVIDER_ACCEPT_BEFORE_DURABLE_COMPLETION",
+      "server_pid_after": 14876,
+      "server_pid_before": 14866,
+      "status": "PASS",
+      "termination": "PROCESS_KILL",
+      "termination_signal": "SIGKILL"
+    },
+    {
+      "command": "node --import tsx harness/lifecycle/process-crash-worker.ts",
+      "evidence_refs": [
+        "process-crash-restart.raw/AFTER_DURABLE_COMPLETION_BEFORE_RESPONSE.jsonl"
+      ],
+      "provider_write_count_after_restart": 1,
+      "recovery_outcome": "IDEMPOTENT_REPLAY",
+      "restart_observed": true,
+      "scenario_id": "AFTER_DURABLE_COMPLETION_BEFORE_RESPONSE",
+      "server_pid_after": 14888,
+      "server_pid_before": 14879,
+      "status": "PASS",
+      "termination": "PROCESS_KILL",
+      "termination_signal": "SIGKILL"
+    }
+  ],
+  "schema_version": "1.0",
+  "source_fingerprint": "f9c46870cd0f5988716b18bfa78eb8495d0f111a13f90804c6bfe0633c5209fe",
+  "status": "PASS"
+}

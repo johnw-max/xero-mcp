@@ -1,0 +1,432 @@
+{
+  "schemaVersion": "1.0",
+  "runId": "business-intake-contract-local",
+  "generatedAt": "2026-08-13T12:50:15.773Z",
+  "executionMode": "LOCAL_IN_MEMORY_NO_XERO_NETWORK",
+  "guardrails": {
+    "realXeroUsed": false,
+    "remoteWriteEnabled": false,
+    "requestScopes": [
+      "xero.read"
+    ],
+    "providerWriteAttempts": 0
+  },
+  "manifest": {
+    "path": "harness/manifests/contract-v1.json",
+    "schemaVersion": "1.1-accounting-case"
+  },
+  "protocol": {
+    "serverVersion": {
+      "name": "zcloak-xero-accounting-mcp-demo",
+      "version": "0.4.0-rc.1"
+    },
+    "serverCapabilities": {
+      "logging": {},
+      "tools": {
+        "listChanged": true
+      }
+    }
+  },
+  "toolSurface": {
+    "expected": [
+      "xero_connection_status",
+      "xero_execute_accounting_case",
+      "xero_get_accounting_case_status",
+      "xero_get_bank_transaction",
+      "xero_get_contact",
+      "xero_get_invoice",
+      "xero_get_item",
+      "xero_get_manual_journal",
+      "xero_get_organisation",
+      "xero_get_purchase_order",
+      "xero_get_quote",
+      "xero_get_supplier_bill",
+      "xero_get_trial_balance",
+      "xero_list_accounts",
+      "xero_list_bank_transactions",
+      "xero_list_contacts",
+      "xero_list_credit_notes",
+      "xero_list_invoices",
+      "xero_list_items",
+      "xero_list_manual_journals",
+      "xero_list_payments",
+      "xero_list_purchase_orders",
+      "xero_list_quotes",
+      "xero_list_tax_rates",
+      "xero_pin_current_organisation",
+      "xero_prepare_accounting_case",
+      "xero_search_contacts",
+      "xero_start_organisation_switch"
+    ],
+    "actual": [
+      "xero_connection_status",
+      "xero_execute_accounting_case",
+      "xero_get_accounting_case_status",
+      "xero_get_bank_transaction",
+      "xero_get_contact",
+      "xero_get_invoice",
+      "xero_get_item",
+      "xero_get_manual_journal",
+      "xero_get_organisation",
+      "xero_get_purchase_order",
+      "xero_get_quote",
+      "xero_get_supplier_bill",
+      "xero_get_trial_balance",
+      "xero_list_accounts",
+      "xero_list_bank_transactions",
+      "xero_list_contacts",
+      "xero_list_credit_notes",
+      "xero_list_invoices",
+      "xero_list_items",
+      "xero_list_manual_journals",
+      "xero_list_payments",
+      "xero_list_purchase_orders",
+      "xero_list_quotes",
+      "xero_list_tax_rates",
+      "xero_pin_current_organisation",
+      "xero_prepare_accounting_case",
+      "xero_search_contacts",
+      "xero_start_organisation_switch"
+    ],
+    "missing": [],
+    "unexpected": [],
+    "dangerousPresent": [],
+    "forbiddenPublicPresent": []
+  },
+  "summary": {
+    "total": 48,
+    "passed": 48,
+    "failed": 0,
+    "status": "PASS"
+  },
+  "cases": [
+    {
+      "id": "protocol.initialize",
+      "dimension": "PROTOCOL",
+      "status": "PASS",
+      "detail": "initialize negotiated zcloak-xero-accounting-mcp-demo@0.4.0-rc.1"
+    },
+    {
+      "id": "version.one-source",
+      "dimension": "VERSION",
+      "status": "PASS",
+      "detail": "package, MCP initialize, health and readiness share 0.4.0-rc.1 via XERO_RELEASE_VERSION"
+    },
+    {
+      "id": "version.migration-head",
+      "dimension": "VERSION",
+      "status": "PASS",
+      "detail": "contract and runtime require 032_ledger_authority_snapshots.sql"
+    },
+    {
+      "id": "protocol.ping",
+      "dimension": "PROTOCOL",
+      "status": "PASS",
+      "detail": "ping returned successfully"
+    },
+    {
+      "id": "surface.exact-reviewed-tools",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "tools/list exactly matches the pinned 28-tool production allowlist"
+    },
+    {
+      "id": "surface.no-bypass-tools",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "dangerous tools and legacy object-level mutation bypasses are absent"
+    },
+    {
+      "id": "surface.no-destructive-annotations",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "no advertised tool declares destructiveHint=true"
+    },
+    {
+      "id": "read.connection-status",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to connectionStatus",
+      "tool": "xero_connection_status"
+    },
+    {
+      "id": "read.organisation",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to getOrganisation",
+      "tool": "xero_get_organisation"
+    },
+    {
+      "id": "read.accounts-with-filter",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to listAccounts",
+      "tool": "xero_list_accounts"
+    },
+    {
+      "id": "read.tax-rates",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to listTaxRates",
+      "tool": "xero_list_tax_rates"
+    },
+    {
+      "id": "read.invoice-exact",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to getInvoice",
+      "tool": "xero_get_invoice"
+    },
+    {
+      "id": "read.trial-balance",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to getTrialBalance",
+      "tool": "xero_get_trial_balance"
+    },
+    {
+      "id": "case.prepare",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to accountingCase.prepare",
+      "tool": "xero_prepare_accounting_case"
+    },
+    {
+      "id": "case.status",
+      "dimension": "ROUTING",
+      "status": "PASS",
+      "detail": "routed once through audit to accountingCase.status",
+      "tool": "xero_get_accounting_case_status"
+    },
+    {
+      "id": "schema.no-input-rejects-routing",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before connectionStatus",
+      "tool": "xero_connection_status"
+    },
+    {
+      "id": "schema.invoice-list-rejects-raw-where",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before listInvoices",
+      "tool": "xero_list_invoices"
+    },
+    {
+      "id": "schema.case-execute-rejects-payload",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before accountingCase.execute",
+      "tool": "xero_execute_accounting_case"
+    },
+    {
+      "id": "schema.case-execute-rejects-tenant",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before accountingCase.execute",
+      "tool": "xero_execute_accounting_case"
+    },
+    {
+      "id": "schema.case-status-rejects-zero-version",
+      "dimension": "SCHEMA",
+      "status": "PASS",
+      "detail": "invalid input was rejected before accountingCase.status",
+      "tool": "xero_get_accounting_case_status"
+    },
+    {
+      "id": "surface.invoke-absent.xero_authorise_supplier_bill",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_authorise_supplier_bill"
+    },
+    {
+      "id": "surface.invoke-absent.xero_create_payment",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_create_payment"
+    },
+    {
+      "id": "surface.invoke-absent.xero_reconcile_payment",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_reconcile_payment"
+    },
+    {
+      "id": "surface.invoke-absent.xero_void_invoice",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_void_invoice"
+    },
+    {
+      "id": "surface.invoke-absent.xero_delete_invoice",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_delete_invoice"
+    },
+    {
+      "id": "surface.invoke-absent.xero_file_tax_return",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_file_tax_return"
+    },
+    {
+      "id": "surface.invoke-absent.xero_prepare_supplier_bill_draft",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_prepare_supplier_bill_draft"
+    },
+    {
+      "id": "surface.invoke-absent.xero_create_draft_supplier_bill",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_create_draft_supplier_bill"
+    },
+    {
+      "id": "surface.invoke-absent.xero_prepare_sales_invoice_draft",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_prepare_sales_invoice_draft"
+    },
+    {
+      "id": "surface.invoke-absent.xero_create_draft_sales_invoice",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_create_draft_sales_invoice"
+    },
+    {
+      "id": "surface.invoke-absent.xero_prepare_credit_note_draft",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_prepare_credit_note_draft"
+    },
+    {
+      "id": "surface.invoke-absent.xero_create_credit_note_draft",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_create_credit_note_draft"
+    },
+    {
+      "id": "surface.invoke-absent.xero_prepare_manual_journal_draft",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_prepare_manual_journal_draft"
+    },
+    {
+      "id": "surface.invoke-absent.xero_create_manual_journal_draft",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_create_manual_journal_draft"
+    },
+    {
+      "id": "surface.invoke-absent.xero_prepare_quote_draft",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_prepare_quote_draft"
+    },
+    {
+      "id": "surface.invoke-absent.xero_create_quote_draft",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_create_quote_draft"
+    },
+    {
+      "id": "surface.invoke-absent.xero_prepare_purchase_order_draft",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_prepare_purchase_order_draft"
+    },
+    {
+      "id": "surface.invoke-absent.xero_create_purchase_order_draft",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_create_purchase_order_draft"
+    },
+    {
+      "id": "surface.invoke-absent.xero_prepare_contact_create",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_prepare_contact_create"
+    },
+    {
+      "id": "surface.invoke-absent.xero_create_contact",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_create_contact"
+    },
+    {
+      "id": "surface.invoke-absent.xero_prepare_contact_update",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_prepare_contact_update"
+    },
+    {
+      "id": "surface.invoke-absent.xero_update_contact",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_update_contact"
+    },
+    {
+      "id": "surface.invoke-absent.xero_prepare_item_create",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_prepare_item_create"
+    },
+    {
+      "id": "surface.invoke-absent.xero_create_item",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_create_item"
+    },
+    {
+      "id": "surface.invoke-absent.xero_prepare_item_update",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_prepare_item_update"
+    },
+    {
+      "id": "surface.invoke-absent.xero_update_item",
+      "dimension": "TOOL_SURFACE",
+      "status": "PASS",
+      "detail": "unadvertised bypass tool invocation was rejected",
+      "tool": "xero_update_item"
+    },
+    {
+      "id": "write-gate.read-only-scope-denies-case-execute",
+      "dimension": "WRITE_GATE",
+      "status": "PASS",
+      "detail": "ordinary Case execute was denied at the MCP/service state gate with zero Provider writes",
+      "tool": "xero_execute_accounting_case"
+    },
+    {
+      "id": "write-gate.zero-provider-writes",
+      "dimension": "WRITE_GATE",
+      "status": "PASS",
+      "detail": "the entire run reached zero provider write methods"
+    }
+  ]
+}
