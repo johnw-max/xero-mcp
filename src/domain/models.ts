@@ -134,6 +134,8 @@ export interface OrganisationSwitchSession {
   authorizationId: string;
   sourceBindingId: string;
   sourceConnectionId: string;
+  /** Keyed hash of the initiating ledger target; never the raw capability. */
+  sourceTargetSessionHash?: string;
   createdAt: Date;
   expiresAt: Date;
   consumedAt?: Date;
@@ -157,6 +159,43 @@ export interface CompleteOrganisationSwitchResult {
   previousBinding: ResolvedAgentConnectionBinding;
   currentBinding: ResolvedAgentConnectionBinding;
   changed: boolean;
+  sourceTargetRevoked: boolean;
+}
+
+/**
+ * One short-lived, installation-owned ledger target. The raw capability is
+ * returned only to the MCP client; only its keyed hash is persisted.
+ *
+ * Unlike oauth_installation_active_bindings, this record is immutable. It can
+ * therefore keep one conversation pinned to Organisation A while another
+ * conversation changes the installation's compatibility pointer to B.
+ */
+export interface LedgerTargetSession {
+  sessionId: string;
+  sessionHash: string;
+  installationId: string;
+  bindingId: string;
+  connectionId: string;
+  bindingRevision: number;
+  createdAt: Date;
+  expiresAt: Date;
+  lastUsedAt?: Date;
+  revokedAt?: Date;
+}
+
+export interface ResolveLedgerTargetSessionInput {
+  sessionHash: string;
+  installationId: string;
+  workspaceId: string;
+  subjectType: BindingSubjectType;
+  subjectId: string;
+  agentId: string;
+  now: Date;
+}
+
+export interface ResolvedLedgerTargetSession {
+  session: LedgerTargetSession;
+  binding: ResolvedAgentConnectionBinding;
 }
 
 export interface OAuthBrokerFlow {

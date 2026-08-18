@@ -26,6 +26,8 @@ import { XeroMutationService } from "./xeroMutationService.js";
 import { AppError } from "../errors.js";
 import { evaluateEffectiveXeroCapability } from "../policy/xeroEffectiveCapability.js";
 import type { XeroCapabilityPermission } from "../policy/xeroCapabilityPolicy.js";
+import { xeroCapabilityDenied } from "../policy/xeroCapabilityError.js";
+import { issueObjectPreparationValidationReceipt } from "../control-kernel/deterministicValidation.js";
 
 type SupportedDraft = CanonicalQuoteDraftPayload | CanonicalPurchaseOrderDraftPayload;
 type SupportedPrimitive = PreparedControlledDraft<SupportedDraft>;
@@ -49,9 +51,10 @@ export interface ControlledDraftPreparationResult {
     evidence_type: SupportedPrimitive["sourceEvidenceType"];
     original_file_verified: false;
   };
-  confirmation_phrase: string;
   expires_at: string;
-  execution_allowed_before_confirmation: false;
+  execution_mode: "STANDING_AUTONOMOUS_DELEGATION";
+  per_transaction_confirmation_required: false;
+  next_action: "CALL_EXECUTE_TOOL";
   warning: string;
 }
 
@@ -181,7 +184,6 @@ export class XeroControlledMutationService {
         lineCount: prepared.canonicalPayload.lines.length,
         status: "DRAFT",
       },
-      confirmationPhrase: prepared.confirmationPhrase,
     });
     return {
       preparation_id: persisted.preparationId,
@@ -197,10 +199,11 @@ export class XeroControlledMutationService {
         evidence_type: prepared.sourceEvidenceType,
         original_file_verified: false,
       },
-      confirmation_phrase: persisted.confirmationPhrase,
       expires_at: persisted.expiresAt.toISOString(),
-      execution_allowed_before_confirmation: false,
-      warning: "The confirmation is bound to this OAuth tenant, payload and source fingerprint, but is conversation-attested rather than Host-signed proof.",
+      execution_mode: "STANDING_AUTONOMOUS_DELEGATION",
+      per_transaction_confirmation_required: false,
+      next_action: "CALL_EXECUTE_TOOL",
+      warning: "Execution revalidates the exact target, standing delegation, immutable payload and provider readback. Source facts remain model-extracted provenance.",
     };
   }
 
@@ -211,36 +214,37 @@ export class XeroControlledMutationService {
     actionId: "quote.create_draft" | "purchase_order.create_draft",
   ): Promise<ControlledDraftWriteResult> {
     const input = executePreparedXeroMutationSchema.parse(rawInput);
-    await this.#assertWriteAuthority(context, actionId);
-    const confirmed = await this.mutations.confirm(context, {
+    const recovery = await this.mutations.resumeAutonomousRecovery(context, {
       preparationId: input.preparation_id,
       requestId: input.request_id,
-      confirmationPhrase: input.confirmation_phrase,
     }, { objectType: expectedObjectType, operation: "CREATE_DRAFT" });
-    if (confirmed.objectType !== expectedObjectType || confirmed.operation !== "CREATE_DRAFT") {
-      throw new AppError("APPROVAL_INVALID", "The confirmed preparation is for a different Xero object.", {
-        httpStatus: 409,
-      });
-    }
+    if (!recovery) await this.#assertWriteAuthority(context, actionId);
+    const preparation = recovery?.preparation ?? await this.mutations.loadAutonomousPreparation(context, {
+      preparationId: input.preparation_id,
+      requestId: input.request_id,
+    }, { objectType: expectedObjectType, operation: "CREATE_DRAFT" });
     const expected = expectedObjectType === "QUOTE"
-      ? parseCanonicalQuoteDraftPayload(confirmed.canonicalPayload)
-      : parseCanonicalPurchaseOrderDraftPayload(confirmed.canonicalPayload);
-    try {
-      await this.#validateDocumentReferences(context, expected);
-    } catch (error) {
-      if (error instanceof AppError && error.code === "VALIDATION_FAILED") {
-        await this.mutations.failValidation(context, {
-          mutationRequestId: confirmed.mutationRequestId,
-          validationReceipt: {
-            reasonCode: "PREWRITE_REFERENCE_REVALIDATION_FAILED",
-            message: error.message,
-            ...(error.details ? { details: error.details } : {}),
-          },
-        });
-      }
-      throw error;
-    }
-    const started = await this.mutations.start(context, { mutationRequestId: confirmed.mutationRequestId });
+      ? parseCanonicalQuoteDraftPayload(preparation.canonicalPayload)
+      : parseCanonicalPurchaseOrderDraftPayload(preparation.canonicalPayload);
+    if (!recovery) await this.#validateDocumentReferences(context, expected);
+    const validationReceipt = issueObjectPreparationValidationReceipt({
+      actionId,
+      preparation,
+      policyVersion: "xero-autonomous-policy-v1",
+      compilerVersion: "xero-quote-purchase-order-v1",
+      checks: [
+        { code: "CANONICAL_SCHEMA_VALID", evidence: { objectType: expected.objectType } },
+        {
+          code: "ACCOUNT_TAX_CONTACT_ITEM_REFERENCES_REVALIDATED",
+          evidence: { objectType: expected.objectType, lineCount: expected.lines.length },
+        },
+      ],
+    });
+    const started = recovery?.claim ?? await this.mutations.authoriseAutonomous(context, {
+      preparationId: input.preparation_id,
+      requestId: input.request_id,
+    }, { objectType: expectedObjectType, operation: "CREATE_DRAFT" }, validationReceipt);
+    const confirmed = started.request;
     if (started.mode === "ALREADY_VERIFIED") return this.#verifiedResult(started.request);
 
     let objectId = started.request.xeroObjectId;
@@ -253,11 +257,13 @@ export class XeroControlledMutationService {
               context,
               expected as CanonicalQuoteDraftPayload,
               confirmed.mutationRequestId,
+              started.providerWritePermit,
             )
           : await this.writeProvider.createPurchaseOrderDraft(
               context,
               expected as CanonicalPurchaseOrderDraftPayload,
               confirmed.mutationRequestId,
+              started.providerWritePermit,
             );
       } catch (error) {
         if (
@@ -519,13 +525,12 @@ export class XeroControlledMutationService {
       grantedXeroOAuthScopes: status.scopes,
       writeGateEnabled: this.config.xeroWriteEnabled,
       ...(allowedWriteTenantId ? { allowedWriteTenantId } : {}),
-      explicitConfirmationVerified: true,
     });
     if (!decision.allowed) {
-      throw new AppError("FORBIDDEN", "This Xero draft operation is not currently authorised.", {
-        httpStatus: 403,
-        details: { denyReasons: decision.denyReasons },
-      });
+      throw xeroCapabilityDenied(
+        "This Xero draft operation is not currently authorised.",
+        decision.denyReasons,
+      );
     }
   }
 }

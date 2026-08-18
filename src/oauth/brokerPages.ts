@@ -156,6 +156,7 @@ export function renderPersonalPocHostReturnPage(options: {
 export function renderXeroOrganisationSelectionPage(options: {
   organisations: readonly SelectableXeroOrganisation[];
   csrfToken: string;
+  selectionTicket: string;
   requestedScopes: readonly string[];
   personalPocOnly: boolean;
 }): string {
@@ -174,8 +175,9 @@ export function renderXeroOrganisationSelectionPage(options: {
     title: "Choose an organisation",
     eyebrow: "Requested by Xero",
     description: "Select the Xero organisation this Agent should use.",
-    content: `${pocNotice}<form method="post" action="/oauth/xero/select">
+    content: `${pocNotice}<form method="post" action="/oauth/xero/callback">
       <input type="hidden" name="csrf_token" value="${escapeHtml(options.csrfToken)}">
+      <input type="hidden" name="selection_ticket" value="${escapeHtml(options.selectionTicket)}">
       <fieldset><legend>Available organisations</legend><div class="organisation-list">${choices}</div></fieldset>
       ${renderScopeList(options.requestedScopes)}
       <div class="form-actions"><button class="primary" type="submit">Continue</button></div>

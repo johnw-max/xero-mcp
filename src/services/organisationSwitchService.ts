@@ -77,15 +77,37 @@ export class OrganisationSwitchService {
 
   async start(context: RequestContext) {
     const principal = requireOAuthBoundRequestContext(context);
-    const current = await this.#repository.resolveAgentConnectionBinding({
-      installationId: principal.oauthInstallationId,
-      bindingId: principal.bindingId,
-      workspaceId: principal.workspaceId,
-      subjectType: principal.subjectType,
-      subjectId: principal.subjectId,
-      agentId: principal.agentId,
-      connectionId: principal.connectionId,
-    });
+    const pinned = principal.targetSessionHash
+      ? await this.#repository.resolveLedgerTargetSession({
+          sessionHash: principal.targetSessionHash,
+          installationId: principal.oauthInstallationId,
+          workspaceId: principal.workspaceId,
+          subjectType: principal.subjectType,
+          subjectId: principal.subjectId,
+          agentId: principal.agentId,
+          now: this.#now(),
+        })
+      : undefined;
+    const current = pinned?.binding ?? await this.#repository.resolveAgentConnectionBinding({
+        installationId: principal.oauthInstallationId,
+        bindingId: principal.bindingId,
+        workspaceId: principal.workspaceId,
+        subjectType: principal.subjectType,
+        subjectId: principal.subjectId,
+        agentId: principal.agentId,
+        connectionId: principal.connectionId,
+      });
+    if (principal.targetSessionHash && (
+      !pinned ||
+      pinned.session.sessionId !== principal.targetSessionId ||
+      pinned.session.bindingId !== principal.bindingId ||
+      pinned.session.connectionId !== principal.connectionId ||
+      pinned.session.bindingRevision !== principal.bindingRevision
+    )) {
+      throw new AppError("CONFLICT", "The pinned Xero organisation target is no longer active.", {
+        httpStatus: 409,
+      });
+    }
     if (!current) {
       throw new AppError("CONFLICT", "The current Xero organisation binding is no longer active.", {
         httpStatus: 409,
@@ -106,6 +128,7 @@ export class OrganisationSwitchService {
       authorizationId: current.authorizationId,
       sourceBindingId: current.bindingId,
       sourceConnectionId: current.connectionId,
+      ...(principal.targetSessionHash ? { sourceTargetSessionHash: principal.targetSessionHash } : {}),
       createdAt,
       expiresAt,
     });
@@ -136,6 +159,7 @@ export class OrganisationSwitchService {
         confirmationMode: "MCP_HOSTED_ONE_TIME_LINK",
         expiresAt: expiresAt.toISOString(),
         providerMutation: false,
+        sourceTargetPinned: Boolean(principal.targetSessionHash),
       },
       occurredAt: createdAt,
     });
@@ -227,6 +251,7 @@ export class OrganisationSwitchService {
         selectionSource: "SERVER_AUTHORIZED_CONNECTION_LIST",
         providerMutation: false,
         previousTenantId: result.previousBinding.tenantId,
+        sourceTargetRevoked: result.sourceTargetRevoked,
       },
       occurredAt: result.session.consumedAt ?? this.#now(),
     });
@@ -236,8 +261,10 @@ export class OrganisationSwitchService {
       currentOrganisation: bindingSummary(result.currentBinding),
       switchedAt: new Date(result.session.consumedAt ?? this.#now()),
       message: result.changed
-        ? "The Agent is now bound to the selected Xero organisation. Re-read connection status before continuing."
-        : "The Agent was already bound to the selected Xero organisation.",
+        ? "The selected Xero organisation is active. The initiating ledger target was revoked; pin the organisation again before continuing."
+        : result.sourceTargetRevoked
+          ? "The selected organisation is unchanged, but the initiating ledger target was revoked; pin the organisation again before continuing."
+          : "The Agent was already bound to the selected Xero organisation.",
     };
   }
 

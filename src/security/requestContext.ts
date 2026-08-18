@@ -31,6 +31,10 @@ export interface RequestContext {
   readonly bindingId?: string;
   readonly connectionId?: string;
   readonly bindingRevision?: number;
+  /** Server-only keyed hash of an immutable short-lived ledger target capability. */
+  readonly targetSessionHash?: string;
+  readonly targetSessionId?: string;
+  readonly targetSessionExpiresAt?: Date;
   readonly scopes: readonly string[];
   readonly roles: readonly string[];
   readonly authn: RequestAuthentication;
@@ -69,15 +73,50 @@ export function requireOAuthBoundRequestContext(context: RequestContext): OAuthB
     !Number.isSafeInteger(context.bindingRevision) ||
     (context.bindingRevision ?? 0) < 1
   ) {
-    throw new AppError("FORBIDDEN", "The OAuth request is missing its trusted connection binding.", {
+    throw new AppError("AUTH_REQUIRED", "The OAuth request is missing its trusted connection binding.", {
+      httpStatus: 401,
+      details: {
+        failureLayer: "MCP_AUTHENTICATION",
+        reasonCodes: ["TRUSTED_CONNECTION_BINDING_MISSING"],
+        recoveryAction: "REAUTHENTICATE_MCP",
+        providerMutationPossible: false,
+      },
+    });
+  }
+
+  const hasTargetSession = context.targetSessionHash !== undefined ||
+    context.targetSessionId !== undefined || context.targetSessionExpiresAt !== undefined;
+  if (
+    hasTargetSession &&
+    (
+      !nonEmpty(context.targetSessionHash) ||
+      !/^[0-9a-f]{64}$/u.test(context.targetSessionHash) ||
+      !nonEmpty(context.targetSessionId) ||
+      !(context.targetSessionExpiresAt instanceof Date) ||
+      !Number.isFinite(context.targetSessionExpiresAt.getTime())
+    )
+  ) {
+    throw new AppError("TARGET_SESSION_INVALID", "The OAuth request has an incomplete ledger target session.", {
       httpStatus: 403,
+      details: {
+        failureLayer: "TARGET_BINDING",
+        reasonCodes: ["TARGET_SESSION_CONTEXT_INCOMPLETE"],
+        recoveryAction: "PIN_LEDGER_TARGET",
+        providerMutationPossible: false,
+      },
     });
   }
 
   const expectedActorId = `${context.workspaceId}:${subjectType.toLowerCase()}:${context.subjectId}`;
   if (context.actorId !== expectedActorId) {
-    throw new AppError("FORBIDDEN", "The OAuth request identity does not match its connection binding.", {
+    throw new AppError("SUBJECT_FORBIDDEN", "The OAuth request identity does not match its connection binding.", {
       httpStatus: 403,
+      details: {
+        failureLayer: "SUBJECT_BINDING",
+        reasonCodes: ["SUBJECT_BINDING_MISMATCH"],
+        recoveryAction: "REAUTHENTICATE_MCP",
+        providerMutationPossible: false,
+      },
     });
   }
   return context as OAuthBoundRequestContext;

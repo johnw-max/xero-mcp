@@ -38,6 +38,7 @@ import {
 import { AppError } from "../errors.js";
 import { evaluateEffectiveXeroCapability } from "../policy/xeroEffectiveCapability.js";
 import type { XeroCapabilityPermission } from "../policy/xeroCapabilityPolicy.js";
+import { xeroCapabilityDenied } from "../policy/xeroCapabilityError.js";
 import type {
   ContactItemMutationProvider,
   ContactItemReadbackVerification,
@@ -55,6 +56,8 @@ import {
 } from "../security/requestContext.js";
 import type { XeroMutationRequest, XeroMutationSourceEvidenceType } from "../domain/xeroMutation.js";
 import { XeroMutationService } from "./xeroMutationService.js";
+import { issueObjectPreparationValidationReceipt } from "../control-kernel/deterministicValidation.js";
+import type { LedgerProviderWritePermit } from "../control-kernel/ledgerProviderWritePermit.js";
 
 type SupportedPrimitive =
   | ContactCreatePrimitive
@@ -101,9 +104,10 @@ export interface ContactItemPreparationResult {
     evidence_type: XeroMutationSourceEvidenceType;
     original_file_verified: false;
   };
-  confirmation_phrase: string;
   expires_at: string;
-  execution_allowed_before_confirmation: false;
+  execution_mode: "STANDING_AUTONOMOUS_DELEGATION";
+  per_transaction_confirmation_required: false;
+  next_action: "CALL_EXECUTE_TOOL";
   warning: string;
 }
 
@@ -189,7 +193,8 @@ function preparationValidation(message: string, details?: Record<string, unknown
 /**
  * Controlled basic Contact and untracked Item mutations. Public prepare calls
  * accept only the reviewed W1 fields. Public execution accepts only the server
- * preparation ID, request ID and exact one-time confirmation phrase.
+ * preparation ID and request ID; the execution payload never contains a
+ * model-supplied confirmation or accounting fields.
  */
 export class XeroContactItemMutationService {
   readonly #contactNamespace: string;
@@ -311,8 +316,16 @@ export class XeroContactItemMutationService {
   async createContact(
     context: RequestContext,
     rawInput: ExecutePreparedXeroMutationInput,
+    beforeProviderWriteClaim?: () => Promise<void>,
   ): Promise<ContactItemWriteResult> {
-    return this.#execute(context, rawInput, "CONTACT", "CREATE", "contact.create_basic");
+    return this.#execute(
+      context,
+      rawInput,
+      "CONTACT",
+      "CREATE",
+      "contact.create_basic",
+      beforeProviderWriteClaim,
+    );
   }
 
   async updateContact(
@@ -351,7 +364,6 @@ export class XeroContactItemMutationService {
       ...(evidence.sourceSha256 !== undefined ? { sourceSha256: evidence.sourceSha256 } : {}),
       sourceEvidenceType: evidence.sourceEvidenceType,
       confirmationDetails: this.#confirmationDetails(prepared),
-      confirmationPhrase: prepared.confirmationPhrase,
       ...(prepared.operation === "UPDATE" ? { targetXeroObjectId: this.#targetId(prepared) } : {}),
     });
     return {
@@ -368,10 +380,11 @@ export class XeroContactItemMutationService {
         evidence_type: persisted.sourceEvidenceType,
         original_file_verified: false,
       },
-      confirmation_phrase: persisted.confirmationPhrase,
       expires_at: persisted.expiresAt.toISOString(),
-      execution_allowed_before_confirmation: false,
-      warning: "The confirmation is bound to this OAuth tenant, exact proposal and source fingerprint; it is not proof of the original file contents.",
+      execution_mode: "STANDING_AUTONOMOUS_DELEGATION",
+      per_transaction_confirmation_required: false,
+      next_action: "CALL_EXECUTE_TOOL",
+      warning: "Execution revalidates the exact target, standing delegation, immutable proposal and provider readback. Source facts remain model-extracted provenance.",
     };
   }
 
@@ -381,41 +394,55 @@ export class XeroContactItemMutationService {
     expectedObjectType: SupportedObjectType,
     expectedOperation: SupportedOperation,
     actionId: SupportedActionId,
+    beforeProviderWriteClaim?: () => Promise<void>,
   ): Promise<ContactItemWriteResult> {
     const input = executePreparedXeroMutationSchema.parse(rawInput);
-    await this.#assertWriteAuthority(context, actionId);
-    const confirmed = await this.mutations.confirm(context, {
+    const recovery = await this.mutations.resumeAutonomousRecovery(context, {
       preparationId: input.preparation_id,
       requestId: input.request_id,
-      confirmationPhrase: input.confirmation_phrase,
     }, { objectType: expectedObjectType, operation: expectedOperation });
-    if (confirmed.objectType !== expectedObjectType || confirmed.operation !== expectedOperation) {
-      throw new AppError("APPROVAL_INVALID", "The confirmed preparation is for a different Xero mutation.", {
-        httpStatus: 409,
-      });
-    }
-    const prepared = this.#parsePrimitive(expectedObjectType, expectedOperation, confirmed.canonicalPayload);
+    if (!recovery) await this.#assertWriteAuthority(context, actionId);
+    const preparation = recovery?.preparation ?? await this.mutations.loadAutonomousPreparation(context, {
+      preparationId: input.preparation_id,
+      requestId: input.request_id,
+    }, { objectType: expectedObjectType, operation: expectedOperation });
+    const prepared = this.#parsePrimitive(expectedObjectType, expectedOperation, preparation.canonicalPayload);
 
-    if (confirmed.state === "CONFIRMED") {
-      const failure = await this.#prewriteFailure(context, prepared);
-      if (failure) {
-        await this.mutations.failValidation(context, {
-          mutationRequestId: confirmed.mutationRequestId,
-          validationReceipt: {
-            reason: failure.code,
+    const validationReceipt = issueObjectPreparationValidationReceipt({
+      actionId,
+      preparation,
+      policyVersion: "xero-autonomous-policy-v1",
+      compilerVersion: "xero-contact-item-v1",
+      checks: [
+        {
+          code: "CANONICAL_SCHEMA_VALID",
+          evidence: { objectType: prepared.objectType, operation: prepared.operation },
+        },
+        {
+          code: "DUPLICATE_AND_FRESH_VERSION_REVALIDATED",
+          evidence: {
             objectType: prepared.objectType,
             operation: prepared.operation,
-            ...failure.details,
+            businessKey: prepared.normalizedBusinessKey,
           },
-        });
+        },
+      ],
+    });
+    const beforeProviderClaimValidation = recovery ? undefined : async () => {
+      const failure = await this.#prewriteFailure(context, prepared);
+      if (failure) {
         throw new AppError(failure.code === "OBJECT_NOT_FOUND" ? "NOT_FOUND" : "CONFLICT", failure.message, {
           httpStatus: 409,
           details: failure.details,
         });
       }
-    }
-
-    const started = await this.mutations.start(context, { mutationRequestId: confirmed.mutationRequestId });
+      await beforeProviderWriteClaim?.();
+    };
+    const started = recovery?.claim ?? await this.mutations.authoriseAutonomous(context, {
+      preparationId: input.preparation_id,
+      requestId: input.request_id,
+    }, { objectType: expectedObjectType, operation: expectedOperation }, validationReceipt, beforeProviderClaimValidation);
+    const confirmed = started.request;
     if (started.mode === "ALREADY_VERIFIED") return this.#verifiedResult(started.request);
 
     let objectId = started.request.xeroObjectId;
@@ -423,7 +450,12 @@ export class XeroContactItemMutationService {
     if (started.mode === "CALL_PROVIDER") {
       let written: ContactItemWriteReceipt;
       try {
-        written = await this.#write(context, prepared, confirmed.mutationRequestId);
+        written = await this.#write(
+          context,
+          prepared,
+          confirmed.mutationRequestId,
+          started.providerWritePermit,
+        );
       } catch (error) {
         if (definiteProviderRejection(error)) {
           await this.mutations.rejectProvider(context, {
@@ -634,15 +666,16 @@ export class XeroContactItemMutationService {
     context: RequestContext,
     prepared: SupportedPrimitive,
     idempotencyKey: string,
+    providerWritePermit: LedgerProviderWritePermit,
   ): Promise<ContactItemWriteReceipt> {
     if (prepared.objectType === "CONTACT") {
       return prepared.operation === "CREATE"
-        ? this.provider.createContact(context, prepared, idempotencyKey)
-        : this.provider.updateContact(context, prepared, idempotencyKey);
+        ? this.provider.createContact(context, prepared, idempotencyKey, providerWritePermit)
+        : this.provider.updateContact(context, prepared, idempotencyKey, providerWritePermit);
     }
     return prepared.operation === "CREATE"
-      ? this.provider.createItem(context, prepared, idempotencyKey)
-      : this.provider.updateItem(context, prepared, idempotencyKey);
+      ? this.provider.createItem(context, prepared, idempotencyKey, providerWritePermit)
+      : this.provider.updateItem(context, prepared, idempotencyKey, providerWritePermit);
   }
 
   async #readAndVerify(
@@ -761,13 +794,12 @@ export class XeroContactItemMutationService {
       grantedXeroOAuthScopes: status.scopes,
       writeGateEnabled: this.config.xeroWriteEnabled,
       ...(allowedWriteTenantId ? { allowedWriteTenantId } : {}),
-      explicitConfirmationVerified: true,
     });
     if (!decision.allowed) {
-      throw new AppError("FORBIDDEN", "This Xero Contact/Item mutation is not currently authorised.", {
-        httpStatus: 403,
-        details: { denyReasons: decision.denyReasons },
-      });
+      throw xeroCapabilityDenied(
+        "This Xero Contact/Item mutation is not currently authorised.",
+        decision.denyReasons,
+      );
     }
   }
 }

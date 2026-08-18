@@ -9,6 +9,7 @@ import type {
   ListPaymentsInput,
   PaymentType,
 } from "../domain/schemas.js";
+import type { LedgerProviderWritePermit } from "../control-kernel/ledgerProviderWritePermit.js";
 import type {
   ListBankTransactionsInput,
   ListItemsInput,
@@ -42,7 +43,9 @@ export interface ConnectionSummary {
   connectUrl?: string;
   connectUrlExpiresAt?: string;
   connectionLifecycle?: {
-    organisationBinding: "EXACTLY_ONE_CURRENT_ORGANISATION_PER_MCP_INSTALLATION";
+    organisationBinding: "ONE_IMMUTABLE_ORGANISATION_PER_TARGET_SESSION";
+    currentTenantMeaning: "COMPATIBILITY_POINTER_NOT_LEDGER_TARGET";
+    targetSessionLifetime: "SHORT_LIVED_SERVER_ENFORCED";
     accessTokenRefresh: "AUTOMATIC_NO_USER_ACTION";
     organisationChange: {
       supported: true;
@@ -52,7 +55,8 @@ export interface ConnectionSummary {
         "ASK_AGENT_TO_SWITCH_XERO_ORGANISATION",
         "OPEN_SHORT_LIVED_CONFIRMATION_LINK",
         "SELECT_EXACTLY_ONE_XERO_ORGANISATION",
-        "RETURN_TO_AGENT_AND_VERIFY_CONNECTION_STATUS",
+        "PIN_SELECTED_ORGANISATION",
+        "VERIFY_WITH_PINNED_ORGANISATION_READ",
       ];
     };
   };
@@ -66,6 +70,18 @@ export interface OrganisationSummary {
   baseCurrency?: string;
   organisationType?: string;
   version?: string;
+  /** Direct Xero Organisation fields. Omission means unknown; callers must not infer them from tax-rate lists. */
+  paysTax?: boolean;
+  financialYearEndDay?: number;
+  financialYearEndMonth?: number;
+  salesTaxBasis?: string;
+  salesTaxPeriod?: string;
+  defaultSalesTax?: string;
+  defaultPurchasesTax?: string;
+  periodLockDate?: string;
+  endOfYearLockDate?: string;
+  isDemoCompany?: boolean;
+  organisationStatus?: string;
 }
 
 export interface AccountSummary {
@@ -84,6 +100,7 @@ export interface TaxRateSummary {
   taxType?: string;
   status?: string;
   displayTaxRate?: string;
+  effectiveRate?: string;
   canApplyToExpenses?: boolean;
   canApplyToAssets?: boolean;
   canApplyToLiabilities?: boolean;
@@ -94,6 +111,10 @@ export interface TaxRateSummary {
 export interface ContactSummary {
   contactId: string;
   name?: string;
+  /** Strong, server-read business identity fields used by Accounting Case matching. */
+  email?: string;
+  companyNumber?: string;
+  accountNumber?: string;
   contactNumber?: string;
   status?: string;
   isSupplier?: boolean;
@@ -122,6 +143,7 @@ export interface InvoiceLineSnapshot {
   unitAmount: string;
   lineAmount?: string;
   taxAmount?: string;
+  accountId?: string;
   accountCode: string;
   taxType: string;
 }
@@ -140,6 +162,7 @@ export interface InvoiceSummary {
   invoiceDate?: string;
   dueDate?: string;
   currency?: string;
+  currencyRate?: string;
   reference?: string;
   subTotal?: string;
   totalTax?: string;
@@ -210,6 +233,15 @@ export interface CreditNoteSummary {
 export interface CreditNoteListResult {
   creditNotes: CreditNoteSummary[];
   pagination: ReadPageEvidence;
+}
+
+/** Exact provider GET projection used by duplicate-history and readback controls. */
+export interface CreditNoteSnapshot extends CreditNoteSummary {
+  tenantId: string;
+  lineAmountType?: string;
+  lines: InvoiceLineSnapshot[];
+  lineItemCount?: number;
+  linesTruncated?: boolean;
 }
 
 export interface PaymentSummary {
@@ -361,23 +393,27 @@ export interface AccountingProvider {
     bankTransactionId: string,
   ): Promise<BankTransactionSnapshot>;
   getInvoice(principal: AccountingPrincipal, invoiceId: string, expectedType?: InvoiceType): Promise<InvoiceSnapshot>;
+  getCreditNote(
+    principal: AccountingPrincipal,
+    creditNoteId: string,
+    expectedType?: CreditNoteType,
+  ): Promise<CreditNoteSnapshot>;
   getSupplierBill(principal: AccountingPrincipal, invoiceId: string): Promise<SupplierBillSnapshot>;
   createDraftSupplierBill(
     principal: AccountingPrincipal,
     input: CreateDraftSupplierBillInput,
     idempotencyKey: string,
     recordWriteEvidence?: RecordProviderDraftWriteEvidence,
+    providerWritePermit?: LedgerProviderWritePermit,
+    mutationRequestId?: string,
   ): Promise<ProviderWriteResult>;
   createDraftSalesInvoice(
     principal: AccountingPrincipal,
     input: CreateDraftSalesInvoiceInput,
     idempotencyKey: string,
     recordWriteEvidence?: RecordProviderDraftWriteEvidence,
+    providerWritePermit?: LedgerProviderWritePermit,
+    mutationRequestId?: string,
   ): Promise<ProviderSalesInvoiceWriteResult>;
-  authoriseSupplierBill(
-    principal: AccountingPrincipal,
-    invoiceId: string,
-    idempotencyKey: string,
-  ): Promise<ProviderWriteResult>;
   getTrialBalance(principal: AccountingPrincipal, date?: string): Promise<Record<string, unknown>>;
 }

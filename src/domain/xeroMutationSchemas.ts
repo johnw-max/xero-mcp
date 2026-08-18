@@ -78,6 +78,11 @@ export const confirmXeroMutationSchema = z.object({
   confirmationPhrase,
 }).strict();
 
+export const authoriseAutonomousXeroMutationSchema = z.object({
+  preparationId: z.string().regex(/^xmp_[a-f0-9]{32}$/),
+  requestId,
+}).strict();
+
 export const startXeroMutationSchema = z.object({
   mutationRequestId: z.string().regex(/^xmr_[a-f0-9]{32}$/),
 }).strict();
@@ -100,6 +105,10 @@ export const completeXeroMutationReadbackSchema = z.object({
     status: z.string().trim().min(1).max(64),
     canonicalPayload: jsonObject,
     evidence: jsonObject.optional(),
+    // Internal, provider-owned execution evidence. This field is never part of
+    // an Agent-facing mutation schema; it lets the mutation receipt preserve
+    // the exact tenant COA profile revision/hash used at the permit edge.
+    serverCoaExecutionConstraints: jsonObject.optional(),
   }).strict(),
 }).strict();
 
@@ -115,6 +124,7 @@ export const rejectXeroMutationProviderSchema = z.object({
 
 export type PrepareXeroMutationInput = z.infer<typeof prepareXeroMutationSchema>;
 export type ConfirmXeroMutationInput = z.infer<typeof confirmXeroMutationSchema>;
+export type AuthoriseAutonomousXeroMutationInput = z.infer<typeof authoriseAutonomousXeroMutationSchema>;
 export type StartXeroMutationInput = z.infer<typeof startXeroMutationSchema>;
 export type MarkXeroMutationUnknownInput = z.infer<typeof markXeroMutationUnknownSchema>;
 export type RecordXeroMutationWriteEvidenceInput = z.infer<typeof recordXeroMutationWriteEvidenceSchema>;

@@ -1,3 +1,5 @@
+import type { LedgerFirmGovernanceClaim } from "../control-kernel/ledgerControlKernel.js";
+
 export const XERO_MUTATION_OBJECT_TYPES = [
   "SUPPLIER_BILL",
   "SALES_INVOICE",
@@ -66,6 +68,10 @@ export interface XeroMutationBindingIdentity {
   installationId: string;
   bindingId: string;
   connectionId: string;
+  /** Active-binding epoch captured at prepare time. */
+  bindingRevision?: number;
+  /** Internal short-lived target id; never the raw target capability. */
+  targetSessionId?: string;
 }
 
 export interface XeroMutationPreparation extends XeroMutationBindingIdentity {
@@ -102,14 +108,20 @@ export interface XeroMutationRequest extends XeroMutationBindingIdentity {
   sourceSha256: string;
   sourceEvidenceType: XeroMutationSourceEvidenceType;
   confirmationSummaryHash: string;
+  /** Immutable server-issued authority evidence; never supplied by the model. */
+  authorizationReceipt: Record<string, unknown>;
   state: XeroMutationRequestState;
   xeroObjectId?: string;
   writeReceipt?: Record<string, unknown>;
+  /** Independent CAS marker for the single bounded native-idempotency replay. */
+  nativeRecoveryClaim?: Record<string, unknown>;
   readbackSnapshot?: Record<string, unknown>;
   readbackSnapshotHash?: string;
   readbackCanonicalPayload?: Record<string, unknown>;
   readbackPayloadHash?: string;
   readbackStatus?: string;
+  /** Durable discriminator and exact reason codes for a failed readback gate. */
+  readbackMismatchReceipt?: Record<string, unknown>;
   validationReceipt?: Record<string, unknown>;
   providerRejectionReceipt?: Record<string, unknown>;
   confirmedAt: Date;
@@ -154,6 +166,16 @@ export interface ConfirmXeroMutationPreparationInput extends XeroMutationBinding
   sourceEvidenceType: XeroMutationSourceEvidenceType;
   confirmationSummaryHash: string;
   confirmationPhraseHash: string;
+  authorizationReceipt: Record<string, unknown>;
+  /** Successful deterministic validation evidence, persisted before provider I/O. */
+  successfulValidationReceipt?: Record<string, unknown>;
+  /** Autonomous execution atomically consumes the preparation and claims the provider write slot. */
+  claimForWrite?: boolean;
+  /** Durable authority row that must still be current inside the claim transaction. */
+  expectedAuthoritySnapshotRevision?: number;
+  expectedAuthoritySnapshotHash?: string;
+  /** Exact normalized authority projection repeated under the locked snapshot row. */
+  expectedFirmGovernanceClaim?: LedgerFirmGovernanceClaim;
   now: Date;
 }
 

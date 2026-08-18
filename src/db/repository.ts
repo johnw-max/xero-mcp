@@ -33,6 +33,9 @@ import type {
   OAuthInstallation,
   OrganisationSwitchContext,
   OrganisationSwitchSession,
+  LedgerTargetSession,
+  ResolveLedgerTargetSessionInput,
+  ResolvedLedgerTargetSession,
   PostingRequest,
   PostingState,
   PeekMcpRefreshTokenContextInput,
@@ -72,9 +75,79 @@ import type {
   XeroMutationRequest,
 } from "../domain/xeroMutation.js";
 
+/** Durable CAS marker for one bounded native-idempotency recovery replay. */
+export interface XeroNativeIdempotencyRecoveryClaim {
+  receiptType: "XERO_NATIVE_IDEMPOTENCY_RECOVERY_CLAIM";
+  claimId: string;
+  mutationRequestId: string;
+  canonicalPayloadHash: string;
+  actionId: string;
+  adapterOperation: string;
+  tenantId: string;
+  actorId: string;
+  workspaceId: string;
+  agentId: string;
+  installationId: string;
+  bindingId: string;
+  bindingRevision: number;
+  connectionId: string;
+  targetSessionId: string;
+  authoritySnapshotRevision: number;
+  authoritySnapshotHash: string;
+  claimedAt: string;
+  expiresAt: string;
+}
+
+export const XERO_NATIVE_IDEMPOTENCY_RECOVERY_WINDOW_MS = 5 * 60 * 1_000;
+export const XERO_NATIVE_RECOVERY_ADAPTER_BY_ACTION = Object.freeze({
+  "supplier_bill.create_draft": "XeroAccountingProvider.createDraftSupplierBill",
+  "customer_invoice.create_draft": "XeroAccountingProvider.createDraftSalesInvoice",
+  "quote.create_draft": "XeroControlledMutationProvider.createQuoteDraft",
+  "purchase_order.create_draft": "XeroControlledMutationProvider.createPurchaseOrderDraft",
+  "credit_note.create_draft": "XeroCreditNoteManualJournalProvider.createCreditNoteDraft",
+  "manual_journal.create_draft": "XeroCreditNoteManualJournalProvider.createManualJournalDraft",
+} as const);
+
+export type XeroNativeRecoveryWriteUnknownInput = MarkXeroMutationWriteUnknownInput & {
+  nativeRecoveryClaim?: XeroNativeIdempotencyRecoveryClaim;
+};
+import type {
+  AdoptExpiredExecutingAccountingCaseForRecoveryInput,
+  AdoptExpiredExecutingAccountingCaseForRecoveryResult,
+  ClaimAccountingCaseExecutionInput,
+  ClaimAccountingCaseExecutionResult,
+  CompleteExpiredTargetAccountingCaseRecoveryInput,
+  CreateOrAdvanceAccountingCaseInput,
+  CreateOrAdvanceAccountingCaseResult,
+  FinalizeAccountingCaseInput,
+  AwaitAccountingCaseContinuationInput,
+  GetAccessibleAccountingCaseInput,
+  GetAccountingCaseRecoveryResidualGrantInput,
+  GetAccountingCaseRecoveryResidualGrantResult,
+  GetBoundAccountingCaseInput,
+  AccountingCaseVersionRecord,
+  RecordAccountingCasePreflightInput,
+  RecordAccountingCasePreflightResult,
+  ResealAndClaimAccountingCaseExecutionInput,
+  ResealAndClaimAccountingCaseExecutionResult,
+  PauseAccountingCaseExecutionInput,
+  ProjectAccountingCaseOperationFromMutationInput,
+  ReleaseAccountingCaseRecoveryInput,
+  UpdateAccountingCaseOperationInput,
+} from "../domain/accountingCasePersistence.js";
+import type {
+  LedgerAuthoritySnapshot,
+  LedgerAuthorityRepositoryReadiness,
+  LedgerFirmGovernanceReadinessEvidence,
+  PublishLedgerAuthoritySnapshotInput,
+  PublishLedgerAuthoritySnapshotResult,
+} from "../domain/ledgerAuthority.js";
+import type { ActiveAccountingCaseRecoveryProjectionEvidence } from "./accountingCaseRecoveryProjectionReadiness.js";
+
 export interface EphemeralCleanupCounts {
   mcpRefreshRetryResponses: number;
   organisationSwitchSessions: number;
+  ledgerTargetSessions: number;
   oauthBrokerFlows: number;
   oauthStates: number;
   connectTickets: number;
@@ -87,6 +160,28 @@ export interface EphemeralCleanupBatchResult {
   deleted: EphemeralCleanupCounts;
 }
 
+export type RepositoryStorageMode = "POSTGRES" | "IN_MEMORY" | "UNKNOWN";
+
+export type RequiredMigrationStatus = "APPLIED" | "MISSING" | "NOT_APPLICABLE" | "UNKNOWN";
+
+/**
+ * Safe, public readiness evidence. Implementations must not include connection
+ * strings, SQL errors, tenant identifiers, or other configuration values.
+ */
+export interface RepositoryReadinessEvidence {
+  ready: boolean;
+  storageMode: RepositoryStorageMode;
+  requiredMigration: string;
+  requiredMigrationStatus: RequiredMigrationStatus;
+  migrationHead: string | null;
+  activeAccountingCaseRecoveryProjection: ActiveAccountingCaseRecoveryProjectionEvidence;
+  /** Same REPEATABLE READ transaction and repository clock as the other readiness facts. */
+  authoritySnapshotRevision: number | null;
+  authoritySnapshotHash: string | null;
+  authorityWriteKillSwitchEnabled: boolean | null;
+  firmGovernance: LedgerFirmGovernanceReadinessEvidence;
+}
+
 export interface FindActiveXeroPostingDuplicateInput {
   tenantId: string;
   sourceSha256: string;
@@ -95,8 +190,30 @@ export interface FindActiveXeroPostingDuplicateInput {
   normalizedReference?: string;
 }
 
+export interface FindVerifiedAccountingCaseContactIdentityInput {
+  tenantId: string;
+  businessIdentityHash: string;
+}
+
+export interface ListVerifiedAccountingCaseContactIdentitiesInput {
+  tenantId: string;
+  contactId: string;
+}
+
 export interface AccountingRepository {
   readiness(): Promise<boolean>;
+  /**
+   * Optional for compatibility with narrow test doubles. The HTTP edge treats
+   * an absent implementation as unknown evidence and therefore not ready.
+   */
+  readinessEvidence?(requiredMigration: string): Promise<RepositoryReadinessEvidence>;
+
+  publishLedgerAuthoritySnapshot(
+    input: PublishLedgerAuthoritySnapshotInput,
+  ): Promise<PublishLedgerAuthoritySnapshotResult>;
+  getLedgerAuthoritySnapshot(providerId: string): Promise<LedgerAuthoritySnapshot | undefined>;
+  /** Same-row snapshot and repository-clock governance aggregate for /readyz. */
+  ledgerAuthorityReadiness?(providerId: string): Promise<LedgerAuthorityRepositoryReadiness>;
 
   saveProviderAuthorization(authorization: ProviderAuthorization): Promise<ProviderAuthorization>;
   getProviderAuthorization(
@@ -141,6 +258,15 @@ export interface AccountingRepository {
   completeOrganisationSwitch(
     input: CompleteOrganisationSwitchInput,
   ): Promise<CompleteOrganisationSwitchResult | undefined>;
+  saveLedgerTargetSession(session: LedgerTargetSession): Promise<void>;
+  resolveLedgerTargetSession(
+    input: ResolveLedgerTargetSessionInput,
+  ): Promise<ResolvedLedgerTargetSession | undefined>;
+  revokeLedgerTargetSession(
+    sessionHash: string,
+    installationId: string,
+    revokedAt: Date,
+  ): Promise<boolean>;
   revokeOAuthInstallation(installationId: string, workspaceId: string, revokedAt: Date): Promise<boolean>;
 
   saveOAuthBrokerFlow(flow: OAuthBrokerFlow): Promise<void>;
@@ -289,11 +415,63 @@ export interface AccountingRepository {
   getXeroMutationRequest(mutationRequestId: string): Promise<XeroMutationRequest | undefined>;
   beginXeroMutationWrite(input: BeginXeroMutationWriteInput): Promise<BeginXeroMutationWriteResult>;
   recordXeroMutationWriteEvidence(input: RecordXeroMutationWriteEvidenceInput): Promise<XeroMutationRequest>;
-  markXeroMutationWriteUnknown(input: MarkXeroMutationWriteUnknownInput): Promise<XeroMutationRequest>;
+  markXeroMutationWriteUnknown(input: XeroNativeRecoveryWriteUnknownInput): Promise<XeroMutationRequest>;
   markXeroMutationReadbackVerified(input: CompleteXeroMutationReadbackInput): Promise<XeroMutationRequest>;
   markXeroMutationReadbackMismatch(input: CompleteXeroMutationReadbackInput): Promise<XeroMutationRequest>;
   failXeroMutationValidation(input: FailXeroMutationValidationInput): Promise<XeroMutationRequest>;
   rejectXeroMutationProvider(input: RejectXeroMutationProviderInput): Promise<XeroMutationRequest>;
+
+  createOrAdvanceAccountingCase(
+    input: CreateOrAdvanceAccountingCaseInput,
+  ): Promise<CreateOrAdvanceAccountingCaseResult>;
+  getBoundAccountingCase(input: GetBoundAccountingCaseInput): Promise<AccountingCaseVersionRecord | undefined>;
+  getAccessibleAccountingCase(
+    input: GetAccessibleAccountingCaseInput,
+  ): Promise<AccountingCaseVersionRecord | undefined>;
+  /**
+   * Tenant-bound identity registry backed only by an Accounting Case contact
+   * create whose exact provider read-back reached READBACK_VERIFIED.
+   */
+  findVerifiedAccountingCaseContactIdentity(
+    input: FindVerifiedAccountingCaseContactIdentityInput,
+  ): Promise<{ contactId: string } | undefined>;
+  listVerifiedAccountingCaseContactIdentityHashes(
+    input: ListVerifiedAccountingCaseContactIdentitiesInput,
+  ): Promise<string[]>;
+  recordAccountingCasePreflight(
+    input: RecordAccountingCasePreflightInput,
+  ): Promise<RecordAccountingCasePreflightResult>;
+  claimAccountingCaseExecution(
+    input: ClaimAccountingCaseExecutionInput,
+  ): Promise<ClaimAccountingCaseExecutionResult>;
+  adoptExpiredExecutingAccountingCaseForRecovery(
+    input: AdoptExpiredExecutingAccountingCaseForRecoveryInput,
+  ): Promise<AdoptExpiredExecutingAccountingCaseForRecoveryResult>;
+  resealAndClaimAccountingCaseExecution(
+    input: ResealAndClaimAccountingCaseExecutionInput,
+  ): Promise<ResealAndClaimAccountingCaseExecutionResult>;
+  updateAccountingCaseOperation(
+    input: UpdateAccountingCaseOperationInput,
+  ): Promise<AccountingCaseVersionRecord>;
+  projectAccountingCaseOperationFromMutation(
+    input: ProjectAccountingCaseOperationFromMutationInput,
+  ): Promise<AccountingCaseVersionRecord>;
+  pauseAccountingCaseExecution(
+    input: PauseAccountingCaseExecutionInput,
+  ): Promise<AccountingCaseVersionRecord>;
+  releaseAccountingCaseRecovery(
+    input: ReleaseAccountingCaseRecoveryInput,
+  ): Promise<AccountingCaseVersionRecord>;
+  completeExpiredTargetAccountingCaseRecovery(
+    input: CompleteExpiredTargetAccountingCaseRecoveryInput,
+  ): Promise<AccountingCaseVersionRecord>;
+  getAccountingCaseRecoveryResidualGrant(
+    input: GetAccountingCaseRecoveryResidualGrantInput,
+  ): Promise<GetAccountingCaseRecoveryResidualGrantResult | undefined>;
+  awaitAccountingCaseContinuation(
+    input: AwaitAccountingCaseContinuationInput,
+  ): Promise<AccountingCaseVersionRecord>;
+  finalizeAccountingCase(input: FinalizeAccountingCaseInput): Promise<AccountingCaseVersionRecord>;
 
   beginAudit(intent: AuditIntent): Promise<void>;
   completeAudit(callId: string, completion: AuditCompletion): Promise<void>;

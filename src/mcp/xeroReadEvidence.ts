@@ -1,5 +1,6 @@
 import type { ActorTenantContext } from "../providers/types.js";
 import { hashObject } from "../security/hash.js";
+import { safeLedgerTargetReference } from "../security/ledgerTargetReference.js";
 import type { RequestContext } from "../security/requestContext.js";
 import { XERO_RELEASE_VERSION } from "../xeroRelease.js";
 import type { AccountingToolName } from "./toolNames.js";
@@ -65,6 +66,8 @@ interface NormalizedXeroReadEvidenceBase {
   readonly output_hash: string;
   readonly fact_paths: readonly string[];
   readonly base_currency?: string | null;
+  /** Safe correlation only; the raw target_session_ref is never returned here. */
+  readonly target_session_ref_safe?: string;
 }
 
 export type NormalizedXeroReadEvidence = NormalizedXeroReadEvidenceBase & (
@@ -605,6 +608,9 @@ export function buildNormalizedXeroReadEvidence(options: {
     output_hash: `sha256:${hashObject(options.safeResult)}`,
     fact_paths: factPaths(options.safeResult, profile),
     ...(baseCurrency !== undefined ? { base_currency: baseCurrency } : {}),
+    ...(options.requestContext.targetSessionId
+      ? { target_session_ref_safe: safeLedgerTargetReference(options.requestContext.targetSessionId) }
+      : {}),
   };
   if (profile.kind === "connection") {
     return {

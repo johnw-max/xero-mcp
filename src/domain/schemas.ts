@@ -149,6 +149,8 @@ const draftLineSchema = z.object({
   description: z.string().trim().min(1).max(4_000),
   quantity: fourDecimalNumber.max(1_000_000),
   unit_amount: fourDecimalNumber.max(1_000_000_000),
+  /** Server-resolved provider binding; public preparation schemas do not expose this field. */
+  account_id: xeroId.optional(),
   account_code: z.string().trim().min(1).max(10),
   tax_type: z.string().trim().min(1).max(100),
 }).strict();
@@ -164,6 +166,7 @@ const supplierBillDraftPreparationLineSchema = z.object({
 }).strict();
 
 const salesInvoiceDraftPreparationLineSchema = supplierBillDraftPreparationLineSchema;
+const invoiceAuthoritativeProviderFieldSchema = z.enum(["INVOICE_NUMBER", "REFERENCE"]);
 
 /**
  * Fields are intentionally optional here. The preparation tool reports missing
@@ -172,26 +175,32 @@ const salesInvoiceDraftPreparationLineSchema = supplierBillDraftPreparationLineS
  */
 export const prepareSupplierBillDraftSchema = z.object({
   source_ref: z.string().trim().min(1).max(512).optional(),
+  source_unit_key: z.string().trim().min(1).max(256).optional(),
   source_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   supplier_name: z.string().trim().min(1).max(255).optional(),
   supplier_contact_number: z.string().trim().min(1).max(100).optional(),
   invoice_date: yyyyMmDd.optional(),
   due_date: yyyyMmDd.optional(),
   currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  currency_rate: fourDecimalNumber.optional(),
   reference: z.string().trim().min(1).max(255).optional(),
+  authoritative_provider_field: z.literal("INVOICE_NUMBER").optional(),
   line_amount_type: z.enum(["Exclusive", "Inclusive", "NoTax"]).optional(),
   lines: z.array(supplierBillDraftPreparationLineSchema).max(20).optional(),
 }).strict();
 
 export const prepareSalesInvoiceDraftSchema = z.object({
   source_ref: z.string().trim().min(1).max(512).optional(),
+  source_unit_key: z.string().trim().min(1).max(256).optional(),
   source_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   customer_name: z.string().trim().min(1).max(255).optional(),
   customer_contact_number: z.string().trim().min(1).max(100).optional(),
   invoice_date: yyyyMmDd.optional(),
   due_date: yyyyMmDd.optional(),
   currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  currency_rate: fourDecimalNumber.optional(),
   reference: z.string().trim().min(1).max(255).optional(),
+  authoritative_provider_field: invoiceAuthoritativeProviderFieldSchema.optional(),
   line_amount_type: z.enum(["Exclusive", "Inclusive", "NoTax"]).optional(),
   lines: z.array(salesInvoiceDraftPreparationLineSchema).max(20).optional(),
 }).strict();
@@ -211,7 +220,9 @@ export const createDraftSupplierBillSchema = z.object({
   invoice_date: yyyyMmDd,
   due_date: yyyyMmDd,
   currency: z.string().regex(/^[A-Z]{3}$/),
+  currency_rate: fourDecimalNumber.optional(),
   reference: z.string().trim().min(1).max(255),
+  authoritative_provider_field: invoiceAuthoritativeProviderFieldSchema,
   line_amount_type: z.enum(["Exclusive", "Inclusive", "NoTax"]),
   lines: z.array(draftLineSchema).min(1).max(20),
 }).strict().refine((value) => value.due_date >= value.invoice_date, {

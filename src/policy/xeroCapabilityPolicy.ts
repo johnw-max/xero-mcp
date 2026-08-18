@@ -30,7 +30,7 @@ export type XeroBusinessObject = (typeof XERO_BUSINESS_OBJECTS)[number];
 
 export const XERO_RISK_CLASSES = [
   "READ_PREPARE",
-  "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+  "AUTONOMOUS_CONTROLLED_WRITE",
   "DUAL_APPROVAL",
   "DISABLED",
 ] as const;
@@ -58,7 +58,7 @@ export type XeroOfficialSupportLevel = (typeof XERO_OFFICIAL_SUPPORT_LEVELS)[num
 
 export const XERO_CONTROL_REQUIREMENTS = [
   "NONE",
-  "EXPLICIT_CONFIRMATION",
+  "STANDING_DELEGATION",
   "DUAL_APPROVAL",
   "NOT_PERMITTED",
 ] as const;
@@ -229,6 +229,15 @@ export const XERO_CAPABILITY_POLICIES = [
     releaseRationale: "This creates only a short-lived confirmation capability. The ledger changes only after exact user selection on the MCP-hosted page, and Xero accounting data is not mutated.",
   },
   {
+    actionId: "system.ledger_target_session_issue",
+    object: "SYSTEM",
+    label: "Pin one conversation to the current Xero organisation",
+    riskClass: "READ_PREPARE",
+    officialSupport: CONNECTION_STATUS_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "This issues only a short-lived installation-owned target capability. It does not mutate Xero and prevents concurrent conversations from following another conversation's organisation switch.",
+  },
+  {
     actionId: "organisation.read_prepare",
     object: "ORGANISATION",
     label: "Read the server-bound Xero organisation",
@@ -268,16 +277,16 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "customer_invoice.create_draft",
     object: "CUSTOMER_INVOICE",
     label: "Create an ACCREC customer invoice in DRAFT",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: INVOICE_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "The code-level controlled draft path now enforces exact confirmation, idempotency, tenant binding, and exact read-back; runtime execution still requires the write gate and exact tenant allowlist.",
+    releaseRationale: "The controlled draft path enforces an exact standing delegation, immutable proposal, idempotency, tenant binding, and exact read-back; runtime execution still requires the emergency write gate.",
   },
   {
     actionId: "customer_invoice.update_draft",
     object: "CUSTOMER_INVOICE",
     label: "Update an existing ACCREC DRAFT invoice",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: INVOICE_SUPPORT,
     releaseDecision: "PLANNED_CONTROLLED",
     releaseRationale: "The original object version and complete replacement payload must be confirmed to prevent stale overwrites.",
@@ -313,16 +322,16 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "supplier_bill.create_draft",
     object: "SUPPLIER_BILL",
     label: "Create an ACCPAY supplier bill in DRAFT",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: BILL_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "This is the currently released controlled write and requires exact confirmation plus all write safeguards.",
+    releaseRationale: "This is a released standing-delegation write and still requires all deterministic, tenant, idempotency, receipt, and read-back safeguards.",
   },
   {
     actionId: "supplier_bill.update_draft",
     object: "SUPPLIER_BILL",
     label: "Update an existing ACCPAY DRAFT bill",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: BILL_SUPPORT,
     releaseDecision: "PLANNED_CONTROLLED",
     releaseRationale: "Draft update needs object-version conflict protection and complete post-write comparison before release.",
@@ -358,16 +367,16 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "purchase_order.create_draft",
     object: "PURCHASE_ORDER",
     label: "Create a purchase order in DRAFT",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: PURCHASE_ORDER_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "The controlled DRAFT path binds OAuth tenant, source unit, immutable payload, exact confirmation, idempotency, and exact read-back; runtime execution still requires the write gate and tenant allowlist.",
+    releaseRationale: "The controlled DRAFT path binds OAuth tenant, source unit, immutable payload, standing delegation revision, idempotency, and exact read-back; runtime execution still requires the emergency write gate.",
   },
   {
     actionId: "purchase_order.update_draft",
     object: "PURCHASE_ORDER",
     label: "Update an existing DRAFT purchase order",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: PURCHASE_ORDER_SUPPORT,
     releaseDecision: "PLANNED_CONTROLLED",
     releaseRationale: "Require immutable intent and stale-version protection before allowing replacement of a draft.",
@@ -421,16 +430,16 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "quote.create_draft",
     object: "QUOTE",
     label: "Create a quote in DRAFT",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: QUOTE_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "The controlled DRAFT path validates exact references and economic read-back, and remains gated by OAuth tenant, explicit confirmation, idempotency, write gate, and tenant allowlist.",
+    releaseRationale: "The controlled DRAFT path validates exact references and economic read-back, and remains gated by OAuth tenant, standing delegation, idempotency, and the emergency write gate.",
   },
   {
     actionId: "quote.update_draft",
     object: "QUOTE",
     label: "Update an existing DRAFT quote",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: QUOTE_SUPPORT,
     releaseDecision: "PLANNED_CONTROLLED",
     releaseRationale: "Require object-version conflict checks and exact read-back before release.",
@@ -475,16 +484,16 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "credit_note.create_draft",
     object: "CREDIT_NOTE",
     label: "Create a credit note in DRAFT",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: CREDIT_NOTE_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "Controlled DRAFT creation enforces reason, source linkage, confirmation, duplicate controls, and exact read-back.",
+    releaseRationale: "Controlled DRAFT creation enforces reason, source linkage, standing delegation, duplicate controls, and exact read-back.",
   },
   {
     actionId: "credit_note.update_draft",
     object: "CREDIT_NOTE",
     label: "Update an existing DRAFT credit note",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: CREDIT_NOTE_SUPPORT,
     releaseDecision: "PLANNED_CONTROLLED",
     releaseRationale: "Require immutable intent and stale-version checks before changing a financial adjustment draft.",
@@ -520,7 +529,7 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "manual_journal.create_draft",
     object: "MANUAL_JOURNAL",
     label: "Create a balanced manual journal in DRAFT",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: MANUAL_JOURNAL_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
     releaseRationale: "Controlled creation allows only balanced DRAFT entries with source evidence, explicit no-tax treatment, protected-account checks, and exact read-back.",
@@ -529,10 +538,10 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "manual_journal.update_draft",
     object: "MANUAL_JOURNAL",
     label: "Update an existing DRAFT manual journal",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: MANUAL_JOURNAL_SUPPORT,
     releaseDecision: "PLANNED_CONTROLLED",
-    releaseRationale: "Require full replacement confirmation, balance validation, and stale-version protection.",
+    releaseRationale: "Require an immutable replacement proposal, standing delegation, balance validation, and stale-version protection.",
   },
   {
     actionId: "manual_journal.post",
@@ -565,19 +574,19 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "contact.create_basic",
     object: "CONTACT",
     label: "Create a contact with constrained basic identity fields",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: CONTACT_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "Controlled creation is limited to basic identity fields with duplicate detection, explicit confirmation, and exact read-back.",
+    releaseRationale: "Controlled creation is limited to basic identity fields with duplicate detection, standing delegation, and exact read-back.",
   },
   {
     actionId: "contact.update_basic",
     object: "CONTACT",
     label: "Update constrained basic contact fields",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: CONTACT_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "Controlled updates require an exact field diff, immutable contact ID, stale-object comparison, confirmation, and exact read-back.",
+    releaseRationale: "Controlled updates require an exact field diff, immutable contact ID, stale-object comparison, standing delegation, and exact read-back.",
   },
   {
     actionId: "contact.update_sensitive_or_archive",
@@ -646,16 +655,16 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "item.create_basic_untracked",
     object: "ITEM",
     label: "Create a basic untracked item",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: ITEM_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "Controlled creation allows only constrained untracked items after exact code duplicate checks, confirmation, and exact read-back.",
+    releaseRationale: "Controlled creation allows only constrained untracked items after exact code duplicate checks, standing delegation, and exact read-back.",
   },
   {
     actionId: "item.update_basic_untracked",
     object: "ITEM",
     label: "Update basic descriptive fields on an untracked item",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: ITEM_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
     releaseRationale: "Controlled updates require an exact field diff and exclude accounting defaults, prices, tax, and tracking fields.",
@@ -691,7 +700,7 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "attachment.upload_to_confirmed_draft",
     object: "ATTACHMENT",
     label: "Upload an approved file to one confirmed DRAFT parent",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: ATTACHMENT_SUPPORT,
     releaseDecision: "PLANNED_CONTROLLED",
     releaseRationale: "Require fixed parent ID, source receipt, SHA-256, MIME/size allowlist, no overwrite, and includeOnline=false.",
@@ -817,7 +826,7 @@ function executionRequirementsFor(policy: XeroCapabilityPolicy): {
         requiredScopes: Object.freeze(["xero.read"]),
         requiredPermissions: Object.freeze(["XERO_ACCOUNTING_READ"]),
       };
-    case "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE":
+    case "AUTONOMOUS_CONTROLLED_WRITE":
       return {
         requiredScopes: Object.freeze(["xero.draft.write"]),
         requiredPermissions: Object.freeze(["XERO_DRAFT_WRITE"]),
@@ -839,8 +848,8 @@ function controlRequirementFor(riskClass: XeroRiskClass): XeroControlRequirement
   switch (riskClass) {
     case "READ_PREPARE":
       return "NONE";
-    case "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE":
-      return "EXPLICIT_CONFIRMATION";
+    case "AUTONOMOUS_CONTROLLED_WRITE":
+      return "STANDING_DELEGATION";
     case "DUAL_APPROVAL":
       return "DUAL_APPROVAL";
     case "DISABLED":
@@ -861,8 +870,8 @@ function instructionFor(policy: XeroCapabilityPolicy): string {
   if (policy.riskClass === "READ_PREPARE") {
     return "Read, analyse, or prepare only; do not mutate Xero.";
   }
-  if (policy.riskClass === "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE") {
-    return "Execute only after exact user confirmation and all tenant, idempotency, audit, and read-back controls pass.";
+  if (policy.riskClass === "AUTONOMOUS_CONTROLLED_WRITE") {
+    return "Execute under an active exact standing delegation only after target, deterministic validation, idempotency, audit, and read-back controls pass.";
   }
 
   // Catalog validation rejects AVAILABLE_NOW for these classes. Keeping this
@@ -875,12 +884,12 @@ function toAgentFacingDecision(
 ): AgentFacingXeroCapabilityDecision {
   const executableRisk =
     policy.riskClass === "READ_PREPARE" ||
-    policy.riskClass === "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE";
+    policy.riskClass === "AUTONOMOUS_CONTROLLED_WRITE";
   const policyAllowsExecution =
     policy.releaseDecision === "AVAILABLE_NOW" && executableRisk;
   const policyAllowsMutation =
     policy.releaseDecision === "AVAILABLE_NOW" &&
-    policy.riskClass === "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE";
+    policy.riskClass === "AUTONOMOUS_CONTROLLED_WRITE";
   const requirements = executionRequirementsFor(policy);
 
   return Object.freeze({

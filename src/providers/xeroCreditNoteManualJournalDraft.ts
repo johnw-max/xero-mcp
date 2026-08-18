@@ -71,7 +71,9 @@ export function toXeroCreditNoteCreatePayload(input: unknown): CreditNotes {
       status: CreditNote.StatusEnum.DRAFT,
       lineAmountTypes: PROVIDER_LINE_AMOUNT_TYPE[value.lineAmountType],
       currencyCode: xeroCurrency(value.currency),
-      reference: value.reference,
+      ...(value.authoritativeProviderField === "CREDIT_NOTE_NUMBER"
+        ? { creditNoteNumber: value.reference }
+        : { reference: value.reference }),
       lineItems: value.lines.map(creditLine),
     }],
   };
@@ -96,14 +98,13 @@ type ProviderRecord = Record<string, unknown>;
 export interface CreditNoteProviderEconomicsEvidence {
   lineAmounts: string[];
   taxAmounts: string[];
+  accountIds: string[];
+  accountCodes: string[];
+  taxTypes: string[];
   subTotal: string;
   totalTax: string;
   total: string;
   noDiscountsVerified: true;
-  arithmeticVerified: true;
-  lineBasisVerified: true;
-  taxTotalVerified: true;
-  roundingTolerance: string;
 }
 
 export interface CreditNoteDraftReadbackSnapshot {
@@ -303,7 +304,12 @@ function mapCreditLines(value: unknown): MappedCreditLines | undefined {
 
 export function mapCreditNoteDraftReadback(
   input: unknown,
+  expectedAuthoritativeProviderField: CanonicalCreditNoteDraftPayload["authoritativeProviderField"],
 ): DraftReadbackMappingResult<CreditNoteDraftReadbackSnapshot> {
+  if (
+    expectedAuthoritativeProviderField !== "CREDIT_NOTE_NUMBER" &&
+    expectedAuthoritativeProviderField !== "REFERENCE"
+  ) return { ok: false, reason: "MALFORMED_PROVIDER_READBACK" };
   try {
     const creditNote = providerRecord(input);
     const creditNoteId = providerUuid(creditNote?.creditNoteID);
@@ -311,7 +317,12 @@ export function mapCreditNoteDraftReadback(
     const contactId = providerUuid(contact?.contactID);
     const creditNoteDate = providerText(creditNote?.date, 10);
     const currency = providerText(creditNote?.currencyCode, 3);
-    const reference = providerText(creditNote?.reference, 255);
+    const reference = providerText(
+      expectedAuthoritativeProviderField === "CREDIT_NOTE_NUMBER"
+        ? creditNote?.creditNoteNumber
+        : creditNote?.reference,
+      255,
+    );
     const lineAmountType = providerCreditLineAmountType(creditNote?.lineAmountTypes);
     const mappedLines = mapCreditLines(creditNote?.lineItems);
     const subTotal = providerScaledAmount(creditNote?.subTotal);
@@ -336,12 +347,11 @@ export function mapCreditNoteDraftReadback(
 
     const lineAmountTotal = mappedLines.lineAmounts.reduce((sum, amount) => sum + amount, 0n);
     const taxAmountTotal = mappedLines.taxAmounts.reduce((sum, amount) => sum + amount, 0n);
-    const roundingTolerance = BigInt(mappedLines.lineAmounts.length) * 50n;
     const lineBasis = lineAmountType === "INCLUSIVE" ? total : subTotal;
     if (
       absoluteDifference(subTotal + totalTax, total) > 1n ||
-      absoluteDifference(lineAmountTotal, lineBasis) > roundingTolerance ||
-      absoluteDifference(taxAmountTotal, totalTax) > roundingTolerance ||
+      lineAmountTotal !== lineBasis ||
+      taxAmountTotal !== totalTax ||
       (lineAmountType === "NO_TAX" && (totalTax !== 0n || taxAmountTotal !== 0n))
     ) return { ok: false, reason: "MALFORMED_PROVIDER_READBACK" };
 
@@ -355,6 +365,7 @@ export function mapCreditNoteDraftReadback(
       creditNoteDate,
       currency,
       reference,
+      authoritativeProviderField: expectedAuthoritativeProviderField,
       lineAmountType,
       lines: mappedLines.canonicalLines,
       enteredLineSubtotal: fixedFour(mappedLines.enteredLineSubtotal),
@@ -368,14 +379,13 @@ export function mapCreditNoteDraftReadback(
         providerEconomicsEvidence: {
           lineAmounts: mappedLines.lineAmounts.map(fixedFour),
           taxAmounts: mappedLines.taxAmounts.map(fixedFour),
+          accountIds: mappedLines.canonicalLines.map((line) => line.accountId),
+          accountCodes: mappedLines.canonicalLines.map((line) => line.accountCode),
+          taxTypes: mappedLines.canonicalLines.map((line) => line.taxType),
           subTotal: fixedFour(subTotal),
           totalTax: fixedFour(totalTax),
           total: fixedFour(total),
           noDiscountsVerified: true,
-          arithmeticVerified: true,
-          lineBasisVerified: true,
-          taxTotalVerified: true,
-          roundingTolerance: fixedFour(roundingTolerance),
         },
       },
     };
@@ -495,7 +505,7 @@ export function verifyCreditNoteDraftReadback(
   } catch {
     return { ok: false, reasons: ["EXPECTED_CANONICAL_INVALID"] };
   }
-  const mapped = mapCreditNoteDraftReadback(readback);
+  const mapped = mapCreditNoteDraftReadback(readback, expected.authoritativeProviderField);
   if (!mapped.ok) return { ok: false, reasons: [mapped.reason] };
   const reasons: DraftVerificationReason[] = [];
   if (mapped.snapshot.creditNoteId !== normalizedExpectedId) reasons.push("XERO_OBJECT_ID_MISMATCH");

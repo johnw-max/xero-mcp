@@ -249,9 +249,7 @@ export function missingBrokerXeroScopeCapabilities(
   }
   if (requested.has("xero.draft.write")) {
     required.push(BROKER_DRAFT_WRITE_CAPABILITY);
-    required.push(BROKER_MANUAL_JOURNAL_WRITE_CAPABILITY);
     required.push(BROKER_CONTACT_WRITE_CAPABILITY);
-    required.push(BROKER_ITEM_WRITE_CAPABILITY);
   }
 
   const granted = new Set(grantedXeroScopes);
@@ -282,25 +280,19 @@ export function leastPrivilegeXeroScopesForBroker(
 
   for (const identityScope of ["openid", "profile", "email"]) add(identityScope);
   choose(BROKER_OFFLINE_REFRESH_CAPABILITY);
-  if (requested.has("xero.draft.write")) {
-    choose(BROKER_ITEM_WRITE_CAPABILITY);
-    choose(BROKER_CONTACT_WRITE_CAPABILITY);
-  }
-  else if (requested.has("xero.read")) {
+  if (requested.has("xero.read")) {
     choose(BROKER_SETTINGS_READ_CAPABILITY);
     choose(BROKER_CONTACT_READ_CAPABILITY);
+    choose(BROKER_TRIAL_BALANCE_READ_CAPABILITY);
+    choose(BROKER_INVOICE_READ_CAPABILITY);
+    choose(BROKER_PAYMENT_READ_CAPABILITY);
+    choose(BROKER_MANUAL_JOURNAL_READ_CAPABILITY);
+    choose(BROKER_BANK_TRANSACTION_READ_CAPABILITY);
   }
-  if (requested.has("xero.read")) choose(BROKER_TRIAL_BALANCE_READ_CAPABILITY);
   if (requested.has("xero.draft.write")) {
     choose(BROKER_DRAFT_WRITE_CAPABILITY);
-    choose(BROKER_MANUAL_JOURNAL_WRITE_CAPABILITY);
+    choose(BROKER_CONTACT_WRITE_CAPABILITY);
   }
-  else if (requested.has("xero.read")) choose(BROKER_INVOICE_READ_CAPABILITY);
-  if (requested.has("xero.read")) choose(BROKER_PAYMENT_READ_CAPABILITY);
-  if (requested.has("xero.read") && !requested.has("xero.draft.write")) {
-    choose(BROKER_MANUAL_JOURNAL_READ_CAPABILITY);
-  }
-  if (requested.has("xero.read")) choose(BROKER_BANK_TRANSACTION_READ_CAPABILITY);
 
   const missing = missingBrokerXeroScopeCapabilities(selected, requestedMcpScopes);
   if (missing.length > 0) {

@@ -1,4 +1,4 @@
-import type { AccountingProvider, AccountSummary, TaxRateSummary } from "../providers/types.js";
+import type { AccountingProvider, AccountSummary } from "../providers/types.js";
 import type { CreditNoteManualJournalWriteProvider } from "../providers/xeroCreditNoteManualJournalProvider.js";
 import {
   allowedWriteTenantForRequest,
@@ -22,6 +22,16 @@ import {
 import { executePreparedXeroMutationSchema } from "../domain/xeroControlledMutationSchemas.js";
 import { XeroMutationService } from "./xeroMutationService.js";
 import { AppError } from "../errors.js";
+import { xeroCapabilityDenied } from "../policy/xeroCapabilityError.js";
+import { issueObjectPreparationValidationReceipt } from "../control-kernel/deterministicValidation.js";
+import { resolveStableXeroTaxRate } from "../policy/xeroTaxRateResolver.js";
+import {
+  XeroTenantCoaProfileError,
+  assertXeroTenantCoaExecutionConstraints,
+  parseXeroTenantCoaExecutionConstraints,
+  type XeroTenantCoaExecutionConstraints,
+} from "../policy/xeroTenantCoaProfile.js";
+import type { XeroFirmGovernanceExpectation } from "../policy/xeroFirmGovernanceClaim.js";
 
 type SupportedObjectType = "CREDIT_NOTE" | "MANUAL_JOURNAL";
 type SupportedDraft = CanonicalCreditNoteDraftPayload | CanonicalManualJournalDraftPayload;
@@ -46,9 +56,10 @@ export interface LedgerAdjustmentDraftPreparationResult {
     evidence_type: SupportedPrimitive["sourceEvidenceType"];
     original_file_verified: false;
   };
-  confirmation_phrase: string;
   expires_at: string;
-  execution_allowed_before_confirmation: false;
+  execution_mode: "STANDING_AUTONOMOUS_DELEGATION";
+  per_transaction_confirmation_required: false;
+  next_action: "CALL_EXECUTE_TOOL";
   warning: string;
 }
 
@@ -70,32 +81,9 @@ function exactActiveUnprotectedAccount(
   const matches = accounts.filter((account) =>
     account.accountId?.toLowerCase() === accountId.toLowerCase() &&
     account.code === accountCode &&
-    (!account.status || account.status === "ACTIVE") &&
+    account.status === "ACTIVE" &&
     account.type !== "BANK" &&
     !account.systemAccount);
-  return matches.length === 1 ? matches[0] : undefined;
-}
-
-function taxApplies(tax: TaxRateSummary, account: AccountSummary): boolean {
-  switch (account.class) {
-    case "EXPENSE": return tax.canApplyToExpenses !== false;
-    case "ASSET": return tax.canApplyToAssets !== false;
-    case "LIABILITY": return tax.canApplyToLiabilities !== false;
-    case "REVENUE": return tax.canApplyToRevenue !== false;
-    case "EQUITY": return tax.canApplyToEquity !== false;
-    default: return false;
-  }
-}
-
-function exactActiveTax(
-  taxes: readonly TaxRateSummary[],
-  taxType: string,
-  account: AccountSummary,
-): TaxRateSummary | undefined {
-  const matches = taxes.filter((tax) =>
-    tax.taxType === taxType &&
-    (!tax.status || tax.status === "ACTIVE") &&
-    taxApplies(tax, account));
   return matches.length === 1 ? matches[0] : undefined;
 }
 
@@ -108,13 +96,6 @@ function validationError(message: string, details?: Record<string, unknown>): Ap
 
 function nonEmpty(value: string | undefined): value is string {
   return typeof value === "string" && value.length > 0 && value === value.trim();
-}
-
-function confirmationBase(primitivePhrase: string): string {
-  // The mutation foundation appends the authoritative persisted source
-  // fingerprint. Remove the primitive's pre-persistence display hash so the
-  // accountant sees one source fingerprint rather than two similar values.
-  return primitivePhrase.replace(/｜来源 [A-F0-9]{8}(?=｜校验)/u, "");
 }
 
 /**
@@ -134,10 +115,12 @@ export class XeroCreditNoteManualJournalService {
   async prepareCreditNoteDraft(
     context: RequestContext,
     rawInput: PrepareCreditNoteDraftInput,
+    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
   ): Promise<LedgerAdjustmentDraftPreparationResult> {
     const input = prepareCreditNoteDraftInputSchema.parse(rawInput);
     const prepared = buildCreditNoteDraftPrimitive(input);
     await this.#validateCreditNoteReferences(context, prepared.canonicalPayload);
+    await this.#assertServerCoaExecutionConstraints(context, prepared.canonicalPayload, serverCoaConstraints);
     return this.#persistPreparation(context, prepared);
   }
 
@@ -154,8 +137,18 @@ export class XeroCreditNoteManualJournalService {
   async createCreditNoteDraft(
     context: RequestContext,
     rawInput: ExecutePreparedXeroMutationInput,
+    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    beforeProviderWriteClaim?: () => Promise<void>,
+    sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
   ): Promise<LedgerAdjustmentDraftWriteResult> {
-    return this.#execute(context, rawInput, "CREDIT_NOTE");
+    return this.#execute(
+      context,
+      rawInput,
+      "CREDIT_NOTE",
+      serverCoaConstraints,
+      beforeProviderWriteClaim,
+      sealedFirmGovernanceExpectation,
+    );
   }
 
   async createManualJournalDraft(
@@ -198,7 +191,6 @@ export class XeroCreditNoteManualJournalService {
         : {}),
       sourceEvidenceType: prepared.sourceEvidenceType,
       confirmationDetails,
-      confirmationPhrase: confirmationBase(prepared.confirmationPhrase),
     });
     return {
       preparation_id: persisted.preparationId,
@@ -214,10 +206,11 @@ export class XeroCreditNoteManualJournalService {
         evidence_type: prepared.sourceEvidenceType,
         original_file_verified: false,
       },
-      confirmation_phrase: persisted.confirmationPhrase,
       expires_at: persisted.expiresAt.toISOString(),
-      execution_allowed_before_confirmation: false,
-      warning: "The draft is tenant-bound and readback-verified, but source evidence remains conversation-attested unless the Host later supplies a signed file receipt.",
+      execution_mode: "STANDING_AUTONOMOUS_DELEGATION",
+      per_transaction_confirmation_required: false,
+      next_action: "CALL_EXECUTE_TOOL",
+      warning: "Execution revalidates the exact target, standing delegation, immutable payload and provider readback. Source facts remain model-extracted provenance.",
     };
   }
 
@@ -225,42 +218,83 @@ export class XeroCreditNoteManualJournalService {
     context: RequestContext,
     rawInput: ExecutePreparedXeroMutationInput,
     expectedObjectType: SupportedObjectType,
+    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    beforeProviderWriteClaim?: () => Promise<void>,
+    sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
   ): Promise<LedgerAdjustmentDraftWriteResult> {
     const input = executePreparedXeroMutationSchema.parse(rawInput);
-    await this.#assertWriteAuthority(context, expectedObjectType);
-    const confirmed = await this.mutations.confirm(context, {
+    const recovery = await this.mutations.resumeAutonomousRecovery(context, {
       preparationId: input.preparation_id,
       requestId: input.request_id,
-      confirmationPhrase: input.confirmation_phrase,
     }, { objectType: expectedObjectType, operation: "CREATE_DRAFT" });
-    if (confirmed.objectType !== expectedObjectType || confirmed.operation !== "CREATE_DRAFT") {
-      throw new AppError("APPROVAL_INVALID", "The confirmed preparation is for a different Xero object.", {
-        httpStatus: 409,
-      });
-    }
+    if (!recovery) await this.#assertWriteAuthority(context, expectedObjectType);
+    const preparation = recovery?.preparation ?? await this.mutations.loadAutonomousPreparation(context, {
+      preparationId: input.preparation_id,
+      requestId: input.request_id,
+    }, { objectType: expectedObjectType, operation: "CREATE_DRAFT" });
     const expected = expectedObjectType === "CREDIT_NOTE"
-      ? parseCanonicalCreditNoteDraftPayload(confirmed.canonicalPayload)
-      : parseCanonicalManualJournalDraftPayload(confirmed.canonicalPayload);
-    try {
+      ? parseCanonicalCreditNoteDraftPayload(preparation.canonicalPayload)
+      : parseCanonicalManualJournalDraftPayload(preparation.canonicalPayload);
+    if (!recovery) {
       if (expected.objectType === "CREDIT_NOTE") {
         await this.#validateCreditNoteReferences(context, expected);
+        await this.#assertServerCoaExecutionConstraints(context, expected, serverCoaConstraints);
       } else {
         await this.#validateManualJournalReferences(context, expected);
       }
-    } catch (error) {
-      if (error instanceof AppError && error.code === "VALIDATION_FAILED") {
-        await this.mutations.failValidation(context, {
-          mutationRequestId: confirmed.mutationRequestId,
-          validationReceipt: {
-            reasonCode: "PREWRITE_REFERENCE_REVALIDATION_FAILED",
-            message: error.message,
-            ...(error.details ? { details: error.details } : {}),
-          },
-        });
-      }
-      throw error;
     }
-    const started = await this.mutations.start(context, { mutationRequestId: confirmed.mutationRequestId });
+    const actionId = expectedObjectType === "CREDIT_NOTE"
+      ? "credit_note.create_draft"
+      : "manual_journal.create_draft";
+    const validationReceipt = issueObjectPreparationValidationReceipt({
+      actionId,
+      preparation,
+      policyVersion: "xero-autonomous-policy-v1",
+      compilerVersion: "xero-credit-note-manual-journal-v1",
+      checks: [
+        { code: "CANONICAL_SCHEMA_VALID", evidence: { objectType: expected.objectType } },
+        {
+          code: expected.objectType === "CREDIT_NOTE"
+            ? "CREDIT_NOTE_REFERENCES_AND_TOTALS_REVALIDATED"
+            : "MANUAL_JOURNAL_BALANCE_AND_REFERENCES_REVALIDATED",
+          evidence: {
+            objectType: expected.objectType,
+            lineCount: expected.lines.length,
+            ...(expected.objectType === "CREDIT_NOTE"
+              ? { enteredLineSubtotal: expected.enteredLineSubtotal }
+              : { debitTotal: expected.debitTotal, creditTotal: expected.creditTotal }),
+          },
+        },
+      ],
+    });
+    const started = recovery?.claim ?? await this.mutations.authoriseAutonomous(
+      context,
+      {
+        preparationId: input.preparation_id,
+        requestId: input.request_id,
+      },
+      { objectType: expectedObjectType, operation: "CREATE_DRAFT" },
+      validationReceipt,
+      expectedObjectType === "CREDIT_NOTE"
+        ? async () => {
+            // Repeat the complete contact/account/tax/item/tracking gate and
+            // then the sealed COA semantic comparison before WRITE_IN_FLIGHT
+            // or a provider permit exists.
+            await this.#validateCreditNoteReferences(
+              context,
+              expected as CanonicalCreditNoteDraftPayload,
+            );
+            await this.#assertServerCoaExecutionConstraints(
+              context,
+              expected as CanonicalCreditNoteDraftPayload,
+              serverCoaConstraints,
+            );
+            await beforeProviderWriteClaim?.();
+          }
+        : undefined,
+      sealedFirmGovernanceExpectation,
+    );
+    const confirmed = started.request;
     if (started.mode === "ALREADY_VERIFIED") return this.#verifiedResult(started.request);
 
     let objectId = started.request.xeroObjectId;
@@ -273,11 +307,13 @@ export class XeroCreditNoteManualJournalService {
               context,
               expected as CanonicalCreditNoteDraftPayload,
               confirmed.mutationRequestId,
+              started.providerWritePermit,
             )
           : await this.writeProvider.createManualJournalDraft(
               context,
               expected as CanonicalManualJournalDraftPayload,
               confirmed.mutationRequestId,
+              started.providerWritePermit,
             );
         objectId = created.objectId;
         receipt = created.receipt;
@@ -362,6 +398,7 @@ export class XeroCreditNoteManualJournalService {
               objectId,
               verified.readbackCanonicalPayload as unknown as Record<string, unknown>,
               verified.snapshot as unknown as Record<string, unknown>,
+              serverCoaConstraints,
             ),
           });
           throw new AppError("READBACK_MISMATCH", "Xero readback does not match the confirmed draft.", {
@@ -387,6 +424,7 @@ export class XeroCreditNoteManualJournalService {
           objectId,
           verified.readbackCanonicalPayload as unknown as Record<string, unknown>,
           verified.snapshot as unknown as Record<string, unknown>,
+          serverCoaConstraints,
         ),
       });
       return this.#verifiedResult(completed);
@@ -440,6 +478,7 @@ export class XeroCreditNoteManualJournalService {
     xeroObjectId: string,
     canonicalPayload: Record<string, unknown>,
     providerSnapshot: Record<string, unknown>,
+    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
   ) {
     const { canonicalPayload: snapshotCanonicalPayload, ...providerEvidence } = providerSnapshot;
     let effectiveCanonicalPayload = canonicalPayload;
@@ -468,7 +507,59 @@ export class XeroCreditNoteManualJournalService {
         : "UNKNOWN",
       canonicalPayload: effectiveCanonicalPayload,
       evidence: effectiveEvidence,
+      ...(serverCoaConstraints ? {
+        serverCoaExecutionConstraints: parseXeroTenantCoaExecutionConstraints(serverCoaConstraints),
+      } : {}),
     };
+  }
+
+  async #assertServerCoaExecutionConstraints(
+    context: RequestContext,
+    input: CanonicalCreditNoteDraftPayload,
+    rawConstraints: XeroTenantCoaExecutionConstraints | undefined,
+  ): Promise<void> {
+    if (!rawConstraints) return;
+    let constraints: XeroTenantCoaExecutionConstraints;
+    try {
+      constraints = parseXeroTenantCoaExecutionConstraints(rawConstraints);
+    } catch (error) {
+      throw new AppError("PERSISTENCE_FAILURE", "The server-owned COA execution constraints are invalid.", {
+        httpStatus: 503,
+        retryable: false,
+        details: { providerMutationPossible: false },
+        cause: error,
+      });
+    }
+    const [resolved, accounts] = await Promise.all([
+      this.readProvider.resolveContext(context),
+      this.readProvider.listAccounts(context),
+    ]);
+    try {
+      assertXeroTenantCoaExecutionConstraints({
+        constraints,
+        tenantId: resolved.tenantId,
+        accounts,
+        lines: input.lines.map((line) => ({
+          accountId: line.accountId,
+          accountCode: line.accountCode,
+          taxType: line.taxType,
+        })),
+      });
+    } catch (error) {
+      if (!(error instanceof XeroTenantCoaProfileError)) throw error;
+      throw new AppError("STALE_PREFLIGHT", error.message, {
+        httpStatus: 409,
+        retryable: false,
+        details: {
+          failureLayer: "XERO_TENANT_COA_PROFILE",
+          reasonCodes: [error.reasonCode],
+          ...(error.category ? { accountingCategory: error.category } : {}),
+          recoveryAction: "PREPARE_NEW_ACCOUNTING_CASE_VERSION",
+          providerMutationPossible: false,
+        },
+        cause: error,
+      });
+    }
   }
 
   async #validateCreditNoteReferences(
@@ -493,8 +584,14 @@ export class XeroCreditNoteManualJournalService {
           path: `lines[${index}].account_id`,
         });
       }
-      if (!exactActiveTax(taxes, line.taxType, account)) {
-        throw validationError("A line tax type is inactive, ambiguous, or incompatible with its exact account.", {
+      const taxResolution = resolveStableXeroTaxRate({
+        taxRates: taxes,
+        taxType: line.taxType,
+        direction: input.creditNoteType === "ACCRECCREDIT" ? "OUTPUT" : "INPUT",
+        account,
+      });
+      if (!taxResolution.ok) {
+        throw validationError(`${taxResolution.message} [${taxResolution.code}]`, {
           path: `lines[${index}].tax_type`,
         });
       }
@@ -564,10 +661,7 @@ export class XeroCreditNoteManualJournalService {
       denyReasons.push("WRITE_TENANT_NOT_ALLOWED");
     }
     if (denyReasons.length > 0) {
-      throw new AppError("FORBIDDEN", "This Xero draft operation is not currently authorised.", {
-        httpStatus: 403,
-        details: { denyReasons },
-      });
+      throw xeroCapabilityDenied("This Xero draft operation is not currently authorised.", denyReasons);
     }
   }
 }

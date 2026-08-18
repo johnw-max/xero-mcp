@@ -67,14 +67,10 @@ export function isXeroPostingDuplicate(
   // One source document cannot be interpreted into both AP and AR. This guard
   // is deliberately global across document types.
   if (posting.sourceSha256 === candidate.sourceSha256) return true;
-  // Xero ACCREC Reference is an additional customer reference, not the unique
-  // invoice number. Only ACCPAY treats contact + supplier reference as a hard
-  // business-document identity.
-  const candidateDocumentType = candidate.documentType ?? "ACCPAY";
-  if (candidateDocumentType !== "ACCPAY") return false;
-  if (!candidate.contactId || !candidate.normalizedReference) return false;
-  const existing = xeroSupplierPostingIdentity(posting.providerPayload);
-  return existing.documentType === "ACCPAY" &&
-    existing.contactId === candidate.contactId &&
-    existing.normalizedReference === candidate.normalizedReference;
+  // A caller's document token is not provider-guaranteed unique on every
+  // route (notably ACCPAY InvoiceNumber). Reusing it for a periodic bill is
+  // legitimate. Exact cross-Case
+  // business payload reservations live in the governed mutation/Case kernel;
+  // this legacy posting layer retains only the immutable source reservation.
+  return false;
 }

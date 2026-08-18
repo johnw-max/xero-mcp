@@ -16,6 +16,7 @@ import {
 import { mapItemSummary, type ItemSummary } from "./xeroExtendedReadMapper.js";
 import { AppError } from "../errors.js";
 import { classifyXeroWriteException } from "./xeroWriteOutcome.js";
+import type { LedgerProviderWritePermit } from "../control-kernel/ledgerProviderWritePermit.js";
 
 export interface XeroControlledCreateReceipt {
   objectId: string;
@@ -78,12 +79,21 @@ export class XeroControlledMutationProvider {
     principal: AccountingPrincipal,
     payload: CanonicalQuoteDraftPayload,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<XeroControlledCreateReceipt> {
-    return this.manager.withClient(principal, async (client, connection) => {
+    const xeroPayload = toXeroQuoteCreatePayload(payload);
+    return this.manager.withWriteClient(principal, {
+      permit: providerWritePermit,
+      adapterOperation: "XeroControlledMutationProvider.createQuoteDraft",
+      actionId: "quote.create_draft",
+      mutationRequestId: idempotencyKey,
+      providerIdempotencyKey: idempotencyKey,
+      canonicalPayload: payload,
+    }, async (client, connection) => {
       try {
         const created = await client.accountingApi.createQuotes(
           connection.tenantId,
-          toXeroQuoteCreatePayload(payload),
+          xeroPayload,
           true,
           idempotencyKey,
         );
@@ -129,12 +139,21 @@ export class XeroControlledMutationProvider {
     principal: AccountingPrincipal,
     payload: CanonicalPurchaseOrderDraftPayload,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<XeroControlledCreateReceipt> {
-    return this.manager.withClient(principal, async (client, connection) => {
+    const xeroPayload = toXeroPurchaseOrderCreatePayload(payload);
+    return this.manager.withWriteClient(principal, {
+      permit: providerWritePermit,
+      adapterOperation: "XeroControlledMutationProvider.createPurchaseOrderDraft",
+      actionId: "purchase_order.create_draft",
+      mutationRequestId: idempotencyKey,
+      providerIdempotencyKey: idempotencyKey,
+      canonicalPayload: payload,
+    }, async (client, connection) => {
       try {
         const created = await client.accountingApi.createPurchaseOrders(
           connection.tenantId,
-          toXeroPurchaseOrderCreatePayload(payload),
+          xeroPayload,
           true,
           idempotencyKey,
         );

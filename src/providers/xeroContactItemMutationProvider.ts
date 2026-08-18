@@ -21,6 +21,7 @@ import {
 } from "./xeroContactItemMapper.js";
 import type { AccountingPrincipal } from "./types.js";
 import type { XeroClientManager } from "./xeroClientManager.js";
+import type { LedgerProviderWritePermit } from "../control-kernel/ledgerProviderWritePermit.js";
 
 export interface ContactItemWriteReceipt {
   objectId: string;
@@ -47,21 +48,25 @@ export interface ContactItemMutationProvider {
     principal: AccountingPrincipal,
     prepared: ContactCreatePrimitive,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<ContactItemWriteReceipt>;
   updateContact(
     principal: AccountingPrincipal,
     prepared: ContactUpdatePrimitive,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<ContactItemWriteReceipt>;
   createItem(
     principal: AccountingPrincipal,
     prepared: ItemCreatePrimitive,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<ContactItemWriteReceipt>;
   updateItem(
     principal: AccountingPrincipal,
     prepared: ItemUpdatePrimitive,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<ContactItemWriteReceipt>;
   readAndVerifyContact(
     principal: AccountingPrincipal,
@@ -262,12 +267,21 @@ export class XeroContactItemMutationProvider implements ContactItemMutationProvi
     principal: AccountingPrincipal,
     prepared: ContactCreatePrimitive,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<ContactItemWriteReceipt> {
-    return this.manager.withClient(principal, async (client, connection) => {
+    const xeroPayload = { contacts: [mapContactCreateToXero(prepared)] } as never;
+    return this.manager.withWriteClient(principal, {
+      permit: providerWritePermit,
+      adapterOperation: "XeroContactItemMutationProvider.createContact",
+      actionId: "contact.create_basic",
+      mutationRequestId: idempotencyKey,
+      providerIdempotencyKey: idempotencyKey,
+      canonicalPayload: prepared.canonicalPayload,
+    }, async (client, connection) => {
       try {
         const response = await client.accountingApi.createContacts(
           connection.tenantId,
-          { contacts: [mapContactCreateToXero(prepared)] } as never,
+          xeroPayload,
           true,
           idempotencyKey,
         );
@@ -299,13 +313,22 @@ export class XeroContactItemMutationProvider implements ContactItemMutationProvi
     principal: AccountingPrincipal,
     prepared: ContactUpdatePrimitive,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<ContactItemWriteReceipt> {
-    return this.manager.withClient(principal, async (client, connection) => {
+    const xeroPayload = { contacts: [mapContactUpdateToXero(prepared)] } as never;
+    return this.manager.withWriteClient(principal, {
+      permit: providerWritePermit,
+      adapterOperation: "XeroContactItemMutationProvider.updateContact",
+      actionId: "contact.update_basic",
+      mutationRequestId: idempotencyKey,
+      providerIdempotencyKey: idempotencyKey,
+      canonicalPayload: prepared.canonicalPayload,
+    }, async (client, connection) => {
       try {
         const response = await client.accountingApi.updateContact(
           connection.tenantId,
           prepared.contactId,
-          { contacts: [mapContactUpdateToXero(prepared)] } as never,
+          xeroPayload,
           idempotencyKey,
         );
         const updated = response.body?.contacts?.[0];
@@ -337,12 +360,21 @@ export class XeroContactItemMutationProvider implements ContactItemMutationProvi
     principal: AccountingPrincipal,
     prepared: ItemCreatePrimitive,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<ContactItemWriteReceipt> {
-    return this.manager.withClient(principal, async (client, connection) => {
+    const xeroPayload = { items: [mapItemCreateToXero(prepared)] } as never;
+    return this.manager.withWriteClient(principal, {
+      permit: providerWritePermit,
+      adapterOperation: "XeroContactItemMutationProvider.createItem",
+      actionId: "item.create_basic_untracked",
+      mutationRequestId: idempotencyKey,
+      providerIdempotencyKey: idempotencyKey,
+      canonicalPayload: prepared.canonicalPayload,
+    }, async (client, connection) => {
       try {
         const response = await client.accountingApi.createItems(
           connection.tenantId,
-          { items: [mapItemCreateToXero(prepared)] } as never,
+          xeroPayload,
           true,
           4,
           idempotencyKey,
@@ -375,13 +407,22 @@ export class XeroContactItemMutationProvider implements ContactItemMutationProvi
     principal: AccountingPrincipal,
     prepared: ItemUpdatePrimitive,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<ContactItemWriteReceipt> {
-    return this.manager.withClient(principal, async (client, connection) => {
+    const xeroPayload = { items: [mapItemUpdateToXero(prepared)] } as never;
+    return this.manager.withWriteClient(principal, {
+      permit: providerWritePermit,
+      adapterOperation: "XeroContactItemMutationProvider.updateItem",
+      actionId: "item.update_basic_untracked",
+      mutationRequestId: idempotencyKey,
+      providerIdempotencyKey: idempotencyKey,
+      canonicalPayload: prepared.canonicalPayload,
+    }, async (client, connection) => {
       try {
         const response = await client.accountingApi.updateItem(
           connection.tenantId,
           prepared.itemId,
-          { items: [mapItemUpdateToXero(prepared)] } as never,
+          xeroPayload,
           4,
           idempotencyKey,
         );

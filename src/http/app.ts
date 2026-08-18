@@ -5,7 +5,11 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { MCP_OAUTH_SCOPES, type AppConfig } from "../config.js";
-import type { AccountingRepository } from "../db/repository.js";
+import type { AccountingRepository, RepositoryReadinessEvidence } from "../db/repository.js";
+import {
+  isActiveAccountingCaseRecoveryProjectionEvidence,
+  unknownActiveAccountingCaseRecoveryProjectionEvidence,
+} from "../db/accountingCaseRecoveryProjectionReadiness.js";
 import { AppError, toSafeError } from "../errors.js";
 import type { Logger } from "../logging.js";
 import { createAccountingMcpServer } from "../mcp/createServer.js";
@@ -30,13 +34,88 @@ import {
 import type { AccountingService } from "../services/accountingService.js";
 import type { ConnectionTicketService } from "../services/connectionTicketService.js";
 import type { OrganisationSwitchService } from "../services/organisationSwitchService.js";
+import type { LedgerTargetSessionService } from "../services/ledgerTargetSessionService.js";
+import type { XeroAccountingCaseService } from "../services/xeroAccountingCaseService.js";
 import type { ReviewAction, ReviewService } from "../services/reviewService.js";
 import type { SupplierBillSnapshot } from "../providers/types.js";
-import { xeroBillDeepLink } from "../providers/xeroDeepLinks.js";
-import { XERO_RELEASE_VERSION } from "../xeroRelease.js";
+import {
+  ledgerFirmGovernanceReadinessEvidence,
+} from "../domain/ledgerAuthority.js";
+import {
+  createXeroRuntimeAttestation,
+  XERO_RELEASE_ATTESTATION,
+  XERO_RELEASE_VERSION,
+  xeroBuildIdentityHash,
+  type XeroRuntimeWriteMode,
+} from "../xeroRelease.js";
 
 const OAUTH_COOKIE = "zc_xero_oauth_session";
 const REVIEW_COOKIE = "zc_review_session";
+
+function runtimeWriteMode(enabled: boolean): XeroRuntimeWriteMode {
+  return enabled ? "WRITE_ENABLED" : "READ_ONLY";
+}
+
+function expectedAuthorityIdentityProven(
+  config: AppConfig,
+  evidence: RepositoryReadinessEvidence,
+): boolean {
+  const expectedSnapshot = config.xeroExpectedAuthoritySnapshotSha256;
+  const expectedGovernance = config.xeroExpectedFirmGovernanceAggregateSha256;
+  if (expectedSnapshot === undefined || expectedGovernance === undefined) {
+    return config.nodeEnv !== "production";
+  }
+  if (evidence.authoritySnapshotHash !== expectedSnapshot) return false;
+  return expectedGovernance === "NOT_REQUIRED"
+    ? evidence.firmGovernance.status === "NOT_REQUIRED" &&
+      evidence.firmGovernance.authorityAggregateHash === null
+    : evidence.firmGovernance.status === "CURRENT" &&
+      evidence.firmGovernance.authorityAggregateHash === expectedGovernance;
+}
+
+function unknownReadinessEvidence(requiredMigration: string): RepositoryReadinessEvidence {
+  return {
+    ready: false,
+    storageMode: "UNKNOWN",
+    requiredMigration,
+    requiredMigrationStatus: "UNKNOWN",
+    migrationHead: null,
+    activeAccountingCaseRecoveryProjection:
+      unknownActiveAccountingCaseRecoveryProjectionEvidence(),
+    authoritySnapshotRevision: null,
+    authoritySnapshotHash: null,
+    authorityWriteKillSwitchEnabled: null,
+    firmGovernance: ledgerFirmGovernanceReadinessEvidence(undefined, new Date(Number.NaN)),
+  };
+}
+
+async function repositoryReadinessEvidence(
+  repository: AccountingRepository,
+  requiredMigration: string,
+): Promise<RepositoryReadinessEvidence> {
+  if (!repository.readinessEvidence) return unknownReadinessEvidence(requiredMigration);
+  try {
+    const evidence = await repository.readinessEvidence(requiredMigration);
+    if (
+      evidence.requiredMigration !== requiredMigration ||
+      !isActiveAccountingCaseRecoveryProjectionEvidence(
+        evidence.activeAccountingCaseRecoveryProjection,
+      ) ||
+      !evidence.firmGovernance ||
+      !["CURRENT", "NOT_REQUIRED", "MISSING_OR_INVALID", "EXPIRED", "UNKNOWN"]
+        .includes(evidence.firmGovernance.status) ||
+      ((evidence.authoritySnapshotRevision === null) !== (evidence.authoritySnapshotHash === null)) ||
+      (evidence.authoritySnapshotRevision !== null &&
+        (!Number.isSafeInteger(evidence.authoritySnapshotRevision) || evidence.authoritySnapshotRevision < 1 ||
+          typeof evidence.authoritySnapshotHash !== "string" ||
+          !/^[a-f0-9]{64}$/u.test(evidence.authoritySnapshotHash) ||
+          typeof evidence.authorityWriteKillSwitchEnabled !== "boolean"))
+    ) return unknownReadinessEvidence(requiredMigration);
+    return evidence;
+  } catch {
+    return unknownReadinessEvidence(requiredMigration);
+  }
+}
 
 export function reviewCookieOptions(config: Pick<AppConfig, "nodeEnv">, expires: Date) {
   return {
@@ -346,13 +425,13 @@ function guidanceForReview(action: ReviewAction, workflowState: string): string 
     return "This bill is already AUTHORISED and exact readback was verified. Continue to the stored result without another Xero call.";
   }
   if (action === "RECOVER_AUTHORISE") {
-    return "A prior authorisation attempt may have reached Xero. Continue to check the same InvoiceID; the service will not submit another write.";
+    return "A prior legacy authorisation attempt may have reached Xero. Browser authorisation is disabled; inspect the same InvoiceID directly in Xero.";
   }
   if (action === "RESUME_AUTHORISE") {
-    return "A valid human approval is already stored. Continue to post this same bill to Xero.";
+    return "A legacy approval is stored, but browser authorisation is disabled. Continue through the governed Accounting Case flow or Xero itself.";
   }
   if (action === "APPROVE_OR_REJECT") {
-    return "Approval posts this same bill to the Xero ledger as AUTHORISED. Rejecting leaves it unposted.";
+    return "Legacy browser approval is disabled. You may reject this pending request; any new ledger write must use the governed Accounting Case flow.";
   }
   if (workflowState === "REJECTED") return "This request was rejected. No further posting action is available.";
   if (workflowState === "WRITE_RESULT_UNKNOWN") {
@@ -395,22 +474,10 @@ export function renderReviewPage(options: {
     ? options.review.sourceEvidenceType
     : "LEGACY_UNVERIFIED";
   const guidance = guidanceForReview(action, workflowState);
-  const actionLabel = action === "VIEW_VERIFIED_RESULT"
-    ? "Open verified result"
-    : action === "RECOVER_AUTHORISE"
-      ? "Check Xero status safely"
-      : action === "RESUME_AUTHORISE"
-        ? "Resume and post to Xero"
-        : "Approve and post to Xero";
-  const approveForm = action !== "NONE" && csrf
-    ? `<form method="post" action="${actionBase}/approve"><input type="hidden" name="csrf_token" value="${csrf}"><button type="submit">${actionLabel}</button></form>`
-    : "";
   const rejectForm = action === "APPROVE_OR_REJECT" && csrf
     ? `<form method="post" action="${actionBase}/reject"><input type="hidden" name="csrf_token" value="${csrf}"><button type="submit">Reject</button></form>`
     : "";
-  const actionArea = approveForm || rejectForm
-    ? `${approveForm}${rejectForm}`
-    : `<p data-review-action="none"><strong>No Review action is available.</strong></p>`;
+  const actionArea = rejectForm || `<p data-review-action="none"><strong>No browser write action is available.</strong></p>`;
   const billDetails = bill ? (() => {
     const supplier = bill.contact.name ?? bill.contact.contactId;
     const rows = bill.lines.map((line) => `<tr>
@@ -521,6 +588,8 @@ export function createHttpApp(options: {
   logger: Logger;
   mcpOAuthProvider?: McpOAuthBrokerProvider;
   organisationSwitchService?: OrganisationSwitchService;
+  ledgerTargetSessionService?: LedgerTargetSessionService;
+  accountingCaseService?: XeroAccountingCaseService;
 }) {
   const {
     config,
@@ -532,6 +601,8 @@ export function createHttpApp(options: {
     logger,
     mcpOAuthProvider,
     organisationSwitchService,
+    ledgerTargetSessionService,
+    accountingCaseService,
   } = options;
   const brokerConfig = config.mcpOAuthBroker;
   if (brokerConfig?.enabled && !mcpOAuthProvider) {
@@ -555,20 +626,114 @@ export function createHttpApp(options: {
     app.use(createMcpOAuthRouter({ config: brokerConfig, provider: mcpOAuthProvider }));
   }
 
-  app.get("/healthz", (_, response) => {
+  app.get("/healthz", async (_, response) => {
+    const evidence = await repositoryReadinessEvidence(
+      repository,
+      XERO_RELEASE_ATTESTATION.requiredMigration,
+    );
+    const buildIdentity = config.xeroBuildIdentity;
+    const firmGovernanceProven = evidence.firmGovernance.status === "CURRENT" ||
+      evidence.firmGovernance.status === "NOT_REQUIRED";
+    const authorityIdentityProven = expectedAuthorityIdentityProven(config, evidence);
+    const writeMode = runtimeWriteMode(
+      config.xeroWriteEnabled && evidence.authorityWriteKillSwitchEnabled === true && firmGovernanceProven &&
+        authorityIdentityProven,
+    );
     response.json({
       status: "ok",
       version: XERO_RELEASE_VERSION,
+      writeMode,
+      processWriteGateEnabled: config.xeroWriteEnabled,
+      configuredAuthorityRevision: config.xeroAuthorityRevision,
+      standingDelegationsConfigSha256: config.xeroStandingDelegationsConfigSha256 ?? null,
+      authoritySnapshotRevision: evidence.authoritySnapshotRevision,
+      authoritySnapshotHash: evidence.authoritySnapshotHash,
+      authorityWriteKillSwitchEnabled: evidence.authorityWriteKillSwitchEnabled,
+      firmGovernance: evidence.firmGovernance,
+      buildIdentityHash: buildIdentity ? xeroBuildIdentityHash(buildIdentity) : null,
+      acceptanceSourceSha256: buildIdentity?.acceptanceSourceSha256 ?? null,
+      sourceArchiveSha256: buildIdentity?.sourceArchiveSha256 ?? null,
+      approvedControlCatalogSha256: buildIdentity?.approvedControlCatalogSha256 ?? null,
       toolCount: TOOL_ALLOWLIST.length,
       toolsetHash: hashObject(TOOL_ALLOWLIST),
+      attestation: XERO_RELEASE_ATTESTATION,
+      attestationHash: hashObject(XERO_RELEASE_ATTESTATION),
     });
   });
 
   app.get("/readyz", async (_, response) => {
-    const ready = await repository.readiness();
+    const requiredMigration = XERO_RELEASE_ATTESTATION.requiredMigration;
+    const buildIdentity = config.xeroBuildIdentity;
+    const buildIdentityHash = buildIdentity ? xeroBuildIdentityHash(buildIdentity) : null;
+    const evidence = await repositoryReadinessEvidence(repository, requiredMigration);
+    const firmGovernanceRequired = config.xeroWriteEnabled &&
+      evidence.authorityWriteKillSwitchEnabled === true;
+    const firmGovernanceProven = !firmGovernanceRequired ||
+      evidence.firmGovernance.status === "CURRENT" || evidence.firmGovernance.status === "NOT_REQUIRED";
+    const authorityIdentityProven = expectedAuthorityIdentityProven(config, evidence);
+    const writeMode = runtimeWriteMode(
+      config.xeroWriteEnabled && evidence.authorityWriteKillSwitchEnabled === true && firmGovernanceProven &&
+        authorityIdentityProven,
+    );
+    const runtimeAttestation = createXeroRuntimeAttestation({
+      buildIdentityHash,
+      acceptanceSourceSha256: buildIdentity?.acceptanceSourceSha256 ?? null,
+      sourceArchiveSha256: buildIdentity?.sourceArchiveSha256 ?? null,
+      approvedControlCatalogSha256: buildIdentity?.approvedControlCatalogSha256 ?? null,
+      writeMode,
+      processWriteGateEnabled: config.xeroWriteEnabled,
+      configuredAuthorityRevision: config.xeroAuthorityRevision,
+      standingDelegationsConfigSha256: config.xeroStandingDelegationsConfigSha256 ?? null,
+      authoritySnapshotRevision: evidence.authoritySnapshotRevision,
+      authoritySnapshotHash: evidence.authoritySnapshotHash,
+      authorityWriteKillSwitchEnabled: evidence.authorityWriteKillSwitchEnabled,
+      storageMode: evidence.storageMode,
+      repositoryReady: evidence.ready,
+      requiredMigration,
+      requiredMigrationStatus: evidence.requiredMigrationStatus,
+      migrationHead: evidence.migrationHead,
+      activeAccountingCaseRecoveryProjection:
+        evidence.activeAccountingCaseRecoveryProjection,
+      firmGovernance: evidence.firmGovernance,
+    });
+    const migrationProven =
+      (evidence.storageMode === "POSTGRES" && evidence.requiredMigrationStatus === "APPLIED" &&
+        typeof evidence.migrationHead === "string" && evidence.migrationHead.length > 0) ||
+      (evidence.storageMode === "IN_MEMORY" && evidence.requiredMigrationStatus === "NOT_APPLICABLE");
+    const buildIdentityProven = config.nodeEnv !== "production" || buildIdentity !== undefined;
+    const authorityConfigurationProven = config.nodeEnv !== "production" || (
+      evidence.authoritySnapshotRevision === config.xeroAuthorityRevision &&
+      typeof config.xeroStandingDelegationsConfigSha256 === "string" &&
+      /^[a-f0-9]{64}$/u.test(config.xeroStandingDelegationsConfigSha256) && authorityIdentityProven
+    );
+    const ready = evidence.ready && migrationProven && evidence.authoritySnapshotRevision !== null &&
+      evidence.authoritySnapshotHash !== null && buildIdentityProven && authorityConfigurationProven &&
+      firmGovernanceProven;
     response.status(ready ? 200 : 503).json({
       status: ready ? "ready" : "not_ready",
       version: XERO_RELEASE_VERSION,
+      writeMode,
+      processWriteGateEnabled: config.xeroWriteEnabled,
+      configuredAuthorityRevision: config.xeroAuthorityRevision,
+      standingDelegationsConfigSha256: config.xeroStandingDelegationsConfigSha256 ?? null,
+      authoritySnapshotRevision: evidence.authoritySnapshotRevision,
+      authoritySnapshotHash: evidence.authoritySnapshotHash,
+      authorityWriteKillSwitchEnabled: evidence.authorityWriteKillSwitchEnabled,
+      buildIdentityHash,
+      acceptanceSourceSha256: buildIdentity?.acceptanceSourceSha256 ?? null,
+      sourceArchiveSha256: buildIdentity?.sourceArchiveSha256 ?? null,
+      approvedControlCatalogSha256: buildIdentity?.approvedControlCatalogSha256 ?? null,
+      storageMode: evidence.storageMode,
+      requiredMigration,
+      requiredMigrationStatus: evidence.requiredMigrationStatus,
+      migrationHead: evidence.migrationHead,
+      activeAccountingCaseRecoveryProjection:
+        evidence.activeAccountingCaseRecoveryProjection,
+      firmGovernance: evidence.firmGovernance,
+      toolsetHash: hashObject(TOOL_ALLOWLIST),
+      attestationHash: hashObject(XERO_RELEASE_ATTESTATION),
+      runtimeAttestation,
+      runtimeAttestationHash: hashObject(runtimeAttestation),
     });
   });
 
@@ -613,6 +778,8 @@ export function createHttpApp(options: {
       accountingService,
       response.locals.requestContext as RequestContext,
       organisationSwitchService,
+      ledgerTargetSessionService,
+      accountingCaseService,
     );
     const transport = new StreamableHTTPServerTransport();
     try {
@@ -638,6 +805,15 @@ export function createHttpApp(options: {
     app.get("/oauth/xero/callback", async (request, response) => {
       await mcpOAuthProvider.handleXeroCallback(request, response);
     });
+    // Use the same neutral callback path for the first-party organisation
+    // confirmation POST. Some Host browser profiles block top-level requests
+    // whose path ends in `/select`, even after the request reaches the server,
+    // and therefore discard the authorization-code redirect response.
+    app.post("/oauth/xero/callback", async (request, response) => {
+      await mcpOAuthProvider.handleOrganisationSelection(request, response);
+    });
+    // Compatibility for an already-rendered, short-lived selection page from
+    // the previous release. New pages never emit this action.
     app.post("/oauth/xero/select", async (request, response) => {
       await mcpOAuthProvider.handleOrganisationSelection(request, response);
     });
@@ -765,65 +941,6 @@ export function createHttpApp(options: {
     }));
   });
 
-  app.post("/review/:postingRequestId/approve", reviewOrigin, async (request, response) => {
-    const postingRequestId = request.params.postingRequestId;
-    if (typeof postingRequestId !== "string") {
-      throw new AppError("VALIDATION_FAILED", "Posting request identifier is invalid.", { httpStatus: 400 });
-    }
-    const rawSession = parseCookie(request, REVIEW_COOKIE);
-    if (!rawSession) throw new AppError("AUTH_REQUIRED", "Operator review session is required.", { httpStatus: 401 });
-    const session = await reviewService.authenticate(rawSession);
-    const csrfToken = typeof request.body?.csrf_token === "string" ? request.body.csrf_token : undefined;
-    if (!csrfToken) throw new AppError("FORBIDDEN", "Review CSRF token is required.", { httpStatus: 403 });
-    const result = await accountingService.withAudit({
-      actorId: session.actorId,
-      toolName: "review_authorise_supplier_bill",
-      input: { postingRequestId },
-      action: () => reviewService.approveAndAuthorise({
-        postingRequestId,
-        actorId: session.actorId,
-        sessionHash: session.sessionHash,
-        csrfToken,
-        accountingService,
-      }),
-      recordId: (value) => value.invoiceId,
-    });
-    const connection = await repository.getConnectionByActorTenant(session.actorId, result.bill.tenantId);
-    const xeroBillUrl = xeroBillDeepLink(connection?.tenantShortCode, result.invoiceId);
-    setPrivateHtmlHeaders(response);
-    const payload = {
-      status: result.status,
-      verified: result.verified,
-      postingRequestId: result.postingRequestId,
-      invoiceId: result.invoiceId,
-      tenant: {
-        id: result.bill.tenantId,
-        ...(connection?.tenantName ? { name: connection.tenantName } : {}),
-      },
-      ...(result.bill.reference ? { reference: result.bill.reference } : {}),
-      ...(result.bill.currency ? { currency: result.bill.currency } : {}),
-      ...(result.bill.total ? { total: result.bill.total } : {}),
-      ...(xeroBillUrl ? { xeroBillUrl } : {}),
-    };
-    if (request.accepts(["html", "json"]) === "html") {
-      response.type("html").send(renderResultPage({
-        title: "Posted to Xero",
-        message: "The approved supplier bill is AUTHORISED and exact readback was verified.",
-        postingRequestId: result.postingRequestId,
-        invoiceId: result.invoiceId,
-        status: result.status,
-        ...(connection?.tenantName ? { tenantName: connection.tenantName } : {}),
-        tenantId: result.bill.tenantId,
-        ...(result.bill.reference ? { reference: result.bill.reference } : {}),
-        ...(result.bill.currency ? { currency: result.bill.currency } : {}),
-        ...(result.bill.total ? { total: result.bill.total } : {}),
-        ...(xeroBillUrl ? { xeroBillUrl } : {}),
-      }));
-      return;
-    }
-    response.json(payload);
-  });
-
   app.post("/review/:postingRequestId/reject", reviewOrigin, async (request, response) => {
     const postingRequestId = request.params.postingRequestId;
     if (typeof postingRequestId !== "string") {
@@ -867,6 +984,19 @@ export function createHttpApp(options: {
         errorCode: "REQUEST_TOO_LARGE",
       });
       response.status(413).json({ error: { code: "REQUEST_TOO_LARGE", message: "Request body is too large." } });
+      return;
+    }
+    const invalidJson = (httpError?.status === 400 || httpError?.statusCode === 400) &&
+      httpError?.type === "entity.parse.failed";
+    if (invalidJson) {
+      logger.warn("HTTP request body rejected as invalid JSON.", {
+        method: request.method,
+        path: safeLogPath(request),
+        errorCode: "VALIDATION_FAILED",
+      });
+      response.status(400).json({
+        error: { code: "VALIDATION_FAILED", message: "Request body is not valid JSON." },
+      });
       return;
     }
     const safe = toSafeError(error);

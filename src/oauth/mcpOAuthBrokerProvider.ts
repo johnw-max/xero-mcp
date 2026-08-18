@@ -56,6 +56,70 @@ const EXACT_OPAQUE_BROWSER_VALUE = /^[A-Za-z0-9_-]{43}$/u;
 const PERSONAL_POC_WORKSPACE_ID = "personal-poc";
 const PERSONAL_POC_POLICY_ID = "policy_personal-poc-xero-v1";
 const SHARED_TEST_SUBJECT_PREFIX = "shared-test-installation";
+const ORGANISATION_SELECTION_TICKET_SCHEMA = "xero-organisation-selection-ticket:v1";
+const ORGANISATION_SELECTION_TICKET_CONTEXT = "zcloak-xero-mcp-organisation-selection-v1";
+
+interface OrganisationSelectionTicket {
+  schemaVersion: typeof ORGANISATION_SELECTION_TICKET_SCHEMA;
+  browserSecret: string;
+  selectionCsrfHash: string;
+  expiresAt: string;
+}
+
+function createOrganisationSelectionTicket(options: {
+  cipher: TokenCipher;
+  browserSecret: string;
+  selectionCsrfHash: string;
+  expiresAt: Date;
+}): string {
+  const ticket: OrganisationSelectionTicket = {
+    schemaVersion: ORGANISATION_SELECTION_TICKET_SCHEMA,
+    browserSecret: options.browserSecret,
+    selectionCsrfHash: options.selectionCsrfHash,
+    expiresAt: options.expiresAt.toISOString(),
+  };
+  return options.cipher.encrypt(JSON.stringify(ticket), ORGANISATION_SELECTION_TICKET_CONTEXT);
+}
+
+function readOrganisationSelectionTicket(options: {
+  cipher: TokenCipher;
+  rawTicket: string;
+  expectedSelectionCsrfHash: string;
+  now: Date;
+}): OrganisationSelectionTicket | undefined {
+  try {
+    const decoded = JSON.parse(options.cipher.decrypt(
+      options.rawTicket,
+      ORGANISATION_SELECTION_TICKET_CONTEXT,
+    )) as unknown;
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return undefined;
+    const ticket = decoded as Record<string, unknown>;
+    if (JSON.stringify(Object.keys(ticket).sort()) !== JSON.stringify([
+      "browserSecret",
+      "expiresAt",
+      "schemaVersion",
+      "selectionCsrfHash",
+    ])) return undefined;
+    if (
+      ticket.schemaVersion !== ORGANISATION_SELECTION_TICKET_SCHEMA ||
+      typeof ticket.browserSecret !== "string" ||
+      !EXACT_OPAQUE_BROWSER_VALUE.test(ticket.browserSecret) ||
+      typeof ticket.selectionCsrfHash !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(ticket.selectionCsrfHash) ||
+      !safeEqual(ticket.selectionCsrfHash, options.expectedSelectionCsrfHash) ||
+      typeof ticket.expiresAt !== "string"
+    ) return undefined;
+    const expiresAt = new Date(ticket.expiresAt);
+    if (
+      !Number.isFinite(expiresAt.getTime()) ||
+      expiresAt.toISOString() !== ticket.expiresAt ||
+      expiresAt <= options.now
+    ) return undefined;
+    return ticket as unknown as OrganisationSelectionTicket;
+  } catch {
+    return undefined;
+  }
+}
 
 function exactNonEmpty(value: string, maxLength: number): boolean {
   return value.length > 0 &&
@@ -210,11 +274,11 @@ export function sendBrokerHostAuthorizationResult(
 }
 
 export function shouldUsePersonalPocManualReturn(options: {
+  broker: Pick<EnabledBrokerConfig, "manualReturnClientIds">;
   personalPoc: boolean;
   clientId: string;
-  allowedClientIds: readonly string[];
 }): boolean {
-  return options.personalPoc && options.allowedClientIds.includes(options.clientId);
+  return options.personalPoc && options.broker.manualReturnClientIds.includes(options.clientId);
 }
 
 /**
@@ -449,6 +513,7 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
       const now = this.#now();
       const authorizationId = this.#newId("authorization");
       const selectionCsrf = this.#newSecret("organisation selection CSRF");
+      const selectionCsrfHash = this.#hash("csrf_token", selectionCsrf);
       const exchanged = await this.#xeroAuthorization.exchange({
         xeroState,
         callbackQuery: queryString,
@@ -463,12 +528,29 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
         browserSessionHash,
         authorization: exchanged.authorization,
         connections: exchanged.connections,
-        selectionCsrfHash: this.#hash("csrf_token", selectionCsrf),
+        selectionCsrfHash,
         now,
       });
       if (!completed) throw new Error("The Broker flow could not enter organisation selection.");
+      const selectionTicket = createOrganisationSelectionTicket({
+        cipher: this.#stateCipher,
+        browserSecret,
+        selectionCsrfHash,
+        expiresAt: completed.expiresAt,
+      });
 
       setSelectionPageHeaders(response);
+      // Re-issue the already verified browser-flow cookie once the OAuth
+      // callback has returned to our first-party page. Some browsers apply
+      // bounce-tracking cleanup after the cross-site Xero redirect and can
+      // otherwise drop the cookie before the same-origin organisation form is
+      // submitted. This keeps the existing cookie, CSRF, Origin, and one-time
+      // repository checks intact; it does not create a cookie-less fallback.
+      response.cookie(
+        MCP_OAUTH_FLOW_COOKIE,
+        browserSecret,
+        brokerFlowCookieOptions(this.#broker.browserFlowTtlSeconds),
+      );
       response.type("html").send(renderXeroOrganisationSelectionPage({
         organisations: exchanged.connections.map((connection) => ({
           connectionId: connection.connectionId,
@@ -476,6 +558,7 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
           tenantId: connection.tenantId,
         })),
         csrfToken: selectionCsrf,
+        selectionTicket,
         requestedScopes: completed.requestedScopes,
         personalPocOnly: completed.personalPoc,
       }));
@@ -511,16 +594,18 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
         details: { resultStatus: `${originStatus}_${fetchMetadataStatus}` },
       });
     }
-    const browserSecret = readExactCookie(request.headers.cookie, MCP_OAUTH_FLOW_COOKIE);
     const csrfToken = typeof request.body?.csrf_token === "string" ? request.body.csrf_token : undefined;
+    const rawSelectionTicket = typeof request.body?.selection_ticket === "string"
+      ? request.body.selection_ticket
+      : undefined;
     const selectedConnectionId = typeof request.body?.connection_id === "string"
       ? request.body.connection_id
       : undefined;
     if (
-      !browserSecret ||
-      !EXACT_OPAQUE_BROWSER_VALUE.test(browserSecret) ||
       !csrfToken ||
       !exactNonEmpty(csrfToken, 256) ||
+      !rawSelectionTicket ||
+      !exactNonEmpty(rawSelectionTicket, 4_096) ||
       !selectedConnectionId ||
       !exactNonEmpty(selectedConnectionId, 256)
     ) {
@@ -528,12 +613,14 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
         httpStatus: 403,
         details: {
           resultStatus: [
-            browserSecret
-              ? EXACT_OPAQUE_BROWSER_VALUE.test(browserSecret) ? "COOKIE_OK" : "COOKIE_INVALID"
-              : "COOKIE_MISSING",
             csrfToken
               ? exactNonEmpty(csrfToken, 256) ? "CSRF_OK" : "CSRF_INVALID"
               : "CSRF_MISSING",
+            rawSelectionTicket
+              ? exactNonEmpty(rawSelectionTicket, 4_096)
+                ? "SELECTION_TICKET_PRESENT"
+                : "SELECTION_TICKET_INVALID"
+              : "SELECTION_TICKET_MISSING",
             selectedConnectionId
               ? exactNonEmpty(selectedConnectionId, 256) ? "CONNECTION_OK" : "CONNECTION_INVALID"
               : "CONNECTION_MISSING",
@@ -543,6 +630,34 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
     }
 
     const now = this.#now();
+    const selectionCsrfHash = this.#hash("csrf_token", csrfToken);
+    const selectionTicket = readOrganisationSelectionTicket({
+      cipher: this.#stateCipher,
+      rawTicket: rawSelectionTicket,
+      expectedSelectionCsrfHash: selectionCsrfHash,
+      now,
+    });
+    const cookieSecret = readExactCookie(request.headers.cookie, MCP_OAUTH_FLOW_COOKIE);
+    if (
+      !selectionTicket ||
+      (cookieSecret && !safeEqual(cookieSecret, selectionTicket.browserSecret))
+    ) {
+      throw new AppError("FORBIDDEN", "The organisation selection proof is invalid or expired.", {
+        httpStatus: 403,
+        details: {
+          resultStatus: !selectionTicket
+            ? "SELECTION_TICKET_INVALID"
+            : "COOKIE_SELECTION_TICKET_MISMATCH",
+        },
+      });
+    }
+    // The encrypted, one-time selection ticket is minted only after the
+    // original HttpOnly cookie passes the Xero callback. It preserves the
+    // exact browser-flow binding if bounce-tracking cleanup removes that
+    // cookie before this same-origin POST. CSRF, Origin/fetch metadata,
+    // expiry, selected-connection membership, and repository one-time state
+    // all remain mandatory.
+    const browserSecret = selectionTicket.browserSecret;
     const flowHash = this.#hash("browser_flow", browserSecret);
     const browserSessionHash = this.#hash("browser_session", browserSecret);
     const selection = await this.#repository.getBrokerSelection({
@@ -570,7 +685,7 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
     const result = await this.#repository.completeBrokerOrganisationSelection({
       flowHash,
       browserSessionHash,
-      selectionCsrfHash: this.#hash("csrf_token", csrfToken),
+      selectionCsrfHash,
       selectedConnectionId,
       bindingId: this.#newId("binding"),
       policyId: PERSONAL_POC_POLICY_ID,
@@ -641,9 +756,9 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
       ?? "MCP Host";
     sendBrokerHostAuthorizationResult(response, {
       manualPersonalPocReturn: shouldUsePersonalPocManualReturn({
+        broker: this.#broker,
         personalPoc: result.flow.personalPoc,
         clientId: result.flow.clientId,
-        allowedClientIds: this.#broker.missingResourceCompatClientIds,
       }),
       returnUrl,
       hostName,

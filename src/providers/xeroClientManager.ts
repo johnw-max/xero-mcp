@@ -14,6 +14,15 @@ import {
 } from "../security/requestContext.js";
 import type { TokenCipher } from "../security/tokenCipher.js";
 import type { AccountingPrincipal } from "./types.js";
+import type { LedgerProviderWritePermit } from "../control-kernel/ledgerProviderWritePermit.js";
+import type { XeroAutonomousWriteAction } from "../policy/xeroAutonomousActions.js";
+import type { XeroProviderWriteAdapterOperation } from "../security/xeroProviderWritePermit.js";
+import { consumeXeroProviderWritePermitAtMutationBoundary } from "../security/xeroProviderWritePermitContext.js";
+import { xeroProviderReadFailure } from "./xeroProviderFailure.js";
+import {
+  NodeXeroTrialBalanceTransport,
+  type XeroTrialBalanceTransport,
+} from "./xeroTrialBalanceTransport.js";
 import {
   BROKER_MCP_SCOPES,
   describeLegacyXeroScopePolicyProblems,
@@ -44,8 +53,80 @@ export type ResolvedXeroConnection =
 
 export type XeroActionConnection = ProviderConnection | AuthorizedProviderConnection;
 
-type ClientAction<T> = (client: XeroClient, connection: XeroActionConnection) => Promise<T>;
-type AccessTokenAction<T> = (accessToken: string, connection: XeroActionConnection) => Promise<T>;
+const XERO_READ_ACCOUNTING_API_METHODS = [
+  "getAccounts",
+  "getBankTransaction",
+  "getBankTransactions",
+  "getContact",
+  "getContacts",
+  "getCreditNote",
+  "getCreditNotes",
+  "getInvoices",
+  "getItem",
+  "getItems",
+  "getManualJournal",
+  "getManualJournals",
+  "getOrganisations",
+  "getPayments",
+  "getPurchaseOrder",
+  "getPurchaseOrders",
+  "getQuote",
+  "getQuotes",
+  "getTaxRates",
+  "getTrackingCategories",
+] as const satisfies readonly (keyof XeroClient["accountingApi"])[];
+
+const XERO_READ_ACCOUNTING_API_METHOD_SET = new Set<PropertyKey>(XERO_READ_ACCOUNTING_API_METHODS);
+type XeroReadAccountingApiMethod = (typeof XERO_READ_ACCOUNTING_API_METHODS)[number];
+
+export interface XeroReadClient {
+  readonly accountingApi: Pick<XeroClient["accountingApi"], XeroReadAccountingApiMethod>;
+}
+
+export interface XeroProviderWriteAuthorization {
+  readonly permit: LedgerProviderWritePermit | undefined;
+  readonly adapterOperation: XeroProviderWriteAdapterOperation;
+  readonly actionId: XeroAutonomousWriteAction;
+  readonly mutationRequestId: string;
+  readonly providerIdempotencyKey: string;
+  readonly canonicalPayload: unknown;
+}
+
+type FullClientAction<T> = (client: XeroClient, connection: XeroActionConnection) => Promise<T>;
+type ReadClientAction<T> = (client: XeroReadClient, connection: XeroActionConnection) => Promise<T>;
+
+function readonlyClient(client: XeroClient): XeroReadClient {
+  let accountingApi: XeroReadClient["accountingApi"] | undefined;
+  return Object.freeze({
+    get accountingApi(): XeroReadClient["accountingApi"] {
+      if (accountingApi) return accountingApi;
+      accountingApi = new Proxy(client.accountingApi, {
+        get(target, property) {
+          if (!XERO_READ_ACCOUNTING_API_METHOD_SET.has(property)) {
+            throw new AppError(
+              "FORBIDDEN",
+              "The read-only Xero client cannot access a provider mutation method.",
+              {
+                httpStatus: 403,
+                details: {
+                  failureLayer: "PROVIDER_WRITE_PERMIT",
+                  reasonCodes: ["READ_CLIENT_METHOD_DENIED"],
+                  providerMutationPossible: false,
+                },
+              },
+            );
+          }
+          const value = Reflect.get(target, property, target) as unknown;
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+        set() {
+          return false;
+        },
+      }) as XeroReadClient["accountingApi"];
+      return accountingApi;
+    },
+  });
+}
 
 class KeyedMutex {
   readonly #tails = new Map<string, Promise<void>>();
@@ -103,6 +184,7 @@ export class XeroClientManager {
   readonly #config: AppConfig["xero"];
   readonly #logger: Logger;
   readonly #legacyWriteEnabled: boolean;
+  readonly #trialBalanceTransport: XeroTrialBalanceTransport;
   readonly #refreshMutex = new KeyedMutex();
 
   constructor(options: {
@@ -110,13 +192,15 @@ export class XeroClientManager {
     cipher: TokenCipher;
     config: AppConfig["xero"];
     logger: Logger;
-    legacyWriteEnabled?: boolean;
+    legacyWriteEnabled: boolean;
+    trialBalanceTransport?: XeroTrialBalanceTransport;
   }) {
     this.#repository = options.repository;
     this.#cipher = options.cipher;
     this.#config = options.config;
     this.#logger = options.logger;
-    this.#legacyWriteEnabled = options.legacyWriteEnabled ?? true;
+    this.#legacyWriteEnabled = options.legacyWriteEnabled;
+    this.#trialBalanceTransport = options.trialBalanceTransport ?? new NodeXeroTrialBalanceTransport();
   }
 
   async resolveSingleConnection(actorId: string): Promise<ProviderConnection> {
@@ -158,18 +242,60 @@ export class XeroClientManager {
     }
 
     const context = requireOAuthBoundRequestContext(principal);
-    const binding = await this.#repository.resolveAgentConnectionBinding({
-      installationId: context.oauthInstallationId,
-      bindingId: context.bindingId,
-      workspaceId: context.workspaceId,
-      subjectType: context.subjectType,
-      subjectId: context.subjectId,
-      agentId: context.agentId,
-      connectionId: context.connectionId,
-    });
+    const targetSession = context.targetSessionHash
+      ? await this.#repository.resolveLedgerTargetSession({
+          sessionHash: context.targetSessionHash,
+          installationId: context.oauthInstallationId,
+          workspaceId: context.workspaceId,
+          subjectType: context.subjectType,
+          subjectId: context.subjectId,
+          agentId: context.agentId,
+          now: new Date(),
+        })
+      : undefined;
+    const binding = context.targetSessionHash
+      ? targetSession?.binding
+      : await this.#repository.resolveAgentConnectionBinding({
+          installationId: context.oauthInstallationId,
+          bindingId: context.bindingId,
+          workspaceId: context.workspaceId,
+          subjectType: context.subjectType,
+          subjectId: context.subjectId,
+          agentId: context.agentId,
+          connectionId: context.connectionId,
+        });
     if (!binding || binding.bindingRevision !== context.bindingRevision) {
-      throw new AppError("FORBIDDEN", "The OAuth token is not bound to an active Xero organisation.", {
+      throw new AppError(
+        context.targetSessionHash ? "TARGET_SESSION_INVALID" : "NOT_CONNECTED",
+        "The OAuth token is not bound to an active Xero organisation.",
+        {
+          httpStatus: context.targetSessionHash ? 403 : 409,
+          details: {
+            failureLayer: context.targetSessionHash ? "TARGET_BINDING" : "CONNECTION",
+            reasonCodes: [context.targetSessionHash ? "TARGET_BINDING_INVALID" : "CONNECTION_BINDING_INACTIVE"],
+            recoveryAction: context.targetSessionHash ? "PIN_LEDGER_TARGET" : "RECONNECT_XERO",
+            providerMutationPossible: false,
+          },
+        },
+      );
+    }
+    if (
+      context.targetSessionHash &&
+      (
+        !targetSession ||
+        targetSession.session.bindingId !== context.bindingId ||
+        targetSession.session.connectionId !== context.connectionId ||
+        targetSession.session.bindingRevision !== context.bindingRevision
+      )
+    ) {
+      throw new AppError("TARGET_SESSION_INVALID", "The Xero ledger target session no longer matches this request.", {
         httpStatus: 403,
+        details: {
+          failureLayer: "TARGET_BINDING",
+          reasonCodes: ["TARGET_BINDING_INVALID"],
+          recoveryAction: "PIN_LEDGER_TARGET",
+          providerMutationPossible: false,
+        },
       });
     }
 
@@ -179,8 +305,14 @@ export class XeroClientManager {
       context.subjectId,
     );
     if (!authorization || authorization.status !== "ACTIVE") {
-      throw new AppError("FORBIDDEN", "The bound Xero authorization is not active for this subject.", {
-        httpStatus: 403,
+      throw new AppError("NOT_CONNECTED", "The bound Xero authorization is not active for this subject.", {
+        httpStatus: 409,
+        details: {
+          failureLayer: "CONNECTION",
+          reasonCodes: ["PROVIDER_AUTHORIZATION_INACTIVE"],
+          recoveryAction: "RECONNECT_XERO",
+          providerMutationPossible: false,
+        },
       });
     }
 
@@ -195,8 +327,14 @@ export class XeroClientManager {
       connection.tenantId === binding.tenantId,
     );
     if (exactConnections.length !== 1) {
-      throw new AppError("FORBIDDEN", "The bound Xero organisation could not be resolved exactly.", {
+      throw new AppError("TARGET_SESSION_INVALID", "The bound Xero organisation could not be resolved exactly.", {
         httpStatus: 403,
+        details: {
+          failureLayer: "TARGET_BINDING",
+          reasonCodes: ["TENANT_BINDING_MISMATCH"],
+          recoveryAction: "PIN_LEDGER_TARGET",
+          providerMutationPossible: false,
+        },
       });
     }
 
@@ -206,9 +344,17 @@ export class XeroClientManager {
     );
     if (missingCapabilities.length > 0) {
       throw new AppError(
-        "NOT_CONNECTED",
+        "SCOPE_MISSING",
         `The Xero authorization is missing required capabilities: ${missingCapabilities.map((item) => item.capability).join(", ")}. Re-authorisation is required.`,
-        { httpStatus: 409 },
+        {
+          httpStatus: 403,
+          details: {
+            failureLayer: "PROVIDER_OAUTH_SCOPE",
+            reasonCodes: missingCapabilities.map((item) => `MISSING_XERO_CAPABILITY_${item.capability}`),
+            recoveryAction: "REAUTHORISE_XERO_SCOPES",
+            providerMutationPossible: false,
+          },
+        },
       );
     }
 
@@ -220,7 +366,28 @@ export class XeroClientManager {
     };
   }
 
-  async withClient<T>(principal: AccountingPrincipal, action: ClientAction<T>): Promise<T> {
+  async withClient<T>(principal: AccountingPrincipal, action: ReadClientAction<T>): Promise<T> {
+    return this.#withFullClient(principal, (client, connection) => action(readonlyClient(client), connection));
+  }
+
+  /**
+   * The only manager entry point that exposes a mutation-capable Xero client.
+   * It consumes the exact one-shot permit after connection metadata resolution,
+   * but before client initialization, token decrypt, refresh, or Provider I/O.
+   */
+  async withWriteClient<T>(
+    principal: AccountingPrincipal,
+    authorization: XeroProviderWriteAuthorization,
+    action: FullClientAction<T>,
+  ): Promise<T> {
+    return this.#withFullClient(principal, action, authorization);
+  }
+
+  async #withFullClient<T>(
+    principal: AccountingPrincipal,
+    action: FullClientAction<T>,
+    writeAuthorization?: XeroProviderWriteAuthorization,
+  ): Promise<T> {
     const initial = await this.resolveConnection(principal);
     const mutexKey = initial.mode === "OAUTH"
       ? initial.authorization.authorizationId
@@ -228,7 +395,20 @@ export class XeroClientManager {
 
     return this.#refreshMutex.run(mutexKey, async () => {
       let resolved = await this.resolveConnection(principal);
+      if (writeAuthorization) {
+        consumeXeroProviderWritePermitAtMutationBoundary({
+          permit: writeAuthorization.permit,
+          principal,
+          connection: resolved.connection,
+          adapterOperation: writeAuthorization.adapterOperation,
+          actionId: writeAuthorization.actionId,
+          mutationRequestId: writeAuthorization.mutationRequestId,
+          providerIdempotencyKey: writeAuthorization.providerIdempotencyKey,
+          canonicalPayload: writeAuthorization.canonicalPayload,
+        });
+      }
       let client = await this.#createClient(resolved);
+      let refreshedOAuthToken = false;
 
       if (this.#tokenExpiresAt(resolved).getTime() <= Date.now() + 60_000) {
         try {
@@ -255,9 +435,11 @@ export class XeroClientManager {
 
             if (saved) {
               resolved = { ...resolved, authorization: saved };
+              refreshedOAuthToken = true;
             } else {
               resolved = await this.resolveConnection(principal);
               client = await this.#createClient(resolved);
+              refreshedOAuthToken = true;
             }
           } else {
             const connection = resolved.connection;
@@ -296,6 +478,7 @@ export class XeroClientManager {
             if (recovered) {
               resolved = recovered;
               client = await this.#createClient(resolved);
+              refreshedOAuthToken = true;
             } else {
               await this.#repository.markProviderAuthorizationStatus(
                 resolved.authorization.authorizationId,
@@ -339,17 +522,41 @@ export class XeroClientManager {
         }
       }
 
-      return action(client, resolved.connection);
+      if (refreshedOAuthToken && resolved.mode === "OAUTH") {
+        this.#assertRefreshedOAuthScopes(resolved, writeAuthorization !== undefined);
+      }
+
+      try {
+        return await action(client, resolved.connection);
+      } catch (error) {
+        throw xeroProviderReadFailure(error);
+      }
     });
   }
 
-  async withAccessToken<T>(principal: AccountingPrincipal, action: AccessTokenAction<T>): Promise<T> {
-    return this.withClient(principal, async (client, connection) => {
+  /**
+   * Executes the bounded raw-HTTP report read without exposing the OAuth token
+   * to Provider callers. The transport is fixed when this manager is composed.
+   */
+  async getTrialBalance(principal: AccountingPrincipal, date?: string): Promise<Record<string, unknown>> {
+    return this.#withFullClient(principal, async (client, connection) => {
       const accessToken = client.readTokenSet().access_token;
       if (!accessToken) {
-        throw new AppError("NOT_CONNECTED", "The Xero connection has no usable access token.", { httpStatus: 409 });
+        throw new AppError("OAUTH_TOKEN_EXPIRED", "The Xero connection has no usable access token.", {
+          httpStatus: 409,
+          details: {
+            failureLayer: "PROVIDER_OAUTH_TOKEN",
+            reasonCodes: ["XERO_ACCESS_TOKEN_MISSING"],
+            recoveryAction: "RECONNECT_XERO",
+            providerMutationPossible: false,
+          },
+        });
       }
-      return action(accessToken, connection);
+      return this.#trialBalanceTransport.getTrialBalance({
+        tenantId: connection.tenantId,
+        accessToken,
+        ...(date ? { date } : {}),
+      });
     });
   }
 
@@ -405,6 +612,32 @@ export class XeroClientManager {
       : resolved.connection.tokenExpiresAt;
   }
 
+  #assertRefreshedOAuthScopes(
+    resolved: OAuthResolvedXeroConnection,
+    providerMutationRequested: boolean,
+  ): void {
+    const missingCapabilities = missingBrokerXeroScopeCapabilities(
+      resolved.authorization.grantedScopes,
+      requestedBrokerScopes(resolved.context),
+    );
+    if (missingCapabilities.length === 0) return;
+    throw new AppError(
+      "SCOPE_MISSING",
+      `The refreshed Xero authorization is missing required capabilities: ${missingCapabilities.map((item) => item.capability).join(", ")}. Re-authorisation is required.`,
+      {
+        httpStatus: 403,
+        retryable: false,
+        details: {
+          failureLayer: "PROVIDER_OAUTH_SCOPE",
+          reasonCodes: missingCapabilities.map((item) => `MISSING_XERO_CAPABILITY_${item.capability}`),
+          recoveryAction: "REAUTHORISE_XERO_SCOPES",
+          providerMutationPossible: false,
+          ...(providerMutationRequested ? { writeOutcome: "DEFINITELY_REJECTED" } : {}),
+        },
+      },
+    );
+  }
+
   async #recoverOAuthRefreshRace(
     failed: OAuthResolvedXeroConnection,
   ): Promise<OAuthResolvedXeroConnection | undefined> {
@@ -434,9 +667,15 @@ export class XeroClientManager {
       tenantId,
       errorClass: error instanceof Error ? error.name : "UnknownError",
     });
-    throw new AppError("NOT_CONNECTED", "The Xero connection must be re-authorised.", {
+    throw new AppError("OAUTH_REFRESH_FAILED", "The Xero connection must be re-authorised.", {
       httpStatus: 409,
       cause: error,
+      details: {
+        failureLayer: "PROVIDER_OAUTH_REFRESH",
+        reasonCodes: ["XERO_TOKEN_REFRESH_FAILED"],
+        recoveryAction: "RECONNECT_XERO",
+        providerMutationPossible: false,
+      },
     });
   }
 }

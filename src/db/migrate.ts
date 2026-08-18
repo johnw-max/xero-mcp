@@ -2,10 +2,16 @@ import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import pg from "pg";
+import { assertRequiredMigrationsPresent } from "./requiredMigrations.js";
 
 const { Pool } = pg;
 
 export async function runMigrations(databaseUrl: string, migrationsDirectory: string): Promise<string[]> {
+  const files = (await readdir(migrationsDirectory))
+    .filter((file) => /^\d+.*\.sql$/.test(file))
+    .sort();
+  assertRequiredMigrationsPresent(files);
+
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const client = await pool.connect();
   const applied: string[] = [];
@@ -17,10 +23,6 @@ export async function runMigrations(databaseUrl: string, migrationsDirectory: st
         applied_at timestamptz NOT NULL DEFAULT now()
       )
     `);
-
-    const files = (await readdir(migrationsDirectory))
-      .filter((file) => /^\d+.*\.sql$/.test(file))
-      .sort();
 
     for (const file of files) {
       const exists = await client.query<{ exists: boolean }>(

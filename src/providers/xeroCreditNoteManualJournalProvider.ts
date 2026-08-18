@@ -16,6 +16,7 @@ import {
 import { mapItemSummary, type ItemSummary } from "./xeroExtendedReadMapper.js";
 import { AppError } from "../errors.js";
 import { classifyXeroWriteException } from "./xeroWriteOutcome.js";
+import type { LedgerProviderWritePermit } from "../control-kernel/ledgerProviderWritePermit.js";
 
 export interface XeroCreditNoteManualJournalCreateReceipt {
   objectId: string;
@@ -33,6 +34,7 @@ export interface CreditNoteManualJournalWriteProvider {
     principal: AccountingPrincipal,
     payload: CanonicalCreditNoteDraftPayload,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<XeroCreditNoteManualJournalCreateReceipt>;
   readAndVerifyCreditNoteDraft(
     principal: AccountingPrincipal,
@@ -43,6 +45,7 @@ export interface CreditNoteManualJournalWriteProvider {
     principal: AccountingPrincipal,
     payload: CanonicalManualJournalDraftPayload,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<XeroCreditNoteManualJournalCreateReceipt>;
   readAndVerifyManualJournalDraft(
     principal: AccountingPrincipal,
@@ -108,12 +111,21 @@ export class XeroCreditNoteManualJournalProvider implements CreditNoteManualJour
     principal: AccountingPrincipal,
     payload: CanonicalCreditNoteDraftPayload,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<XeroCreditNoteManualJournalCreateReceipt> {
-    return this.manager.withClient(principal, async (client, connection) => {
+    const xeroPayload = toXeroCreditNoteCreatePayload(payload);
+    return this.manager.withWriteClient(principal, {
+      permit: providerWritePermit,
+      adapterOperation: "XeroCreditNoteManualJournalProvider.createCreditNoteDraft",
+      actionId: "credit_note.create_draft",
+      mutationRequestId: idempotencyKey,
+      providerIdempotencyKey: idempotencyKey,
+      canonicalPayload: payload,
+    }, async (client, connection) => {
       try {
         const created = await client.accountingApi.createCreditNotes(
           connection.tenantId,
-          toXeroCreditNoteCreatePayload(payload),
+          xeroPayload,
           true,
           4,
           idempotencyKey,
@@ -165,12 +177,21 @@ export class XeroCreditNoteManualJournalProvider implements CreditNoteManualJour
     principal: AccountingPrincipal,
     payload: CanonicalManualJournalDraftPayload,
     idempotencyKey: string,
+    providerWritePermit?: LedgerProviderWritePermit,
   ): Promise<XeroCreditNoteManualJournalCreateReceipt> {
-    return this.manager.withClient(principal, async (client, connection) => {
+    const xeroPayload = toXeroManualJournalCreatePayload(payload);
+    return this.manager.withWriteClient(principal, {
+      permit: providerWritePermit,
+      adapterOperation: "XeroCreditNoteManualJournalProvider.createManualJournalDraft",
+      actionId: "manual_journal.create_draft",
+      mutationRequestId: idempotencyKey,
+      providerIdempotencyKey: idempotencyKey,
+      canonicalPayload: payload,
+    }, async (client, connection) => {
       try {
         const created = await client.accountingApi.createManualJournals(
           connection.tenantId,
-          toXeroManualJournalCreatePayload(payload),
+          xeroPayload,
           true,
           idempotencyKey,
         );

@@ -22,13 +22,50 @@ import { XeroCreditNoteManualJournalService } from "./services/xeroCreditNoteMan
 import { XeroContactItemMutationService } from "./services/xeroContactItemMutationService.js";
 import { XeroMutationService } from "./services/xeroMutationService.js";
 import { OrganisationSwitchService } from "./services/organisationSwitchService.js";
+import { LedgerTargetSessionService } from "./services/ledgerTargetSessionService.js";
+import { XeroRuntimeCapabilityService } from "./policy/xeroRuntimeCapabilityService.js";
+import { XeroAccountingCaseService } from "./services/xeroAccountingCaseService.js";
+import { RepositoryLedgerAuthoritySnapshotResolver } from "./domain/ledgerAuthority.js";
+import {
+  assertXeroExternalGovernanceCoversDelegations,
+  loadXeroExternalGovernanceAuthorityFromFixedFiles,
+  xeroStandingDelegationsWithExternalGovernance,
+} from "./policy/xeroExternalGovernanceAuthority.js";
 
 const XERO_CONTACT_NAMESPACE = "zcacct";
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger(config);
+  const governanceAuthority = config.xeroGovernanceExpectedHashes
+    ? loadXeroExternalGovernanceAuthorityFromFixedFiles(config.xeroGovernanceExpectedHashes)
+    : undefined;
+  if (governanceAuthority) {
+    assertXeroExternalGovernanceCoversDelegations(
+      governanceAuthority,
+      config.xeroStandingDelegations ?? [],
+    );
+  }
+  const durableStandingDelegations = governanceAuthority
+    ? xeroStandingDelegationsWithExternalGovernance(
+        governanceAuthority,
+        config.xeroStandingDelegations ?? [],
+      )
+    : config.xeroStandingDelegations ?? [];
   const repository = new PostgresAccountingRepository(config.databaseUrl);
+  const authorityPublication = await repository.publishLedgerAuthoritySnapshot({
+    providerId: "xero",
+    revision: config.xeroAuthorityRevision,
+    writeKillSwitchEnabled: config.xeroWriteEnabled,
+    standingDelegations: durableStandingDelegations,
+    publishedAt: new Date(),
+  });
+  logger.info("Ledger authority snapshot published.", {
+    providerId: authorityPublication.snapshot.providerId,
+    revision: authorityPublication.snapshot.revision,
+    snapshotHash: authorityPublication.snapshot.snapshotHash,
+    mode: authorityPublication.mode,
+  });
   const cipher = new Aes256GcmTokenCipher(config.tokenEncryptionKey);
   const manager = new XeroClientManager({
     repository,
@@ -37,9 +74,12 @@ async function main(): Promise<void> {
     logger,
     legacyWriteEnabled: config.xeroWriteEnabled,
   });
-  const provider = new XeroAccountingProvider(repository, manager, undefined, config.xeroWriteEnabled);
+  const provider = new XeroAccountingProvider(repository, manager, config.xeroWriteEnabled);
+  const runtimeCapability = new XeroRuntimeCapabilityService(provider, config);
   const mutationFoundation = new XeroMutationService(repository, {
     confirmationSecret: config.xeroMutationConfirmationKey,
+    authoritySnapshotResolver: new RepositoryLedgerAuthoritySnapshotResolver(repository),
+    providerCapabilityEvaluator: runtimeCapability,
   });
   const controlledMutations = new XeroControlledMutationService(
     provider,
@@ -71,6 +111,19 @@ async function main(): Promise<void> {
     contactItemMutations,
     mutationFoundation,
   });
+  const accountingCaseService = new XeroAccountingCaseService(
+    repository,
+    provider,
+    accountingService,
+    mutationFoundation,
+    {
+      continuationSecret: config.xeroMutationConfirmationKey,
+      testTenantIds: config.xeroAccountingCaseTestTenantIds ?? [],
+      tenantCoaProfiles: config.xeroTenantCoaProfiles ?? [],
+      businessAuthorityProfiles: governanceAuthority?.authorityProfiles ??
+        config.xeroAccountingCaseBusinessAuthorities ?? [],
+    },
+  );
   const reviewService = new ReviewService(repository);
   const oauthService = new XeroOAuthService({ repository, manager, cipher, config });
   const brokerConfig = config.mcpOAuthBroker;
@@ -80,6 +133,15 @@ async function main(): Promise<void> {
         publicBaseUrl: config.publicBaseUrl,
         // Domain-separated HMAC use; no confirmation token or raw ticket is persisted.
         secret: config.xeroMutationConfirmationKey,
+      })
+    : undefined;
+  const ledgerTargetSessionService = brokerConfig?.enabled
+    ? new LedgerTargetSessionService({
+        repository,
+        // Domain-separated HMAC use; raw target session references are never persisted.
+        secret: config.xeroMutationConfirmationKey,
+        required: config.xeroTargetSessionRequired ?? false,
+        ttlMs: (config.xeroTargetSessionTtlSeconds ?? 1_800) * 1_000,
       })
     : undefined;
   const mcpOAuthProvider = brokerConfig?.enabled
@@ -102,6 +164,8 @@ async function main(): Promise<void> {
     logger,
     ...(mcpOAuthProvider ? { mcpOAuthProvider } : {}),
     ...(organisationSwitchService ? { organisationSwitchService } : {}),
+    ...(ledgerTargetSessionService ? { ledgerTargetSessionService } : {}),
+    accountingCaseService,
   });
 
   const server = await new Promise<Server>((resolve, reject) => {

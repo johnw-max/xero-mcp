@@ -12,7 +12,9 @@ type DraftFingerprintInput = Pick<
   | "invoice_date"
   | "due_date"
   | "currency"
+  | "currency_rate"
   | "reference"
+  | "authoritative_provider_field"
   | "line_amount_type"
   | "lines"
 >;
@@ -26,12 +28,15 @@ export function canonicalDraftExtractionFingerprint(
     invoiceDate: input.invoice_date,
     dueDate: input.due_date,
     currency: input.currency,
+    ...(input.currency_rate !== undefined ? { currencyRate: fixedFour(input.currency_rate) } : {}),
     reference: input.reference,
+    authoritativeProviderField: input.authoritative_provider_field,
     lineAmountType: input.line_amount_type,
     lines: input.lines.map((line) => ({
       description: line.description,
       quantity: fixedFour(line.quantity),
       unitAmount: fixedFour(line.unit_amount),
+      ...(line.account_id ? { accountId: line.account_id } : {}),
       accountCode: line.account_code,
       taxType: line.tax_type,
     })),
@@ -86,7 +91,9 @@ export function canonicalInvoiceForApproval(invoice: InvoiceSnapshot): Record<st
     invoiceDate: invoice.invoiceDate,
     dueDate: invoice.dueDate,
     currency: invoice.currency,
+    currencyRate: invoice.currencyRate,
     reference: invoice.reference,
+    invoiceNumber: invoice.invoiceNumber,
     lineAmountType: invoice.lineAmountType,
     lines: invoice.lines.map((line) => ({
       description: line.description,
@@ -94,6 +101,7 @@ export function canonicalInvoiceForApproval(invoice: InvoiceSnapshot): Record<st
       unitAmount: line.unitAmount,
       lineAmount: line.lineAmount,
       taxAmount: line.taxAmount,
+      ...(line.accountId ? { accountId: line.accountId } : {}),
       accountCode: line.accountCode,
       taxType: line.taxType,
     })),

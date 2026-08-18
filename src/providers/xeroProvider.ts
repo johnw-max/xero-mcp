@@ -7,7 +7,6 @@ import {
   LineAmountTypes,
   Payment,
   TaxRate,
-  type XeroClient,
 } from "xero-node";
 import type {
   CreateDraftSalesInvoiceInput,
@@ -30,11 +29,9 @@ import type {
 } from "../domain/extendedReadSchemas.js";
 import type { AccountingRepository } from "../db/repository.js";
 import { AppError } from "../errors.js";
-import { XeroClientManager } from "./xeroClientManager.js";
-import {
-  NodeXeroTrialBalanceTransport,
-  type XeroTrialBalanceTransport,
-} from "./xeroTrialBalanceTransport.js";
+import type { LedgerProviderWritePermit } from "../control-kernel/ledgerProviderWritePermit.js";
+import { xeroProviderWritePermitMode } from "../security/xeroProviderWritePermit.js";
+import { XeroClientManager, type XeroReadClient } from "./xeroClientManager.js";
 import type {
   AccountingPrincipal,
   AccountingProvider,
@@ -45,6 +42,7 @@ import type {
   ContactListResult,
   ContactSummary,
   CreditNoteListResult,
+  CreditNoteSnapshot,
   CreditNoteSummary,
   InvoiceListResult,
   InvoiceSnapshot,
@@ -100,6 +98,24 @@ type XeroContact = InstanceType<typeof Contact>;
 
 const MAX_AGENT_INVOICE_LINES = 100;
 const MAX_ASSOCIATED_INVOICE_IDS = 25;
+
+function assertDraftWriteEvidenceRecorder(
+  recordWriteEvidence: RecordProviderDraftWriteEvidence | undefined,
+): asserts recordWriteEvidence is RecordProviderDraftWriteEvidence {
+  if (recordWriteEvidence) return;
+  throw new AppError(
+    "CONFIGURATION_ERROR",
+    "A durable Xero draft write-evidence recorder is required before any provider mutation.",
+    {
+      httpStatus: 500,
+      retryable: false,
+      details: {
+        providerMutationPossible: false,
+        reasonCodes: ["WRITE_EVIDENCE_CALLBACK_REQUIRED"],
+      },
+    },
+  );
+}
 
 const INVOICE_ORDER: Record<InvoiceOrder, string> = {
   DATE_ASC: "Date ASC",
@@ -260,10 +276,20 @@ function providerRequestId(response: { headers?: unknown }): string | undefined 
   return typeof value === "string" ? value : undefined;
 }
 
+function persistedInvoiceCanonicalPayload(
+  input: CreateDraftSupplierBillInput | CreateDraftSalesInvoiceInput,
+): Record<string, unknown> {
+  const { user_confirmation: _confirmation, ...canonicalPayload } = input;
+  return canonicalPayload as unknown as Record<string, unknown>;
+}
+
 function mapContact(contact: XeroContact): ContactSummary | undefined {
   if (!contact.contactID) return undefined;
   const summary: ContactSummary = { contactId: contact.contactID };
   if (contact.name) summary.name = contact.name;
+  if (contact.emailAddress) summary.email = contact.emailAddress.trim().toLowerCase();
+  if (contact.companyNumber) summary.companyNumber = contact.companyNumber;
+  if (contact.accountNumber) summary.accountNumber = contact.accountNumber;
   if (contact.contactNumber) summary.contactNumber = contact.contactNumber;
   if (contact.contactStatus) summary.status = String(contact.contactStatus);
   if (contact.isSupplier !== undefined) summary.isSupplier = contact.isSupplier;
@@ -304,6 +330,8 @@ function mapInvoiceSummary(invoice: XeroInvoice): InvoiceSummary | undefined {
   if (dueDate) summary.dueDate = dueDate;
   if (fullyPaidOnDate) summary.fullyPaidOnDate = fullyPaidOnDate;
   if (invoice.currencyCode) summary.currency = String(invoice.currencyCode);
+  const currencyRate = decimal(invoice.currencyRate);
+  if (currencyRate !== undefined) summary.currencyRate = currencyRate;
   if (invoice.reference) summary.reference = invoice.reference;
   const subTotal = decimal(invoice.subTotal);
   const totalTax = decimal(invoice.totalTax);
@@ -369,6 +397,43 @@ function mapCreditNoteSummary(creditNote: XeroCreditNote): CreditNoteSummary | u
   if (creditNote.updatedDateUTC instanceof Date) summary.updatedAt = creditNote.updatedDateUTC.toISOString();
   else if (creditNote.updatedDateUTCString) summary.updatedAt = creditNote.updatedDateUTCString;
   return summary;
+}
+
+function mapCreditNoteSnapshot(
+  tenantId: string,
+  creditNote: XeroCreditNote,
+  maxLines?: number,
+): CreditNoteSnapshot {
+  const summary = mapCreditNoteSummary(creditNote);
+  if (!summary) {
+    if (!creditNote.creditNoteID || !accountingCreditNoteType(creditNote.type)) {
+      throw new AppError("NOT_FOUND", "The requested Xero credit note was not found.", { httpStatus: 404 });
+    }
+    throw new AppError("READBACK_MISMATCH", "The Xero credit-note readback did not include its contact identifier.", {
+      httpStatus: 502,
+    });
+  }
+  const allLines = creditNote.lineItems ?? [];
+  const selectedLines = maxLines === undefined ? allLines : allLines.slice(0, maxLines);
+  const snapshot: CreditNoteSnapshot = {
+    ...summary,
+    tenantId,
+    lines: selectedLines.map((line) => ({
+      ...(line.lineItemID ? { lineItemId: line.lineItemID } : {}),
+      description: line.description ?? "",
+      quantity: decimal(line.quantity) ?? "0.0000",
+      unitAmount: decimal(line.unitAmount) ?? "0.0000",
+      ...(decimal(line.lineAmount) ? { lineAmount: decimal(line.lineAmount) as string } : {}),
+      ...(decimal(line.taxAmount) ? { taxAmount: decimal(line.taxAmount) as string } : {}),
+      ...(line.accountID ? { accountId: line.accountID } : {}),
+      accountCode: line.accountCode ?? "",
+      taxType: line.taxType ?? "",
+    })),
+    lineItemCount: allLines.length,
+    linesTruncated: selectedLines.length < allLines.length,
+  };
+  if (creditNote.lineAmountTypes) snapshot.lineAmountType = String(creditNote.lineAmountTypes);
+  return snapshot;
 }
 
 function mapPaymentSummary(payment: XeroPayment): PaymentSummary | undefined {
@@ -485,6 +550,7 @@ function mapInvoiceSnapshot(
       unitAmount: decimal(line.unitAmount) ?? "0.0000",
       ...(decimal(line.lineAmount) ? { lineAmount: decimal(line.lineAmount) as string } : {}),
       ...(decimal(line.taxAmount) ? { taxAmount: decimal(line.taxAmount) as string } : {}),
+      ...(line.accountID ? { accountId: line.accountID } : {}),
       accountCode: line.accountCode ?? "",
       taxType: line.taxType ?? "",
     })),
@@ -498,18 +564,15 @@ function mapInvoiceSnapshot(
 export class XeroAccountingProvider implements AccountingProvider {
   readonly #repository: AccountingRepository;
   readonly #manager: XeroClientManager;
-  readonly #trialBalanceTransport: XeroTrialBalanceTransport;
   readonly #xeroWriteEnabled: boolean;
 
   constructor(
     repository: AccountingRepository,
     manager: XeroClientManager,
-    trialBalanceTransport: XeroTrialBalanceTransport = new NodeXeroTrialBalanceTransport(),
     xeroWriteEnabled = true,
   ) {
     this.#repository = repository;
     this.#manager = manager;
-    this.#trialBalanceTransport = trialBalanceTransport;
     this.#xeroWriteEnabled = xeroWriteEnabled;
   }
 
@@ -586,6 +649,21 @@ export class XeroAccountingProvider implements AccountingProvider {
       if (organisation.baseCurrency) summary.baseCurrency = String(organisation.baseCurrency);
       if (organisation.organisationType) summary.organisationType = String(organisation.organisationType);
       if (organisation.version) summary.version = String(organisation.version);
+      if (typeof organisation.paysTax === "boolean") summary.paysTax = organisation.paysTax;
+      if (typeof organisation.financialYearEndDay === "number" && Number.isInteger(organisation.financialYearEndDay)) {
+        summary.financialYearEndDay = organisation.financialYearEndDay;
+      }
+      if (typeof organisation.financialYearEndMonth === "number" && Number.isInteger(organisation.financialYearEndMonth)) {
+        summary.financialYearEndMonth = organisation.financialYearEndMonth;
+      }
+      if (organisation.salesTaxBasis) summary.salesTaxBasis = String(organisation.salesTaxBasis);
+      if (organisation.salesTaxPeriod) summary.salesTaxPeriod = String(organisation.salesTaxPeriod);
+      if (organisation.defaultSalesTax) summary.defaultSalesTax = organisation.defaultSalesTax;
+      if (organisation.defaultPurchasesTax) summary.defaultPurchasesTax = organisation.defaultPurchasesTax;
+      if (organisation.periodLockDate) summary.periodLockDate = organisation.periodLockDate;
+      if (organisation.endOfYearLockDate) summary.endOfYearLockDate = organisation.endOfYearLockDate;
+      if (typeof organisation.isDemoCompany === "boolean") summary.isDemoCompany = organisation.isDemoCompany;
+      if (organisation.organisationStatus) summary.organisationStatus = organisation.organisationStatus;
       return summary;
     });
   }
@@ -619,6 +697,7 @@ export class XeroAccountingProvider implements AccountingProvider {
         ...(tax.taxType ? { taxType: tax.taxType } : {}),
         ...(tax.status ? { status: String(tax.status) } : {}),
         ...(decimal(tax.displayTaxRate) ? { displayTaxRate: decimal(tax.displayTaxRate) as string } : {}),
+        ...(decimal(tax.effectiveRate) ? { effectiveRate: decimal(tax.effectiveRate) as string } : {}),
         ...(tax.canApplyToExpenses !== undefined ? { canApplyToExpenses: tax.canApplyToExpenses } : {}),
         ...(tax.canApplyToAssets !== undefined ? { canApplyToAssets: tax.canApplyToAssets } : {}),
         ...(tax.canApplyToLiabilities !== undefined ? { canApplyToLiabilities: tax.canApplyToLiabilities } : {}),
@@ -640,7 +719,7 @@ export class XeroAccountingProvider implements AccountingProvider {
         "Name ASC",
         undefined,
         input.page,
-        input.status === "ARCHIVED",
+        input.status !== "ACTIVE",
         false,
         undefined,
         input.limit,
@@ -783,6 +862,7 @@ export class XeroAccountingProvider implements AccountingProvider {
           ...(tax.taxType ? { taxType: tax.taxType } : {}),
           ...(tax.status ? { status: String(tax.status) } : {}),
           ...(decimal(tax.displayTaxRate) ? { displayTaxRate: decimal(tax.displayTaxRate) as string } : {}),
+          ...(decimal(tax.effectiveRate) ? { effectiveRate: decimal(tax.effectiveRate) as string } : {}),
           ...(tax.canApplyToExpenses !== undefined ? { canApplyToExpenses: tax.canApplyToExpenses } : {}),
           ...(tax.canApplyToAssets !== undefined ? { canApplyToAssets: tax.canApplyToAssets } : {}),
           ...(tax.canApplyToLiabilities !== undefined ? { canApplyToLiabilities: tax.canApplyToLiabilities } : {}),
@@ -1248,6 +1328,23 @@ export class XeroAccountingProvider implements AccountingProvider {
     );
   }
 
+  async getCreditNote(
+    principal: AccountingPrincipal,
+    creditNoteId: string,
+    expectedType?: CreditNoteType,
+  ): Promise<CreditNoteSnapshot> {
+    return this.#manager.withClient(principal, async (client, connection) => {
+      const response = await client.accountingApi.getCreditNote(connection.tenantId, creditNoteId, 4);
+      const creditNote = response.body.creditNotes?.find((candidate) =>
+        candidate.creditNoteID?.toLowerCase() === creditNoteId.toLowerCase());
+      const type = accountingCreditNoteType(creditNote?.type);
+      if (!creditNote || !type || (expectedType !== undefined && type !== expectedType)) {
+        throw new AppError("NOT_FOUND", "The requested Xero credit note was not found.", { httpStatus: 404 });
+      }
+      return mapCreditNoteSnapshot(connection.tenantId, creditNote, MAX_AGENT_INVOICE_LINES);
+    });
+  }
+
   async getSupplierBill(principal: AccountingPrincipal, invoiceId: string): Promise<SupplierBillSnapshot> {
     return this.#manager.withClient(principal, (client, connection) =>
       this.#getSupplierBill(client, connection.tenantId, invoiceId),
@@ -1259,36 +1356,56 @@ export class XeroAccountingProvider implements AccountingProvider {
     input: CreateDraftSupplierBillInput,
     idempotencyKey: string,
     recordWriteEvidence?: RecordProviderDraftWriteEvidence,
+    providerWritePermit?: LedgerProviderWritePermit,
+    mutationRequestId?: string,
   ): Promise<ProviderWriteResult> {
-    return this.#manager.withClient(principal, async (client, connection) => {
-      const currency = CurrencyCode[input.currency as keyof typeof CurrencyCode];
-      if (!currency) {
-        throw new AppError("VALIDATION_FAILED", "The requested currency is not supported by the Xero SDK.", {
-          httpStatus: 422,
-        });
-      }
-      const lineAmountTypes = LineAmountTypes[input.line_amount_type];
-      const payload = {
-        invoices: [
-          {
-            type: Invoice.TypeEnum.ACCPAY,
-            status: Invoice.StatusEnum.DRAFT,
-            contact: { contactID: input.contact_id },
-            date: input.invoice_date,
-            dueDate: input.due_date,
-            currencyCode: currency,
-            reference: input.reference,
-            lineAmountTypes,
-            lineItems: input.lines.map((line) => ({
-              description: line.description,
-              quantity: line.quantity,
-              unitAmount: line.unit_amount,
-              accountCode: line.account_code,
-              taxType: line.tax_type,
-            })),
-          },
-        ],
-      };
+    assertDraftWriteEvidenceRecorder(recordWriteEvidence);
+    if (input.authoritative_provider_field !== "INVOICE_NUMBER") {
+      throw new AppError("VALIDATION_FAILED", "Supplier bills must use Xero InvoiceNumber as their authoritative coordinate.", {
+        httpStatus: 422,
+        details: { reasonCodes: ["AUTHORITATIVE_PROVIDER_FIELD_ROUTE_MISMATCH"] },
+      });
+    }
+    const currency = CurrencyCode[input.currency as keyof typeof CurrencyCode];
+    if (!currency) {
+      throw new AppError("VALIDATION_FAILED", "The requested currency is not supported by the Xero SDK.", {
+        httpStatus: 422,
+      });
+    }
+    const lineAmountTypes = LineAmountTypes[input.line_amount_type];
+    const providerIdempotencyKey = mutationRequestId ?? idempotencyKey;
+    const payload = {
+      invoices: [
+        {
+          type: Invoice.TypeEnum.ACCPAY,
+          status: Invoice.StatusEnum.DRAFT,
+          contact: { contactID: input.contact_id },
+          date: input.invoice_date,
+          dueDate: input.due_date,
+          currencyCode: currency,
+          ...(input.currency_rate !== undefined ? { currencyRate: input.currency_rate } : {}),
+          invoiceNumber: input.reference,
+          lineAmountTypes,
+          lineItems: input.lines.map((line) => ({
+            description: line.description,
+            quantity: line.quantity,
+            unitAmount: line.unit_amount,
+            ...(line.account_id ? { accountID: line.account_id } : {}),
+            accountCode: line.account_code,
+            taxType: line.tax_type,
+          })),
+        },
+      ],
+    };
+
+    return this.#manager.withWriteClient(principal, {
+      permit: providerWritePermit,
+      adapterOperation: "XeroAccountingProvider.createDraftSupplierBill",
+      actionId: "supplier_bill.create_draft",
+      mutationRequestId: providerIdempotencyKey,
+      providerIdempotencyKey,
+      canonicalPayload: persistedInvoiceCanonicalPayload(input),
+    }, async (client, connection) => {
 
       let createdInvoiceId: string | undefined;
       let createReceipt: Record<string, unknown> | undefined;
@@ -1298,7 +1415,7 @@ export class XeroAccountingProvider implements AccountingProvider {
           payload,
           true,
           4,
-          idempotencyKey,
+          providerIdempotencyKey,
         );
         const invoice = created.body?.invoices?.[0];
         if (invoice?.hasErrors || (invoice?.validationErrors?.length ?? 0) > 0) {
@@ -1315,7 +1432,9 @@ export class XeroAccountingProvider implements AccountingProvider {
         }
         createdInvoiceId = invoice.invoiceID;
         createReceipt = {
-          operation: "CREATE_DRAFT",
+          operation: xeroProviderWritePermitMode(providerWritePermit) === "NATIVE_IDEMPOTENCY_RECOVERY"
+            ? "NATIVE_IDEMPOTENCY_RECOVERY"
+            : "CREATE_DRAFT",
           invoiceId: invoice.invoiceID,
           ...(providerRequestId(created.response) ? { providerRequestId: providerRequestId(created.response) } : {}),
         };
@@ -1375,34 +1494,50 @@ export class XeroAccountingProvider implements AccountingProvider {
     input: CreateDraftSalesInvoiceInput,
     idempotencyKey: string,
     recordWriteEvidence?: RecordProviderDraftWriteEvidence,
+    providerWritePermit?: LedgerProviderWritePermit,
+    mutationRequestId?: string,
   ): Promise<ProviderSalesInvoiceWriteResult> {
-    return this.#manager.withClient(principal, async (client, connection) => {
-      const currency = CurrencyCode[input.currency as keyof typeof CurrencyCode];
-      if (!currency) {
-        throw new AppError("VALIDATION_FAILED", "The requested currency is not supported by the Xero SDK.", {
-          httpStatus: 422,
-        });
-      }
-      const lineAmountTypes = LineAmountTypes[input.line_amount_type];
-      const payload = {
-        invoices: [{
-          type: Invoice.TypeEnum.ACCREC,
-          status: Invoice.StatusEnum.DRAFT,
-          contact: { contactID: input.contact_id },
-          date: input.invoice_date,
-          dueDate: input.due_date,
-          currencyCode: currency,
-          reference: input.reference,
-          lineAmountTypes,
-          lineItems: input.lines.map((line) => ({
-            description: line.description,
-            quantity: line.quantity,
-            unitAmount: line.unit_amount,
-            accountCode: line.account_code,
-            taxType: line.tax_type,
-          })),
-        }],
-      };
+    assertDraftWriteEvidenceRecorder(recordWriteEvidence);
+    const currency = CurrencyCode[input.currency as keyof typeof CurrencyCode];
+    if (!currency) {
+      throw new AppError("VALIDATION_FAILED", "The requested currency is not supported by the Xero SDK.", {
+        httpStatus: 422,
+      });
+    }
+    const lineAmountTypes = LineAmountTypes[input.line_amount_type];
+    const providerIdempotencyKey = mutationRequestId ?? idempotencyKey;
+    const payload = {
+      invoices: [{
+        type: Invoice.TypeEnum.ACCREC,
+        status: Invoice.StatusEnum.DRAFT,
+        contact: { contactID: input.contact_id },
+        date: input.invoice_date,
+        dueDate: input.due_date,
+        currencyCode: currency,
+        ...(input.currency_rate !== undefined ? { currencyRate: input.currency_rate } : {}),
+        ...(input.authoritative_provider_field === "INVOICE_NUMBER"
+          ? { invoiceNumber: input.reference }
+          : { reference: input.reference }),
+        lineAmountTypes,
+        lineItems: input.lines.map((line) => ({
+          description: line.description,
+          quantity: line.quantity,
+          unitAmount: line.unit_amount,
+          ...(line.account_id ? { accountID: line.account_id } : {}),
+          accountCode: line.account_code,
+          taxType: line.tax_type,
+        })),
+      }],
+    };
+
+    return this.#manager.withWriteClient(principal, {
+      permit: providerWritePermit,
+      adapterOperation: "XeroAccountingProvider.createDraftSalesInvoice",
+      actionId: "customer_invoice.create_draft",
+      mutationRequestId: providerIdempotencyKey,
+      providerIdempotencyKey,
+      canonicalPayload: persistedInvoiceCanonicalPayload(input),
+    }, async (client, connection) => {
 
       let createdInvoiceId: string | undefined;
       let createReceipt: Record<string, unknown> | undefined;
@@ -1412,7 +1547,7 @@ export class XeroAccountingProvider implements AccountingProvider {
           payload,
           true,
           4,
-          idempotencyKey,
+          providerIdempotencyKey,
         );
         const invoice = created.body?.invoices?.[0];
         if (invoice?.hasErrors || (invoice?.validationErrors?.length ?? 0) > 0) {
@@ -1429,7 +1564,9 @@ export class XeroAccountingProvider implements AccountingProvider {
         }
         createdInvoiceId = invoice.invoiceID;
         createReceipt = {
-          operation: "CREATE_ACCREC_DRAFT",
+          operation: xeroProviderWritePermitMode(providerWritePermit) === "NATIVE_IDEMPOTENCY_RECOVERY"
+            ? "NATIVE_IDEMPOTENCY_RECOVERY"
+            : "CREATE_ACCREC_DRAFT",
           invoiceId: invoice.invoiceID,
           ...(providerRequestId(created.response) ? { providerRequestId: providerRequestId(created.response) } : {}),
         };
@@ -1481,71 +1618,12 @@ export class XeroAccountingProvider implements AccountingProvider {
     });
   }
 
-  async authoriseSupplierBill(
-    principal: AccountingPrincipal,
-    invoiceId: string,
-    idempotencyKey: string,
-  ): Promise<ProviderWriteResult> {
-    return this.#manager.withClient(principal, async (client, connection) => {
-      let updateReceipt: Record<string, unknown> | undefined;
-      try {
-        const updated = await client.accountingApi.updateInvoice(
-          connection.tenantId,
-          invoiceId,
-          { invoices: [{ status: Invoice.StatusEnum.AUTHORISED }] },
-          4,
-          idempotencyKey,
-        );
-        updateReceipt = {
-          operation: "AUTHORISE",
-          invoiceId,
-          ...(providerRequestId(updated.response) ? { providerRequestId: providerRequestId(updated.response) } : {}),
-        };
-      } catch (error) {
-        if (error instanceof AppError) throw error;
-        if (classifyXeroWriteException(error) === "UNKNOWN") {
-          throw new AppError("WRITE_RESULT_UNKNOWN", "The Xero authorisation result is unknown; only readback is allowed.", {
-            httpStatus: 502,
-            retryable: false,
-            cause: error,
-          });
-        }
-        throw new AppError("PROVIDER_ERROR", "Xero rejected the supplier bill authorisation.", {
-          httpStatus: 422,
-          cause: error,
-          details: { writeOutcome: "DEFINITELY_REJECTED" },
-        });
-      }
-
-      try {
-        const readback = await this.#getSupplierBill(client, connection.tenantId, invoiceId);
-        return {
-          bill: readback,
-          receipt: { ...updateReceipt, status: readback.status },
-        };
-      } catch (error) {
-        throw new AppError("WRITE_RESULT_UNKNOWN", "Xero accepted the update but its exact readback was not verified.", {
-          httpStatus: 502,
-          retryable: false,
-          details: { invoiceId },
-          cause: error,
-        });
-      }
-    });
-  }
-
   async getTrialBalance(principal: AccountingPrincipal, date?: string): Promise<Record<string, unknown>> {
-    return this.#manager.withAccessToken(principal, async (accessToken, connection) => {
-      return this.#trialBalanceTransport.getTrialBalance({
-        tenantId: connection.tenantId,
-        accessToken,
-        ...(date ? { date } : {}),
-      });
-    });
+    return this.#manager.getTrialBalance(principal, date);
   }
 
   async #getInvoice(
-    client: XeroClient,
+    client: XeroReadClient,
     tenantId: string,
     invoiceId: string,
     expectedType?: InvoiceType,
@@ -1575,7 +1653,7 @@ export class XeroAccountingProvider implements AccountingProvider {
     return mapInvoiceSnapshot(tenantId, invoice, maxLines);
   }
 
-  async #getSupplierBill(client: XeroClient, tenantId: string, invoiceId: string): Promise<SupplierBillSnapshot> {
+  async #getSupplierBill(client: XeroReadClient, tenantId: string, invoiceId: string): Promise<SupplierBillSnapshot> {
     const invoice = await this.#getInvoice(client, tenantId, invoiceId, "ACCPAY");
     return invoice as SupplierBillSnapshot;
   }

@@ -15,7 +15,6 @@ export const XERO_EFFECTIVE_DENY_REASONS = [
   "MISSING_XERO_OAUTH_SCOPE",
   "WRITE_GATE_CLOSED",
   "WRITE_TENANT_NOT_ALLOWED",
-  "CONFIRMATION_NOT_VERIFIED",
 ] as const;
 
 export type XeroEffectiveDenyReason = (typeof XERO_EFFECTIVE_DENY_REASONS)[number];
@@ -32,7 +31,6 @@ export interface XeroEffectiveCapabilityContext {
   readonly grantedXeroOAuthScopes: readonly string[];
   readonly writeGateEnabled: boolean;
   readonly allowedWriteTenantId?: string;
-  readonly explicitConfirmationVerified: boolean;
 }
 
 export interface XeroEffectiveCapabilityDecision {
@@ -145,7 +143,7 @@ export function evaluateEffectiveXeroCapability(
   // Determine the requested action's nature independently of whether policy
   // currently releases it; an unreleased draft action must not be evaluated as
   // a read merely because policyAllowsMutation is false.
-  const mutation = policy.riskClass === "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE";
+  const mutation = policy.riskClass === "AUTONOMOUS_CONTROLLED_WRITE";
 
   if (!policy.knownAction) denyReasons.push("UNKNOWN_ACTION");
   if (!policy.policyAllowsExecution) denyReasons.push("POLICY_NOT_AVAILABLE");
@@ -192,9 +190,6 @@ export function evaluateEffectiveXeroCapability(
       context.allowedWriteTenantId !== context.connectionTenantId
     ) {
       denyReasons.push("WRITE_TENANT_NOT_ALLOWED");
-    }
-    if (!context.explicitConfirmationVerified) {
-      denyReasons.push("CONFIRMATION_NOT_VERIFIED");
     }
   }
 
