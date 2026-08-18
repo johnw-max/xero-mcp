@@ -1,6 +1,6 @@
 # Xero Accounting MCP Demo — Hetzner 部署与安全回滚
 
-> **当前 VPS 不使用本文件中的容器 Nginx 拓扑。** 现有宿主机 Nginx 已占用 80/443，stock-mcp 已使用 `127.0.0.1:18001`。0.3.1 发布必须遵循 [HETZNER-HOST-NGINX-RUNBOOK.md](./HETZNER-HOST-NGINX-RUNBOOK.md)：保留现有 blue `127.0.0.1:18002`，用 `compose.host-nginx.green.vps.yaml` 把候选 Xero 单独绑定到 `127.0.0.1:18004`，验收后再原子切换 upstream。本文件只保留为全新独立 VPS 的备选方案，不能与当前模式同时启动。
+> **当前 VPS 不使用本文件中的容器 Nginx 拓扑。** 现有宿主机 Nginx 已占用 80/443，stock-mcp 已使用 `127.0.0.1:18001`。候选发布必须遵循 [HETZNER-HOST-NGINX-RUNBOOK.md](./HETZNER-HOST-NGINX-RUNBOOK.md)：保留现有 blue `127.0.0.1:18002`，用 `compose.host-nginx.green.vps.yaml` 把候选 Xero 单独绑定到 `127.0.0.1:18004`，验收后再原子切换 upstream。本文件只保留为全新独立 VPS 的备选方案，不能与当前模式同时启动。
 
 ## 1. 状态与边界
 
@@ -74,6 +74,8 @@ sudo install -d -o 70 -g 70 -m 0700 /srv/xero-accounting-mcp/postgres
 sudo install -d -o root -g 101 -m 0750 /srv/xero-accounting-mcp/tls
 sudo install -d -o root -g 101 -m 0755 /srv/xero-accounting-mcp/certbot
 sudo install -d -o root -g root -m 0700 /srv/xero-accounting-mcp/backups
+sudo install -d -o root -g root -m 0750 /srv/xero-accounting-mcp/release
+sudo install -d -o root -g root -m 0750 /etc/xero-accounting-mcp
 ```
 
 `70:70` 是 Alpine PostgreSQL 容器用户；`101:101` 是选定 Nginx unprivileged Alpine 镜像的运行用户。若更换镜像，必须先重新确认其 UID/GID，不能直接沿用。
@@ -106,6 +108,8 @@ openssl rand -hex 32
 - `PUBLIC_BASE_URL` 必须是 HTTPS 且不能带额外路径。
 - 初始和默认必须保持 `XERO_WRITE_ENABLED=false`；此时先完成 OAuth 和只读 Tenant 核对。
 - `XERO_WRITE_ENABLED=true` 时必须同时配置 OAuth 后只读取得并人工核对的精确 `XERO_ALLOWED_TENANT_ID`；不得为空、使用通配值、名称或预估 ID。
+- `XERO_AUTHORITY_REVISION` 是 PostgreSQL 共享授权快照的单调版本。写闸或 Standing Delegation 的任何内容变化都必须升版；同版异内容和低版本旧配置都会启动失败，同版同内容才是幂等重放。
+- 紧急撤权必须先（或与切流同时）发布更高 revision、`XERO_WRITE_ENABLED=false` / `REVOKED`。旧进程无需重启，会在下一次 preflight/最终 claim 读取共享快照并阻断；已 claim 的单次在途 Provider 调用是边界。动态 true 不能越过进程启动时仍为 false 的服务层/Provider 层安全闸。
 - 环境文件仍会被 Docker 管理权限持有者看到；这只满足封闭 Demo。生产版应迁移到受控 Secret Manager 和逐用户身份。
 
 部署前确认模板占位符已经全部移除：
@@ -161,48 +165,102 @@ docker compose \
   -f deploy/docker-compose/compose.vps.yaml \
   config --quiet
 
-docker compose \
-  --project-directory . \
-  --env-file deploy/.env.vps \
-  -f deploy/docker-compose/compose.vps.yaml \
-  build --pull accounting-mcp
+# APP_IMAGE 必须来自本地 PASS acceptance Gate 的同一 OCI artifact，并由
+# registry 返回完全相同的 manifest digest。VPS 禁止 docker/compose build。
+# 先用 scripts/verify-accepted-oci-release.mjs 和单独 host-approved control
+# catalog digest 验证，再填写 repo@sha256 APP_IMAGE。
+GATE_DIR=artifacts/local-acceptance/REPLACE_WITH_GATE_RUN
+APPROVED_CONTROL_CATALOG_SHA256=REPLACE_WITH_SEPARATELY_HOST_APPROVED_SHA256
+node scripts/verify-accepted-oci-release.mjs \
+  --gate-result "$GATE_DIR/gate-result.json" \
+  --gate-receipt "$GATE_DIR/accepted-build-context-receipt.json" \
+  --oci-receipt "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json" \
+  --oci-artifact "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar" \
+  --approved-control-catalog-sha256 "$APPROVED_CONTROL_CATALOG_SHA256"
 
-docker compose \
-  --project-directory . \
-  --env-file deploy/.env.vps \
-  -f deploy/docker-compose/compose.vps.yaml \
-  up -d postgres
+# registry copy 完成并把 APP_IMAGE 填成 receipt 对应的 repo@sha256 后，将四份
+# Gate 证据密封进固定 root trust root。deploy/.env.vps 中的四个证据路径必须
+# 分别填写下面固定目标；批准 catalog digest 仍必须来自独立 host reviewer。
+sudo install -o root -g root -m 0400 "$GATE_DIR/gate-result.json" \
+  /srv/xero-accounting-mcp/release/gate-result.json
+sudo install -o root -g root -m 0400 "$GATE_DIR/accepted-build-context-receipt.json" \
+  /srv/xero-accounting-mcp/release/accepted-build-context-receipt.json
+sudo install -o root -g root -m 0400 \
+  "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json" \
+  /srv/xero-accounting-mcp/release/xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json
+sudo install -o root -g root -m 0400 \
+  "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar" \
+  /srv/xero-accounting-mcp/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar
+
+# Firm-governance evidence must arrive out of band from the accounting firm's
+# governance authority. It must not come from the candidate source tree, Gate
+# output, image, app configuration, or an application-held signing key.
+FIRM_GOVERNANCE_DIR=REPLACE_WITH_OUT_OF_BAND_FIRM_GOVERNANCE_DIRECTORY
+sudo install -d -o root -g root -m 0755 /etc/xero-accounting-mcp/governance
+sudo install -o root -g root -m 0444 "$FIRM_GOVERNANCE_DIR/trust-bundle.json" \
+  /etc/xero-accounting-mcp/governance/trust-bundle.json
+sudo install -o root -g root -m 0444 "$FIRM_GOVERNANCE_DIR/receipts.json" \
+  /etc/xero-accounting-mcp/governance/receipts.json
+sudo install -o root -g root -m 0444 "$FIRM_GOVERNANCE_DIR/status.json" \
+  /etc/xero-accounting-mcp/governance/status.json
+sha256sum \
+  /etc/xero-accounting-mcp/governance/trust-bundle.json \
+  /etc/xero-accounting-mcp/governance/receipts.json \
+  /etc/xero-accounting-mcp/governance/status.json
+# A root/host governance reviewer independently approves these exact hashes,
+# then writes only the three SHA256 values into release.env. The paths are fixed.
+# A missing file, placeholder hash, invalid/expired signature or status is a hard
+# stop: do not run admission, create a container, or apply a migration.
+
+# The reviewer also approves an explicit XERO_AUTHORITY_REVISION and the exact
+# one-line XERO_STANDING_DELEGATIONS_JSON value. Hash that value without the
+# variable-name prefix or trailing newline into
+# XERO_STANDING_DELEGATIONS_CONFIG_SHA256. Any delegation or write-kill-switch
+# change requires a higher revision; admission and /readyz must match both.
+# The same independent reviewer must calculate and approve the canonical v2
+# snapshot and normalized governance projection with the separately approved
+# offline authority projector, never by copying a candidate /readyz response,
+# then set XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256 and
+# XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 in release.env.
+#
+# Every trust-bundle, receipt, or status renewal requires a higher XERO_AUTHORITY_REVISION.
+# Replacing a host governance file does not refresh an existing container bind mount.
+# Therefore install the renewed root-owned 0444 files atomically, independently
+# approve their three hashes plus the new expected snapshot/aggregate, admit a
+# newly restarted green process, and restart and republish the higher durable authority snapshot before cutover.
+# A same-revision renewal must conflict and must never be cut over.
+#
+# Runtime status is captured only at startup: startup-captured revocation remains bounded by the effective expiry
+# (the signed status lifetime is at most one hour), rather than becoming visible
+# immediately. For urgent revocation, publish the signed replacement, raise the
+# authority revision, restart/republish, and cut traffic immediately. Without a
+# replacement, /readyz becomes 503 at the effective expiry; do not route writes.
+
+sudo install -o root -g root -m 0600 deploy/.env.vps \
+  /etc/xero-accounting-mcp/release.env
+
+# admission 会一次打开并捕获 root-only env 与四份证据，比较 APP_IMAGE、
+# host-approved catalog、Gate receipt 和 OCI identity，pull+inspect 精确镜像；
+# 只有全部通过才允许创建第一个生产容器。
+sudo deploy/scripts/admit-and-compose.sh full-postgres-up
 
 # 必须先通过只读 Xero 历史防重检查。退出码 3 表示发现冲突组；
 # 此时立即停止，禁止自动删除、合并或继续迁移。
 docker compose \
   --project-directory . \
-  --env-file deploy/.env.vps \
+  --env-file /etc/xero-accounting-mcp/release.env \
   -f deploy/docker-compose/compose.vps.yaml \
   exec -T postgres sh -eu -c \
   'psql -v ON_ERROR_STOP=1 -X -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
   < scripts/preflight_xero_duplicate_guards.sql
 
-docker compose \
-  --project-directory . \
-  --env-file deploy/.env.vps \
-  -f deploy/docker-compose/compose.vps.yaml \
-  run --rm accounting-mcp npm run migrate
+sudo deploy/scripts/admit-and-compose.sh full-migrate
 
 # 该命令实际以镜像内 non-root Nginx 用户检查私钥读取、项目自带
 # proxy_params、模板渲染结果和完整 Nginx 语法；失败时不要启动公网边缘。
-docker compose \
-  --project-directory . \
-  --env-file deploy/.env.vps \
-  -f deploy/docker-compose/compose.vps.yaml \
-  run --rm --no-deps nginx sh -ec \
-  'test -r /etc/nginx/tls/privkey.pem && test -r /opt/xero-nginx/proxy_params && nginx -t -c /opt/xero-nginx/nginx.conf'
+sudo deploy/scripts/admit-and-compose.sh full-nginx-check
 
-docker compose \
-  --project-directory . \
-  --env-file deploy/.env.vps \
-  -f deploy/docker-compose/compose.vps.yaml \
-  up -d accounting-mcp nginx
+sudo deploy/scripts/admit-and-compose.sh full-up
 ```
 
 迁移是显式步骤：App 启动不会偷偷建表。升级时同样先审查迁移兼容性，再执行 `npm run migrate`。
@@ -227,7 +285,7 @@ sudo env \
 
 将相同环境参数配置进该证书的 Certbot deploy hook。然后执行第7.2节的 `renew --dry-run`；只有公网证书主题、SAN、签发者和有效期均正确后，引导证书才算退出使用。
 
-首次构建后记录实际基础镜像 digest，并将 `NGINX_IMAGE`、`POSTGRES_IMAGE` 和发布的 `APP_IMAGE` 固定为 digest/tag 组合；不要把可漂移的 tag 当成可审计发布记录。
+生产 Compose 已把 PostgreSQL 与 Nginx 固定为 digest，并强制 `APP_IMAGE` 使用 Gate-approved `repo@sha256`。任何基础镜像升级都必须作为源代码变更重新跑完整 Gate；VPS 不得现场重建。
 
 ## 9. 部署验收
 
@@ -270,11 +328,11 @@ curl -sk -o /dev/null -w '%{http_code}\n' \
 3. 只有成功 callback 的同一浏览器取得 reviewer session；取消、失败、错误 state、Token/Tenant 失败均不得取得。
 4. `xero_connection_status` 和组织读取成功，但响应不包含 Token；只读记录并人工核对精确 Tenant ID。
 5. 把该 ID 配置为唯一 `XERO_ALLOWED_TENANT_ID`，再显式设置 `XERO_WRITE_ENABLED=true` 并只重建 App；不符合这两个条件时写工具必须在 Provider 前拒绝。
-6. 读取科目、税码和联系人。
-7. 使用合成供应商发票创建 DRAFT Bill，按 Xero ID 精确回读。
-8. 人工审批后才允许 DRAFT → AUTHORISED；精确回读后内部进入不可回退的 `AUTHORISED_READBACK_VERIFIED`。
-9. 再次精确回读并验证 Xero UI/报表变化。
-10. 对相同请求做顺序及并发复验，Provider 写入计数最多一次且不得创建第二张 Bill。
+6. 读取科目、税码和联系人；通过 `xero_prepare_accounting_case` 检查合成资料的 coverage、异常和 eligible-write 状态。
+7. 仅在测试 Tenant 的 Standing Delegation、动态 authority 和写闸同时有效时，用 `xero_execute_accounting_case` 创建 Case 支持的低风险 `DRAFT`；无需逐笔确认，但必须取得 provider ID、mutation receipt 和同 ID exact readback。
+8. 当前候选不开放 `AUTHORISE`、`SUBMIT`、`POST`、付款或分配；任何提示词、旧 Review 路径或历史工具都不得把 `DRAFT` 推进为已入账状态。
+9. 通过 `xero_get_accounting_case_status` 和 Xero UI 再次核对同一 provider ID、金额、币种、行项目和 `DRAFT` 状态；不得把 DRAFT 描述成 posted/authorised/paid。
+10. 对相同 `case_id`、`case_version` 和 `request_id` 做顺序及并发复验，Provider 写入计数最多一次且不得创建第二个对象；unknown 结果只能恢复或安全阻断，不能自动补写。
 
 连接状态不是服务就绪状态；Xero临时不可用不应令健康端点泄露内部错误或凭证。
 
@@ -290,7 +348,7 @@ curl -sk -o /dev/null -w '%{http_code}\n' \
 
 ### 11.1 发布前
 
-1. 记录当前 `APP_IMAGE` tag/digest、Compose配置摘要和数据库schema版本。
+1. 记录当前 `APP_IMAGE` repo@sha256、Compose配置摘要和数据库schema版本。
 2. 使用 `pg_dump -Fc` 创建仅root可读的预发布备份并计算SHA-256。
 3. 单独确认当前 `TOKEN_ENCRYPTION_KEY_B64` 可恢复；不要把明文密钥放进数据库备份。
 4. 检查迁移是否向后兼容。不能确认时，安排维护窗口，不做滚动发布。
@@ -302,7 +360,7 @@ curl -sk -o /dev/null -w '%{http_code}\n' \
 
 1. 将 `.env.vps` 中 `APP_IMAGE` 恢复到上一版不可变digest。
 2. 重新执行 `config --quiet`。
-3. 只重建 `accounting-mcp`，等待 `/readyz` 成功后再reload Nginx。
+3. 使用上一版不可变镜像执行 `up -d --no-build accounting-mcp`，等待 `/readyz` 成功后再reload Nginx。
 4. 重跑 MCP 初始化、固定工具清单和只读 Xero 探针。
 
 不要执行 `docker compose down -v`，不要删除 PostgreSQL 目录，也不要在无法确认写入结果时重试 Xero 写操作。

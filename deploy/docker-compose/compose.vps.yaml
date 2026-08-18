@@ -2,7 +2,7 @@ name: ${COMPOSE_PROJECT_NAME:-xero-accounting-mcp-demo}
 
 services:
   postgres:
-    image: ${POSTGRES_IMAGE:-postgres:17.10-alpine3.23}
+    image: postgres:17.10-alpine3.23@sha256:8189a1f6e40904781fc9e2612687877791d21679866db58b1de996b31fc312e4
     user: "70:70"
     restart: unless-stopped
     read_only: true
@@ -42,10 +42,18 @@ services:
         max-file: "3"
 
   accounting-mcp:
-    image: ${APP_IMAGE:-xero-accounting-mcp-demo:local}
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile
+    image: ${APP_IMAGE:?Set APP_IMAGE to the Gate-approved immutable repo@sha256 digest in deploy/.env.vps}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        case "$${APP_IMAGE:-}" in *@sha256:[0-9a-f][0-9a-f]*) ;; *)
+          echo "production release refused: APP_IMAGE must be an immutable repo@sha256 digest" >&2
+          exit 78
+        esac
+        exec "$$@"
+      - xero-production-release-guard
+    command: ["npm", "run", "start"]
     init: true
     restart: unless-stopped
     read_only: true
@@ -55,6 +63,7 @@ services:
       - ALL
     environment:
       NODE_ENV: production
+      APP_IMAGE: ${APP_IMAGE:?Set APP_IMAGE to the Gate-approved immutable repo@sha256 digest in deploy/.env.vps}
       HOST: 0.0.0.0
       PORT: "3000"
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env.vps}
@@ -68,6 +77,7 @@ services:
       SHARED_TEST_USERS: ${SHARED_TEST_USERS:-false}
       HOST_OAUTH_CLIENTS_JSON: ${HOST_OAUTH_CLIENTS_JSON:-}
       OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS: ${OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS:-}
+      OAUTH_MANUAL_RETURN_CLIENT_IDS: ${OAUTH_MANUAL_RETURN_CLIENT_IDS:-}
       OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${OAUTH_ACCESS_TOKEN_TTL_SECONDS:-900}
       OAUTH_REFRESH_TOKEN_TTL_SECONDS: ${OAUTH_REFRESH_TOKEN_TTL_SECONDS:-2592000}
       OAUTH_AUTH_CODE_TTL_SECONDS: ${OAUTH_AUTH_CODE_TTL_SECONDS:-300}
@@ -78,11 +88,42 @@ services:
       XERO_CLIENT_SECRET: ${XERO_CLIENT_SECRET:?Set XERO_CLIENT_SECRET in deploy/.env.vps}
       XERO_SCOPES: ${XERO_SCOPES:?Set XERO_SCOPES in deploy/.env.vps}
       XERO_WRITE_ENABLED: ${XERO_WRITE_ENABLED:-false}
+      XERO_AUTHORITY_REVISION: ${XERO_AUTHORITY_REVISION:?Set the host-admitted authority revision in release.env}
+      XERO_STANDING_DELEGATIONS_JSON: ${XERO_STANDING_DELEGATIONS_JSON:?Set the exact standing delegations in release.env}
+      XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256: ${XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256:?Set the host-approved durable authority snapshot SHA256 in release.env}
+      XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256: ${XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256:?Set the host-approved governance aggregate SHA256 or NOT_REQUIRED in release.env}
+      XERO_STANDING_DELEGATIONS_CONFIG_SHA256: ${XERO_STANDING_DELEGATIONS_CONFIG_SHA256:?Set the exact standing-delegation JSON SHA256 in release.env}
       XERO_ALLOWED_TENANT_ID: ${XERO_ALLOWED_TENANT_ID:-}
+      XERO_ACCOUNTING_CASE_TEST_TENANT_IDS: ${XERO_ACCOUNTING_CASE_TEST_TENANT_IDS:-}
+      XERO_TENANT_COA_PROFILES_JSON: ${XERO_TENANT_COA_PROFILES_JSON:-[]}
+      XERO_GOVERNANCE_TRUST_BUNDLE_SHA256: ${XERO_GOVERNANCE_TRUST_BUNDLE_SHA256:?Set the host-admitted trust-bundle SHA256 in release.env}
+      XERO_GOVERNANCE_RECEIPTS_SHA256: ${XERO_GOVERNANCE_RECEIPTS_SHA256:?Set the host-admitted receipts SHA256 in release.env}
+      XERO_GOVERNANCE_STATUS_SHA256: ${XERO_GOVERNANCE_STATUS_SHA256:?Set the host-admitted status SHA256 in release.env}
       TOKEN_ENCRYPTION_KEY_B64: ${TOKEN_ENCRYPTION_KEY_B64:?Set TOKEN_ENCRYPTION_KEY_B64 in deploy/.env.vps}
       XERO_MUTATION_CONFIRMATION_KEY_B64: ${XERO_MUTATION_CONFIRMATION_KEY_B64:?Set XERO_MUTATION_CONFIRMATION_KEY_B64 in deploy/.env.vps}
+      XERO_TARGET_SESSION_REQUIRED: ${XERO_TARGET_SESSION_REQUIRED:-true}
+      XERO_TARGET_SESSION_TTL_SECONDS: ${XERO_TARGET_SESSION_TTL_SECONDS:-1800}
       DEMO_ACTOR_ID: ${DEMO_ACTOR_ID:-xero-demo-operator}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - type: bind
+        source: /etc/xero-accounting-mcp/governance/trust-bundle.json
+        target: /run/xero-governance/trust-bundle.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/xero-accounting-mcp/governance/receipts.json
+        target: /run/xero-governance/receipts.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/xero-accounting-mcp/governance/status.json
+        target: /run/xero-governance/status.json
+        read_only: true
+        bind:
+          create_host_path: false
     expose:
       - "3000"
     tmpfs:
@@ -110,7 +151,7 @@ services:
     logging: *bounded-logging
 
   nginx:
-    image: ${NGINX_IMAGE:-nginxinc/nginx-unprivileged:1.29.4-alpine}
+    image: nginxinc/nginx-unprivileged:1.29.4-alpine@sha256:a6c4f61f456b85b8fdf7ec7ab28cc3e299440e6fb4a9dea520e5fd8fd440025e
     restart: unless-stopped
     read_only: true
     security_opt:

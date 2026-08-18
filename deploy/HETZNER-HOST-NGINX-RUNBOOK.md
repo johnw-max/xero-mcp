@@ -40,6 +40,8 @@ SHARED_TEST_USERS=true
 
 ```text
 HOST_OAUTH_CLIENTS_JSON   Work -> MCP 的 Client ID / Client Secret / Redirect URI
+OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS  仅允许省略 MCP resource 的精确 Host client ID
+OAUTH_MANUAL_RETURN_CLIENT_IDS  仅需要手动返回页的精确 Host client ID；不得与上一项隐式绑定
 XERO_CLIENT_ID            MCP -> Xero Developer App Client ID
 XERO_CLIENT_SECRET        MCP -> Xero Developer App Client Secret
 OAUTH_TOKEN_HASH_KEY_B64  MCP OAuth token 哈希密钥
@@ -76,18 +78,96 @@ npm run build
 
 ## 5. 启动 green
 
-镜像必须使用固定 tag 或 digest：
+镜像必须是本地 acceptance Gate **已经构建并验证的 OCI artifact**；VPS/发布机禁止再次 `docker build`。发布工具只能把 Gate 的 OCI archive 做 digest-preserving copy 到 registry，registry 返回的 manifest digest 必须与 Gate receipt 完全一致。下面文件都来自同一个 PASS Gate 目录，不允许单独手填哈希：
 
 ```sh
-docker build --pull \
-  -f deploy/Dockerfile \
-  -t xero-accounting-mcp-demo:REPLACE_WITH_RELEASE .
+GATE_DIR=artifacts/local-acceptance/REPLACE_WITH_GATE_RUN
+APPROVED_CONTROL_CATALOG_SHA256=REPLACE_WITH_SEPARATELY_HOST_APPROVED_SHA256
+node scripts/verify-accepted-oci-release.mjs \
+  --gate-result "$GATE_DIR/gate-result.json" \
+  --gate-receipt "$GATE_DIR/accepted-build-context-receipt.json" \
+  --oci-receipt "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json" \
+  --oci-artifact "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar" \
+  --approved-control-catalog-sha256 "$APPROVED_CONTROL_CATALOG_SHA256"
 
-APP_IMAGE=xero-accounting-mcp-demo:REPLACE_WITH_RELEASE \
-XERO_WRITE_ENABLED=false \
-docker compose --env-file deploy/.env.vps \
-  -f deploy/docker-compose/compose.host-nginx.green.vps.yaml \
-  up -d --no-build accounting-mcp-green
+# 使用支持 oci-archive transport 的发布工具（例如 skopeo）复制同一 artifact；
+# 不得重建。复制后再次拉取/inspect，并验证 registry manifest digest 与
+# oci-receipt.json 的 ociManifestDigest 一致，才可填写 APP_IMAGE。
+skopeo copy \
+  "oci-archive:$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar" \
+  "docker://REPLACE_WITH_REGISTRY/xero-accounting-mcp:0.4.0-rc.1"
+skopeo inspect --raw \
+  "docker://REPLACE_WITH_REGISTRY/xero-accounting-mcp:0.4.0-rc.1" \
+  | sha256sum
+
+# 将 APP_IMAGE、四个 XERO_ACCEPTANCE_*/XERO_ACCEPTED_* 绝对路径，以及由
+# host reviewer 单独批准的 XERO_APPROVED_CONTROL_CATALOG_SHA256 写入
+# deploy/.env.vps；四个证据路径必须是下面固定 root trust root 内的目标，
+# 禁止从 candidate receipt 反向派生批准值。
+sudo install -d -o root -g root -m 0750 /srv/xero-accounting-mcp/release
+sudo install -d -o root -g root -m 0750 /etc/xero-accounting-mcp
+sudo install -o root -g root -m 0400 "$GATE_DIR/gate-result.json" \
+  /srv/xero-accounting-mcp/release/gate-result.json
+sudo install -o root -g root -m 0400 "$GATE_DIR/accepted-build-context-receipt.json" \
+  /srv/xero-accounting-mcp/release/accepted-build-context-receipt.json
+sudo install -o root -g root -m 0400 \
+  "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json" \
+  /srv/xero-accounting-mcp/release/xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json
+sudo install -o root -g root -m 0400 \
+  "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar" \
+  /srv/xero-accounting-mcp/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar
+
+# Firm-governance evidence must arrive out of band from the accounting firm's
+# governance authority. It must not come from the candidate source tree, Gate
+# output, image, app configuration, or an application-held signing key.
+FIRM_GOVERNANCE_DIR=REPLACE_WITH_OUT_OF_BAND_FIRM_GOVERNANCE_DIRECTORY
+sudo install -d -o root -g root -m 0755 /etc/xero-accounting-mcp/governance
+sudo install -o root -g root -m 0444 "$FIRM_GOVERNANCE_DIR/trust-bundle.json" \
+  /etc/xero-accounting-mcp/governance/trust-bundle.json
+sudo install -o root -g root -m 0444 "$FIRM_GOVERNANCE_DIR/receipts.json" \
+  /etc/xero-accounting-mcp/governance/receipts.json
+sudo install -o root -g root -m 0444 "$FIRM_GOVERNANCE_DIR/status.json" \
+  /etc/xero-accounting-mcp/governance/status.json
+sha256sum \
+  /etc/xero-accounting-mcp/governance/trust-bundle.json \
+  /etc/xero-accounting-mcp/governance/receipts.json \
+  /etc/xero-accounting-mcp/governance/status.json
+# A root/host governance reviewer independently approves these exact hashes,
+# then writes only the three SHA256 values into release.env. The paths are fixed.
+# A missing file, placeholder hash, invalid/expired signature or status is a hard
+# stop: do not run admission, create a container, or apply a migration.
+
+# The same reviewer must also approve an explicit XERO_AUTHORITY_REVISION and
+# the exact one-line XERO_STANDING_DELEGATIONS_JSON value. Compute SHA-256 over
+# that JSON value only (no variable-name prefix and no trailing newline), write
+# it as XERO_STANDING_DELEGATIONS_CONFIG_SHA256, and bump the revision whenever
+# the JSON or write kill switch changes. Admission and /readyz must report the
+# same revision, write mode and JSON digest before cutover.
+# The same independent reviewer must calculate and approve the canonical v2
+# snapshot and normalized governance projection with the separately approved
+# offline authority projector, never by copying a candidate /readyz response,
+# then set XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256 and
+# XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 in release.env.
+#
+# Every trust-bundle, receipt, or status renewal requires a higher XERO_AUTHORITY_REVISION.
+# Replacing a host governance file does not refresh an existing container bind mount.
+# Therefore install the renewed root-owned 0444 files atomically, independently
+# approve their three hashes plus the new expected snapshot/aggregate, admit a
+# newly restarted green process, and restart and republish the higher durable authority snapshot before cutover.
+# A same-revision renewal must conflict and must never be cut over.
+#
+# Runtime status is captured only at startup: startup-captured revocation remains bounded by the effective expiry
+# (the signed status lifetime is at most one hour), rather than becoming visible
+# immediately. For urgent revocation, publish the signed replacement, raise the
+# authority revision, restart/republish, and cut traffic immediately. Without a
+# replacement, /readyz becomes 503 at the effective expiry; do not route writes.
+
+sudo install -o root -g root -m 0600 deploy/.env.vps \
+  /etc/xero-accounting-mcp/release.env
+
+# 该 wrapper 在任何 green container create/start 前，一次捕获并验证密封
+# env+证据，绑定 APP_IMAGE 与 accepted manifest，再 pull/inspect labels/config。
+sudo deploy/scripts/admit-and-compose.sh host-green-up
 ```
 
 启动后确认：

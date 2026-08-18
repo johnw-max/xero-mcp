@@ -4,8 +4,9 @@ coverage
 artifacts
 output
 tmp
-.git
+/.git/
 .env*
 deploy/.env.vps
 *.log
 .DS_Store
+!/.accepted-release/**

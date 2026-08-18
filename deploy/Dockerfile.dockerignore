@@ -1,6 +1,6 @@
-.git
-.gitignore
+/.git/
 .DS_Store
+!/.accepted-release/**
 .env
 .env.*
 !.env.example
