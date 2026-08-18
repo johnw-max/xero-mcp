@@ -27,6 +27,10 @@ import { Aes256GcmTokenCipher } from "../src/security/tokenCipher.js";
 const canonicalResource = "https://xero-mcp.example.test/mcp";
 const exactRedirect = "https://agent2.example.test/api/mcp/accounting-mcp/oauth/callback";
 const clientId = "agent2-accounting-mcp";
+const workClientId = "work-xero-mcp";
+const workRedirect = "https://work.zcloak.ai/api/mcp/zcloak-ledger-mcp-xero-demo/oauth/callback";
+const strictClientId = "strict-host";
+const strictRedirect = "https://strict-host.example.test/oauth/callback";
 const now = new Date("2026-08-05T10:00:00.000Z");
 const verifier = "v".repeat(43);
 const rawCode = "C".repeat(43);
@@ -57,12 +61,18 @@ const config: EnabledMcpOAuthBrokerConfig = {
     clientSecret: "s".repeat(32),
     redirectUris: [exactRedirect],
   }, {
-    name: "Strict Host",
-    clientId: "strict-host",
+    name: "Work",
+    clientId: workClientId,
     clientSecret: "t".repeat(32),
-    redirectUris: ["https://strict-host.example.test/oauth/callback"],
+    redirectUris: [workRedirect],
+  }, {
+    name: "Strict Host",
+    clientId: strictClientId,
+    clientSecret: "u".repeat(32),
+    redirectUris: [strictRedirect],
   }],
-  missingResourceCompatClientIds: [clientId],
+  missingResourceCompatClientIds: [clientId, workClientId],
+  manualReturnClientIds: [clientId],
   accessTokenTtlSeconds: 900,
   refreshTokenTtlSeconds: 2_592_000,
   authorizationCodeTtlSeconds: 300,
@@ -463,6 +473,61 @@ describe("McpOAuthTokenService", () => {
     );
   });
 
+  it("canonicalizes a compatible Work code without coupling it to browser handoff policy", async () => {
+    const workCode = {
+      ...authorizationCode(),
+      clientId: workClientId,
+      redirectUri: workRedirect,
+    };
+    const acceptedRepository = new FakeTokenRepository();
+    acceptedRepository.previewCode = workCode;
+    const { service: accepted } = createSubject({ repository: acceptedRepository });
+
+    await expect(accepted.exchangeAuthorizationCode(
+      workClientId,
+      rawCode,
+      verifier,
+      workRedirect,
+      new URL(canonicalResource),
+    )).resolves.toMatchObject({
+      access_token: accessOne,
+      refresh_token: refreshOne,
+    });
+    expect(acceptedRepository.peekOAuthAuthorizationCodeForExchange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: workClientId,
+        redirectUri: workRedirect,
+        expectedResource: canonicalResource,
+      }),
+    );
+
+    const compatibleRepository = new FakeTokenRepository();
+    compatibleRepository.previewCode = workCode;
+    const { service: compatible } = createSubject({ repository: compatibleRepository });
+    await expect(compatible.exchangeAuthorizationCode(
+      workClientId,
+      rawCode,
+      verifier,
+      workRedirect,
+      undefined,
+    )).resolves.toMatchObject({ access_token: accessOne, refresh_token: refreshOne });
+    expect(compatibleRepository.peekOAuthAuthorizationCodeForExchange).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedResource: canonicalResource }),
+    );
+
+    const rejectedRepository = new FakeTokenRepository();
+    rejectedRepository.previewCode = workCode;
+    const { service: rejected } = createSubject({ repository: rejectedRepository });
+    await expect(rejected.exchangeAuthorizationCode(
+      workClientId,
+      rawCode,
+      verifier,
+      workRedirect,
+      "https://xero-mcp.example.test/other",
+    )).rejects.toBeInstanceOf(InvalidTargetError);
+    expect(rejectedRepository.peekOAuthAuthorizationCodeForExchange).not.toHaveBeenCalled();
+  });
+
   it("keeps omitted-resource compatibility disabled outside the explicit Personal POC profile", async () => {
     const nonPocConfig: EnabledMcpOAuthBrokerConfig = {
       ...config,
@@ -556,10 +621,10 @@ describe("McpOAuthTokenService", () => {
     const { service } = createSubject();
 
     await expect(service.exchangeAuthorizationCode(
-      "strict-host",
+      strictClientId,
       rawCode,
       verifier,
-      "https://strict-host.example.test/oauth/callback",
+      strictRedirect,
       undefined,
     )).rejects.toBeInstanceOf(InvalidTargetError);
     await expect(service.exchangeAuthorizationCode(
@@ -867,7 +932,7 @@ describe("McpOAuthTokenService", () => {
       "https://xero-mcp.example.test/other",
     )).rejects.toBeInstanceOf(InvalidTargetError);
     await expect(service.exchangeRefreshToken(
-      "strict-host",
+      strictClientId,
       refreshOne,
       undefined,
       undefined,

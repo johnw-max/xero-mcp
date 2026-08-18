@@ -21,12 +21,11 @@ describe("local P0 read-only scenario runner", () => {
       "DC-CONNECTION-001",
       "DC-LEDGER-002",
       "DC-HISTORY-003",
-      "DC-MATCH-004",
       "DC-PAYMENT-005",
       "DC-CREDIT-006",
       "DC-VERSION-008",
     ]);
-    expect(result.report.summary).toMatchObject({ total: 7, pass: 7, fail: 0 });
+    expect(result.report.summary).toMatchObject({ total: 6, pass: 6, fail: 0 });
     expect(result.providerWriteAttempts).toBe(0);
     expect(result.report.environment).toMatchObject({
       target: "IN_MEMORY",

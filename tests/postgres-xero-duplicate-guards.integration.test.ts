@@ -5,6 +5,7 @@ import type { PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations } from "../src/db/migrate.js";
 import { PostgresAccountingRepository } from "../src/db/postgresRepository.js";
+import { REQUIRED_MIGRATIONS } from "../src/db/requiredMigrations.js";
 import {
   hasExactXeroDuplicateIndexes,
   type XeroDuplicateIndexCatalogRow,
@@ -87,7 +88,7 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
     throw new Error(`Migration ${finalVersion} was not found`);
   }
 
-  it("applies the fresh 001-020 sequence with exact legacy and v030 indexes", async () => {
+  it("applies the fresh 001-020 historical sequence with its then-current indexes", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
     const schemaName = `xero_migration_020_fresh_${randomUUID().replaceAll("-", "")}`;
     const client = await repository.pool.connect();
@@ -138,7 +139,10 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
         ]],
       );
       expect(indexes.rows).toHaveLength(10);
-      expect(hasExactXeroDuplicateIndexes(indexes.rows)).toBe(true);
+      expect(indexes.rows.map((row) => row.indexName)).toEqual(expect.arrayContaining([
+        "posting_requests_active_supplier_reference_unique_idx",
+        "posting_requests_tenant_active_supplier_ref_v030_unique_idx",
+      ]));
     } finally {
       await client.query("ROLLBACK").catch(() => undefined);
       await client.query("RESET search_path").catch(() => undefined);
@@ -279,7 +283,7 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
     }
   });
 
-  it("keeps exact 0.2.13 indexes and exact v030 guards ready together", async () => {
+  it("keeps source/idempotency guards exact after removing bare-reference hard uniqueness", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
     const indexes = await repository.pool.query<XeroDuplicateIndexCatalogRow>(
       `SELECT index_class.relname AS "indexName",
@@ -295,8 +299,12 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
               pg_get_expr(index_meta.indpred, index_meta.indrelid, true) AS predicate
        FROM pg_index index_meta
        JOIN pg_class index_class ON index_class.oid = index_meta.indexrelid
+       JOIN pg_class table_class ON table_class.oid = index_meta.indrelid
+       JOIN pg_namespace table_namespace ON table_namespace.oid = table_class.relnamespace
        JOIN pg_am access_method ON access_method.oid = index_class.relam
        WHERE index_class.relname = ANY($1::text[])
+         AND table_namespace.nspname = 'public'
+         AND table_class.relname = 'posting_requests'
        ORDER BY index_class.relname`,
       [[
         "posting_requests_actor_tenant_request_create_unique_idx",
@@ -311,7 +319,7 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
         "posting_requests_tenant_active_supplier_ref_v030_unique_idx",
       ]],
     );
-    expect(indexes.rows).toHaveLength(10);
+    expect(indexes.rows).toHaveLength(6);
     expect(hasExactXeroDuplicateIndexes(indexes.rows)).toBe(true);
     expect(indexes.rows.find((index) =>
       index.indexName === "posting_requests_actor_tenant_request_create_unique_idx"
@@ -319,6 +327,7 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
     expect(indexes.rows.find((index) =>
       index.indexName === "posting_requests_actor_tenant_request_create_v030_unique_idx"
     )?.keyDefinitions).toEqual(["actor_id", "tenant_id", "document_type", "request_id", "create_operation"]);
+    expect(indexes.rows.some((index) => /supplier_(?:reference|ref)/u.test(index.indexName))).toBe(false);
 
     for (const index of indexes.rows.filter((candidate) =>
       candidate.indexName.includes("v030") && candidate.predicate !== null
@@ -354,6 +363,7 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
     "022_xero_organisation_switch.sql",
     "023_governance_audit_events.sql",
     "024_allow_binding_history_per_installation.sql",
+    ...REQUIRED_MIGRATIONS,
   ])("fails readiness when required migration provenance %s is missing", async (version) => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
     await repository.pool.query("DELETE FROM schema_migrations WHERE version = $1", [version]);
@@ -369,10 +379,6 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
     [
       "posting_requests_active_source_unique_idx",
       "posting_requests_active_source_legacy_tampered_idx",
-    ],
-    [
-      "posting_requests_tenant_active_supplier_ref_v030_unique_idx",
-      "posting_requests_tenant_supplier_v030_tampered_idx",
     ],
   ] as const)("fails 0.3 readiness when required index %s is missing", async (indexName, temporaryName) => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
@@ -490,7 +496,7 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
     expect(new Set(results.map((result) => result.posting.postingRequestId)).size).toBe(1);
   });
 
-  it("serializes concurrent new request IDs for a normalized contact and supplier reference", async () => {
+  it("does not promote a normalized contact and free-form reference into a durable legacy identity", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
     const first = posting({
       providerPayload: {
@@ -512,12 +518,11 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
       repository.createOrGetPosting(second),
     ]);
 
-    expect(results.filter((result) => result.created)).toHaveLength(1);
-    expect(results.filter((result) => !result.created)).toHaveLength(1);
-    expect(new Set(results.map((result) => result.posting.postingRequestId)).size).toBe(1);
+    expect(results.filter((result) => result.created)).toHaveLength(2);
+    expect(new Set(results.map((result) => result.posting.postingRequestId)).size).toBe(2);
   });
 
-  it("reports the temporary legacy-compatibility conflict when ACCREC references are reused", async () => {
+  it("allows ACCREC free-form references to be reused when source identities differ", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
     const first = posting({
       documentType: "ACCREC",
@@ -546,11 +551,7 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
       contactId: "abcdefab-abcd-4bcd-8bcd-abcdefabcdef",
       normalizedReference: "customer-po-reusable",
     })).resolves.toBeUndefined();
-    await expect(repository.createOrGetPosting(second)).rejects.toMatchObject({
-      code: "CONFLICT",
-      message: "The request conflicts with a temporary legacy-runtime duplicate guard.",
-    });
-    await expect(repository.getPosting(second.postingRequestId)).resolves.toBeUndefined();
+    await expect(repository.createOrGetPosting(second)).resolves.toMatchObject({ created: true });
   });
 
   it("keeps one tenant-global source guard across ACCPAY and ACCREC", async () => {
@@ -575,7 +576,7 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
     });
   });
 
-  it("normalizes contact and reference across canonical-request and Xero-readback payload shapes", async () => {
+  it("does not merge canonical-request and Xero-readback shapes by bare reference", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
     const first = posting({
       providerPayload: {
@@ -604,12 +605,12 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
     });
 
     await expect(repository.createOrGetPosting(second)).resolves.toMatchObject({
-      created: false,
-      posting: { postingRequestId: first.postingRequestId, state: "APPROVAL_PENDING" },
+      created: true,
+      posting: { postingRequestId: second.postingRequestId, state: "VALIDATED" },
     });
   });
 
-  it("keeps request idempotency actor-scoped while tenant-scoping business identities", async () => {
+  it("keeps request idempotency actor-scoped and source identity tenant-scoped", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
     const first = posting();
     const second = posting({
@@ -636,8 +637,8 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
       providerPayload: first.providerPayload,
     });
     await expect(repository.createOrGetPosting(sameReferenceForAnotherActor)).resolves.toMatchObject({
-      created: false,
-      posting: { postingRequestId: first.postingRequestId },
+      created: true,
+      posting: { postingRequestId: sameReferenceForAnotherActor.postingRequestId },
     });
 
     const sameRequestForOtherActor = posting({
@@ -668,7 +669,7 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
     await expect(repository.createOrGetPosting(corrected)).resolves.toMatchObject({ created: true });
   });
 
-  it("keeps source and normalized supplier-reference identities reserved after DRAFT rejection", async () => {
+  it("keeps source reserved after DRAFT rejection without reserving a bare supplier reference", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
     const first = posting({
       providerPayload: {
@@ -712,8 +713,8 @@ describeWithPostgres("Postgres Xero active posting duplicate guards", () => {
       },
     });
     await expect(repository.createOrGetPosting(sameReference)).resolves.toMatchObject({
-      created: false,
-      posting: { postingRequestId: first.postingRequestId, state: "REJECTED" },
+      created: true,
+      posting: { postingRequestId: sameReference.postingRequestId, state: "VALIDATED" },
     });
   });
 });

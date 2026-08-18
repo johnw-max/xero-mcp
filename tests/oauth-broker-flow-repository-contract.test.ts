@@ -509,6 +509,51 @@ describe("OAuth Broker V2 flow repository contract", () => {
     })).resolves.toBeUndefined();
   });
 
+  it("replaces a stranded Personal POC selection after its unexchanged authorization code expires", async () => {
+    const repository: AccountingRepository = new InMemoryAccountingRepository();
+    const identity: FlowIdentityOverride = {
+      workspaceId: "workspace-poc-stranded",
+      subjectId: "user-poc-stranded",
+      agentId: "agent-poc-stranded",
+      clientId: "client-poc-stranded",
+    };
+    const first = await advanceToSelection(repository, "poc-stranded-first", {}, 1, identity);
+    const firstIssued = await repository.completeBrokerOrganisationSelection({
+      flowHash: first.flow.flowHash,
+      browserSessionHash: first.flow.browserSessionHash,
+      selectionCsrfHash: first.selectionCsrfHash,
+      selectedConnectionId: first.connections[0]!.connectionId,
+      bindingId: "binding-poc-stranded-first",
+      policyId: "policy-poc-stranded-first",
+      authorizationCodeHash: hash("code-poc-stranded-first"),
+      authorizationCodeExpiresAt: fiveMinutesLater,
+      now: twoMinutesLater,
+    });
+    if (!firstIssued) throw new Error("expected stranded grant to complete selection");
+
+    const second = await advanceToSelection(repository, "poc-stranded-second", {}, 1, identity);
+    await expect(repository.completeBrokerOrganisationSelection({
+      flowHash: second.flow.flowHash,
+      browserSessionHash: second.flow.browserSessionHash,
+      selectionCsrfHash: second.selectionCsrfHash,
+      selectedConnectionId: second.connections[0]!.connectionId,
+      bindingId: "binding-poc-stranded-second",
+      policyId: "policy-poc-stranded-second",
+      authorizationCodeHash: hash("code-poc-stranded-second"),
+      authorizationCodeExpiresAt: tenMinutesLater,
+      now: fiveMinutesLater,
+    })).resolves.toMatchObject({ installation: { status: "ACTIVE" } });
+    await expect(repository.resolveAgentConnectionBinding({
+      installationId: firstIssued.installation.installationId,
+      bindingId: firstIssued.binding.bindingId,
+      workspaceId: firstIssued.binding.workspaceId,
+      subjectType: firstIssued.binding.subjectType,
+      subjectId: firstIssued.binding.subjectId,
+      agentId: firstIssued.binding.agentId,
+      connectionId: firstIssued.binding.connectionId,
+    })).resolves.toBeUndefined();
+  });
+
   it("allows distinct Personal POC MCP clients to remain connected independently", async () => {
     const repository: AccountingRepository = new InMemoryAccountingRepository();
     const first = await advanceToSelection(repository, "poc-client-a", {}, 1);

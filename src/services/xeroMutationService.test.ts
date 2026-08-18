@@ -29,12 +29,14 @@ function quoteInput(
 }
 
 function harness(options: { currentTime?: { value: Date }; connectionId?: string } = {}) {
-  const repository = new InMemoryAccountingRepository();
+  const currentTime = options.currentTime ?? { value: now };
+  // Expiry is repository-owned. Keep the test repository and service on the
+  // same controllable clock instead of relying on the workstation date.
+  const repository = new InMemoryAccountingRepository({ now: () => currentTime.value });
   const context = createLegacySharedBearerRequestContext({
     actorId: "workspace-test:user:user-test",
     audience: "https://mcp.example.test/mcp",
   });
-  const currentTime = options.currentTime ?? { value: now };
   const service = new XeroMutationService(repository, {
     confirmationSecret: "test-confirmation-secret-that-is-at-least-32-bytes",
     now: () => currentTime.value,

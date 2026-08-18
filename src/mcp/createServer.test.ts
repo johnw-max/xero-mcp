@@ -9,6 +9,7 @@ import {
   createLegacySharedBearerRequestContext,
   createOAuthRequestContext,
 } from "../security/requestContext.js";
+import { safeLedgerTargetReference } from "../security/ledgerTargetReference.js";
 import { createAccountingMcpServer } from "./createServer.js";
 import { TOOL_ALLOWLIST } from "./toolNames.js";
 
@@ -60,7 +61,7 @@ describe("MCP tool surface", () => {
     }));
   });
 
-  it("advertises only the reviewed forty-four Xero tools", async () => {
+  it("advertises only the reviewed read and Accounting Case tools", async () => {
     const service = {} as AccountingService;
     const server = createAccountingMcpServer(service, testContext());
     const client = new Client({ name: "contract-test", version: "0.1.0" });
@@ -72,7 +73,127 @@ describe("MCP tool surface", () => {
     const tools = await client.listTools();
 
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([...TOOL_ALLOWLIST].sort());
-    expect(tools.tools).toHaveLength(44);
+    expect(tools.tools).toHaveLength(28);
+    expect(tools.tools.map((tool) => tool.name)).not.toEqual(expect.arrayContaining([
+      "xero_prepare_manual_journal_draft",
+      "xero_create_manual_journal_draft",
+      "xero_prepare_supplier_bill_draft",
+      "xero_create_draft_supplier_bill",
+    ]));
+  });
+
+  it("pins one immutable organisation target and keeps the raw capability out of business audit input", async () => {
+    const targetSessionRef = `xts_${Buffer.alloc(32, 5).toString("base64url")}`;
+    const resolvedToken: ResolvedMcpAccessToken = {
+      tokenId: "target-token",
+      clientId: "target-client",
+      resource: "https://xero-mcp.example.test/mcp",
+      audience: "https://xero-mcp.example.test/mcp",
+      grantedScopes: ["xero.read"],
+      issuedAt: new Date("2026-08-12T08:00:00.000Z"),
+      expiresAt: new Date("2026-08-12T09:00:00.000Z"),
+      installationId: "target-installation",
+      bindingId: "target-binding-current",
+      bindingRevision: 2,
+      workspaceId: "target-workspace",
+      subjectType: "USER",
+      subjectId: "target-user",
+      agentId: "target-agent",
+      connectionId: "target-connection-current",
+      authorizationId: "target-authorization",
+      tenantId: "11111111-1111-4111-8111-111111111111",
+      policyId: "target-policy",
+    };
+    const context = createOAuthRequestContext({
+      issuer: "https://xero-mcp.example.test",
+      resolvedToken,
+    });
+    const effectiveContext = Object.freeze({
+      ...context,
+      bindingId: "target-binding-pinned",
+      connectionId: "target-connection-pinned",
+      bindingRevision: 1,
+      targetSessionId: "target-session-safe-id",
+      targetSessionHash: "a".repeat(64),
+      targetSessionExpiresAt: new Date("2026-08-12T08:30:00.000Z"),
+    });
+    const targetRefSafe = safeLedgerTargetReference(effectiveContext.targetSessionId);
+    const issue = vi.fn().mockResolvedValue({
+      target_session_ref: targetSessionRef,
+      target_ref_safe: targetRefSafe,
+      binding_revision: 1,
+      organisation_name: "Pinned Company",
+      expires_at: "2026-08-12T08:30:00.000Z",
+    });
+    const start = vi.fn().mockResolvedValue({
+      status: "USER_CONFIRMATION_REQUIRED",
+      switchUrl: "https://xero-mcp.example.test/xero/organisation-switch?ticket=opaque",
+    });
+    const resolve = vi.fn().mockResolvedValue(effectiveContext);
+    const getOrganisation = vi.fn().mockResolvedValue({
+      organisationId: "22222222-2222-4222-8222-222222222222",
+      name: "Pinned Company",
+      baseCurrency: "SGD",
+      countryCode: "SG",
+    });
+    const withAudit = vi.fn().mockImplementation(async ({
+      action,
+      onResolvedContext,
+    }: {
+      action: () => Promise<unknown>;
+      onResolvedContext?: (resolved: Record<string, unknown>) => void;
+    }) => {
+      onResolvedContext?.({
+        actorId: effectiveContext.actorId,
+        tenantId: "22222222-2222-4222-8222-222222222222",
+        tenantName: "Pinned Company",
+      });
+      return action();
+    });
+    const service = { withAudit, getOrganisation } as unknown as AccountingService;
+    const server = createAccountingMcpServer(service, context, { start } as never, {
+      issue,
+      resolve,
+      required: true,
+    } as never);
+    const client = new Client({ name: "target-session-contract-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    closeables.push(client, server);
+
+    await server.connect(serverTransport as unknown as Transport);
+    await client.connect(clientTransport);
+    const missingTarget = await client.callTool({ name: "xero_get_organisation", arguments: {} });
+    expect(missingTarget.isError).toBe(true);
+
+    const pinned = await client.callTool({ name: "xero_pin_current_organisation", arguments: {} });
+    expect(pinned.structuredContent).toMatchObject({ result: { target_session_ref: targetSessionRef } });
+    const response = await client.callTool({
+      name: "xero_get_organisation",
+      arguments: { target_session_ref: targetSessionRef },
+    });
+
+    expect(issue).toHaveBeenCalledWith(context);
+    expect(resolve).toHaveBeenCalledWith(context, targetSessionRef);
+    expect(getOrganisation).toHaveBeenCalledWith(effectiveContext);
+    const ledgerAudit = withAudit.mock.calls.find(([call]) => call.toolName === "xero_get_organisation")?.[0];
+    expect(ledgerAudit).toMatchObject({ principal: effectiveContext, input: {} });
+    expect(JSON.stringify(ledgerAudit)).not.toContain(targetSessionRef);
+    expect(JSON.stringify(response.structuredContent)).not.toContain(targetSessionRef);
+    expect(response.structuredContent).toMatchObject({
+      result: { name: "Pinned Company", baseCurrency: "SGD" },
+      target_session_ref_safe: targetRefSafe,
+    });
+    expect((pinned.structuredContent as { result?: { target_ref_safe?: string } }).result?.target_ref_safe)
+      .toBe((response.structuredContent as Record<string, unknown>).target_session_ref_safe);
+    expect((response.structuredContent as Record<string, unknown>).binding_revision)
+      .toMatch(/^xero-binding-revision:[a-f0-9]{32}$/u);
+
+    const switchResult = await client.callTool({
+      name: "xero_start_organisation_switch",
+      arguments: { target_session_ref: targetSessionRef },
+    });
+    expect(switchResult.isError).not.toBe(true);
+    expect(start).toHaveBeenCalledWith(effectiveContext);
   });
 
   it("advertises connection status as a read-only idempotent production tool", async () => {
@@ -88,7 +209,7 @@ describe("MCP tool surface", () => {
     const statusTool = tools.tools.find((tool) => tool.name === "xero_connection_status");
 
     expect(statusTool).toMatchObject({
-      description: "Returns connector control-plane health and a safe bound-connection display. It does not prove a ledger target; use xero_get_organisation for target verification. Organisation changes require a separate short-lived user confirmation page and never happen silently from chat text.",
+      description: "Returns connector control-plane health and the current compatibility selection. It does not prove a ledger target; first call xero_pin_current_organisation, then verify with xero_get_organisation using that target_session_ref. Organisation changes require a separate short-lived user confirmation page and never happen silently from chat text.",
       annotations: {
         readOnlyHint: true,
         idempotentHint: true,
@@ -475,7 +596,9 @@ describe("MCP tool surface", () => {
     });
     const service = { prepareSupplierBillDraft, withAudit } as unknown as AccountingService;
     const context = testContext();
-    const server = createAccountingMcpServer(service, context);
+    const server = createAccountingMcpServer(service, context, undefined, undefined, undefined, {
+      unsafeExposeLegacyObjectMutationToolsForTests: true,
+    });
     const client = new Client({ name: "prepare-contract-test", version: "0.1.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     closeables.push(client, server);
@@ -530,7 +653,9 @@ describe("MCP tool surface", () => {
       audience: "https://xero-mcp.example.test/mcp",
       scopes: ["xero.read", "xero.draft.write"],
     });
-    const server = createAccountingMcpServer(service, context);
+    const server = createAccountingMcpServer(service, context, undefined, undefined, undefined, {
+      unsafeExposeLegacyObjectMutationToolsForTests: true,
+    });
     const client = new Client({ name: "write-receipt-contract-test", version: "0.1.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     closeables.push(client, server);
@@ -542,7 +667,6 @@ describe("MCP tool surface", () => {
       arguments: {
         preparation_id: `xmp_${"a".repeat(32)}`,
         request_id: "11111111-1111-4111-8111-111111111111",
-        confirmation_phrase: "确认创建 Supplier Bill DRAFT",
       },
     });
 
@@ -594,7 +718,9 @@ describe("MCP tool surface", () => {
       audience: "https://xero-mcp.example.test/mcp",
       scopes: ["xero.read", "xero.draft.write"],
     });
-    const server = createAccountingMcpServer(service, context);
+    const server = createAccountingMcpServer(service, context, undefined, undefined, undefined, {
+      unsafeExposeLegacyObjectMutationToolsForTests: true,
+    });
     const client = new Client({ name: "write-audit-recovery-contract-test", version: "0.1.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     closeables.push(client, server);
@@ -606,7 +732,6 @@ describe("MCP tool surface", () => {
       arguments: {
         preparation_id: `xmp_${"b".repeat(32)}`,
         request_id: "11111111-1111-4111-8111-111111111111",
-        confirmation_phrase: "确认创建 Supplier Bill DRAFT",
       },
     });
 
@@ -618,6 +743,9 @@ describe("MCP tool surface", () => {
         code: "WRITE_RESULT_UNKNOWN",
         message: "The Xero draft-write result is unknown.",
         retryable: false,
+        failure_layer: "PROVIDER_WRITE_OUTCOME",
+        provider_mutation_possible: true,
+        recovery_action: "READBACK_RECOVERY_ONLY",
         auditCallId,
         auditCompletionStatus: "UNKNOWN",
       },
@@ -885,7 +1013,9 @@ describe("MCP tool surface", () => {
       audience: "https://xero-mcp.example.test/mcp",
       scopes: ["xero.read", "xero.draft.write"],
     });
-    const server = createAccountingMcpServer(service, context);
+    const server = createAccountingMcpServer(service, context, undefined, undefined, undefined, {
+      unsafeExposeLegacyObjectMutationToolsForTests: true,
+    });
     const client = new Client({ name: "controlled-extension-contract-test", version: "0.1.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     closeables.push(client, server);
@@ -930,7 +1060,6 @@ describe("MCP tool surface", () => {
     const execution = {
       preparation_id: `xmp_${"a".repeat(32)}`,
       request_id: "request-controlled-001",
-      confirmation_phrase: "确认执行受控 Xero 操作",
     };
     const calls = [
       client.callTool({
@@ -943,6 +1072,7 @@ describe("MCP tool surface", () => {
           credit_note_date: "2026-08-07",
           currency: "SGD",
           reference: "CN-DEMO-001",
+          authoritative_provider_field: "REFERENCE",
           line_amount_type: "Exclusive",
           lines: [{
             description: "Controlled correction",
@@ -991,7 +1121,10 @@ describe("MCP tool surface", () => {
     ];
     const results = await Promise.all(calls);
 
-    expect(results.every((result) => result.isError !== true)).toBe(true);
+    expect(
+      results.every((result) => result.isError !== true),
+      JSON.stringify(results, null, 2),
+    ).toBe(true);
     expect(withAudit.mock.calls.map(([call]) => call.toolName).sort()).toEqual([
       "xero_prepare_credit_note_draft",
       "xero_create_credit_note_draft",
@@ -1028,7 +1161,14 @@ describe("MCP tool surface", () => {
     const result = await client.callTool({ name: "xero_list_quotes", arguments: {} });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.structuredContent)).toContain("xero.read");
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "SCOPE_MISSING",
+        failure_layer: "MCP_SCOPE",
+        recovery_action: "REAUTHORISE_MCP_SCOPE",
+        reason_codes: ["MISSING_MCP_SCOPE"],
+      },
+    });
     expect(listQuotes).not.toHaveBeenCalled();
   });
 
@@ -1041,7 +1181,9 @@ describe("MCP tool surface", () => {
       audience: "https://xero-mcp.example.test/mcp",
       scopes: ["xero.read"],
     });
-    const server = createAccountingMcpServer(service, context);
+    const server = createAccountingMcpServer(service, context, undefined, undefined, undefined, {
+      unsafeExposeLegacyObjectMutationToolsForTests: true,
+    });
     const client = new Client({ name: "scope-contract-test", version: "0.1.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     closeables.push(client, server);
@@ -1053,14 +1195,20 @@ describe("MCP tool surface", () => {
       arguments: {
         preparation_id: `xmp_${"c".repeat(32)}`,
         request_id: "11111111-1111-4111-8111-111111111111",
-        confirmation_phrase: "确认创建 Supplier Bill DRAFT",
       },
     });
 
     expect(result.isError).toBe(true);
     const firstContent = (result.content as Array<{ type: string; text?: string }>)[0];
     expect(firstContent?.type).toBe("text");
-    expect(firstContent?.type === "text" ? firstContent.text ?? "" : "").toContain("xero.draft.write");
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "SCOPE_MISSING",
+        failure_layer: "MCP_SCOPE",
+        recovery_action: "REAUTHORISE_MCP_SCOPE",
+        reason_codes: ["MISSING_MCP_SCOPE"],
+      },
+    });
     expect(withAudit).toHaveBeenCalledOnce();
     expect(executePreparedSupplierBillDraft).not.toHaveBeenCalled();
   });

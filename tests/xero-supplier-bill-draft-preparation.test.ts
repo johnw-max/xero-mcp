@@ -51,6 +51,7 @@ const referenceData: SupplierBillDraftReferenceData = {
     taxType: "NONE",
     status: "ACTIVE",
     displayTaxRate: "0.0000",
+    effectiveRate: "0.0000",
     canApplyToExpenses: true,
   }],
 };
@@ -64,6 +65,7 @@ const completeInput = {
   due_date: "2026-08-31",
   currency: "HKD",
   reference: "INV-1001",
+  authoritative_provider_field: "INVOICE_NUMBER" as const,
   line_amount_type: "Exclusive" as const,
   lines: [{
     description: "Software subscription",
@@ -83,8 +85,8 @@ describe("read-only supplier bill draft preparation", () => {
 
     expect(first).toMatchObject({
       technicallyReady: true,
-      readyForUserConfirmation: true,
-      requiresUserConfirmation: true,
+      readyForAutonomousExecution: true,
+      requiresUserConfirmation: false,
       executionAllowed: false,
     });
     expect(first.blockers).toEqual([]);
@@ -102,6 +104,7 @@ describe("read-only supplier bill draft preparation", () => {
       due_date: "2026-08-31",
       currency: "HKD",
       reference: "INV-1001",
+      authoritative_provider_field: "INVOICE_NUMBER",
       line_amount_type: "Exclusive",
       lines: [{
         description: "Software subscription",
@@ -150,8 +153,8 @@ describe("read-only supplier bill draft preparation", () => {
     expect(result.proposal).toBeNull();
     expect(result).toMatchObject({
       technicallyReady: false,
-      readyForUserConfirmation: false,
-      requiresUserConfirmation: true,
+      readyForAutonomousExecution: false,
+      requiresUserConfirmation: false,
       executionAllowed: false,
     });
     expect(result.blockers).toEqual(expect.arrayContaining([
@@ -181,8 +184,8 @@ describe("read-only supplier bill draft preparation", () => {
 
     expect(first).toMatchObject({
       technicallyReady: true,
-      readyForUserConfirmation: true,
-      requiresUserConfirmation: true,
+      readyForAutonomousExecution: true,
+      requiresUserConfirmation: false,
       executionAllowed: false,
     });
     expect(first.blockers).toEqual([]);
@@ -259,6 +262,8 @@ describe("Xero supplier bill preparation reference reads", () => {
           name: "Output Tax",
           taxType: "OUTPUT",
           status: "ACTIVE",
+          displayTaxRate: 9,
+          effectiveRate: 9,
           canApplyToRevenue: true,
           canApplyToEquity: false,
         }],
@@ -276,6 +281,8 @@ describe("Xero supplier bill preparation reference reads", () => {
 
     await expect(provider.listTaxRates("actor-a")).resolves.toEqual([expect.objectContaining({
       taxType: "OUTPUT",
+      displayTaxRate: "9.0000",
+      effectiveRate: "9.0000",
       canApplyToRevenue: true,
       canApplyToEquity: false,
     })]);
@@ -292,6 +299,7 @@ describe("Xero supplier bill preparation reference reads", () => {
           taxType: "NONE",
           status: "ACTIVE",
           displayTaxRate: 0,
+          effectiveRate: 0,
           canApplyToRevenue: false,
           canApplyToEquity: true,
         }],
@@ -325,6 +333,7 @@ describe("Xero supplier bill preparation reference reads", () => {
         taxType: "NONE",
         name: "No Tax",
         displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
         canApplyToRevenue: false,
         canApplyToEquity: true,
       }],

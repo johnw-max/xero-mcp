@@ -3,6 +3,10 @@ import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { runMigrations } from "../src/db/migrate.js";
 import { PostgresAccountingRepository } from "../src/db/postgresRepository.js";
+import {
+  createLedgerAuthoritySnapshot,
+  RepositoryLedgerAuthoritySnapshotResolver,
+} from "../src/domain/ledgerAuthority.js";
 import type { ResolvedMcpAccessToken } from "../src/domain/models.js";
 import type { Logger } from "../src/logging.js";
 import type { AccountingProvider, SupplierBillSnapshot } from "../src/providers/types.js";
@@ -11,6 +15,19 @@ import { createOAuthRequestContext } from "../src/security/requestContext.js";
 import { AccountingService } from "../src/services/accountingService.js";
 import type { ConnectionTicketService } from "../src/services/connectionTicketService.js";
 import { XeroMutationService } from "../src/services/xeroMutationService.js";
+import {
+  verifyXeroExternalGovernanceAuthority,
+  xeroStandingDelegationsWithExternalGovernance,
+} from "../src/policy/xeroExternalGovernanceAuthority.js";
+import { createTestXeroGovernanceArtifacts } from "./helpers/xeroGovernanceAuthority.js";
+
+/**
+ * Most cases in this file preserve migration-017 PostgreSQL invariants for the
+ * historical confirmation-backed mutation foundation. They opt into that
+ * path through the explicit test-only switch and are not a public 0.4
+ * contract. The cross-instance AccountingService case below uses the current
+ * standing-autonomous path and never supplies a confirmation phrase.
+ */
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const describeWithPostgres = databaseUrl ? describe : describe.skip;
@@ -18,19 +35,77 @@ const describeWithPostgres = databaseUrl ? describe : describe.skip;
 describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
   const repository = databaseUrl ? new PostgresAccountingRepository(databaseUrl) : undefined;
   const suffix = randomUUID();
-  const now = new Date("2026-08-07T09:00:00.000Z");
+  // Repository expiry decisions use PostgreSQL statement_timestamp(). These
+  // values are rebound to that clock in beforeAll so a historical fixture
+  // date cannot silently expire every preparation and target lease.
+  let now = new Date();
   const workspaceId = `workspace-xero-mutation-${suffix}`;
   const subjectId = `user-xero-mutation-${suffix}`;
-  const tenantId = `tenant-xero-mutation-${suffix}`;
+  const tenantId = randomUUID();
   const installationId = `installation-xero-mutation-${suffix}`;
   const bindingId = `binding-xero-mutation-${suffix}`;
   const connectionId = `connection-xero-mutation-${suffix}`;
   const authorizationId = `authorization-xero-mutation-${suffix}`;
   const agentId = `agent-xero-mutation-${suffix}`;
+  const targetSessionId = `target-session-xero-mutation-${suffix}`;
+  const targetSessionHash = hashObject({ kind: "xero-mutation-pg-target", suffix });
+  let targetSessionExpiresAt = new Date(now.getTime() + 2 * 60 * 60_000);
 
   beforeAll(async () => {
     if (!databaseUrl || !repository) throw new Error("TEST_DATABASE_URL is required");
+    const repositoryClock = await repository.pool.query<{ repository_now: Date }>(
+      "SELECT statement_timestamp() AS repository_now",
+    );
+    const repositoryNow = repositoryClock.rows[0]?.repository_now;
+    if (!(repositoryNow instanceof Date) || !Number.isFinite(repositoryNow.getTime())) {
+      throw new Error("PostgreSQL did not return a valid test fixture timestamp");
+    }
+    now = repositoryNow;
+    targetSessionExpiresAt = new Date(repositoryNow.getTime() + 2 * 60 * 60_000);
+    const receiptIssuedAt = new Date(repositoryNow.getTime() - 30 * 60_000).toISOString();
+    const statusIssuedAt = new Date(repositoryNow.getTime() - 15 * 60_000).toISOString();
+    const governanceFixture = createTestXeroGovernanceArtifacts(tenantId, {
+      now: repositoryNow,
+      receiptIssuedAt,
+      receiptNotBefore: receiptIssuedAt,
+      receiptExpiresAt: new Date(repositoryNow.getTime() + 23.5 * 60 * 60_000).toISOString(),
+      statusIssuedAt,
+      statusExpiresAt: new Date(repositoryNow.getTime() + 45 * 60_000).toISOString(),
+      workspaceId,
+      agentId,
+      installationId,
+    });
+    const verifiedGovernance = verifyXeroExternalGovernanceAuthority({
+      trustBundle: governanceFixture.trustBundle,
+      receipts: governanceFixture.receipts,
+      status: governanceFixture.status,
+      expectedTrustBundleSha256: governanceFixture.expectedTrustBundleSha256,
+      expectedReceiptsSha256: governanceFixture.expectedReceiptsSha256,
+      expectedStatusSha256: governanceFixture.expectedStatusSha256,
+      now: repositoryNow,
+    });
+    const governedStandingDelegations = xeroStandingDelegationsWithExternalGovernance(verifiedGovernance, [{
+      delegationId: `postgres-standing-delegation-${suffix}`,
+      revision: 1,
+      status: "ACTIVE",
+      providerId: "xero",
+      workspaceId,
+      agentId,
+      installationId,
+      tenantIds: [tenantId],
+      actionIds: ["supplier_bill.create_draft"],
+      expiresAt: targetSessionExpiresAt,
+      firmGovernanceRequired: true,
+    }]);
     await runMigrations(databaseUrl, resolve(process.cwd(), "migrations"));
+    await repository.pool.query("DELETE FROM ledger_authority_snapshots WHERE provider_id = 'xero'");
+    await repository.publishLedgerAuthoritySnapshot(createLedgerAuthoritySnapshot({
+      providerId: "xero",
+      revision: 1,
+      writeKillSwitchEnabled: true,
+      standingDelegations: governedStandingDelegations,
+      publishedAt: repositoryNow,
+    }));
     await expect(repository.readiness()).resolves.toBe(true);
     await repository.saveProviderAuthorization({
       authorizationId,
@@ -81,6 +156,16 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
       createdAt: now,
       updatedAt: now,
     });
+    await repository.saveLedgerTargetSession({
+      sessionId: targetSessionId,
+      sessionHash: targetSessionHash,
+      installationId,
+      bindingId,
+      connectionId,
+      bindingRevision: 1,
+      createdAt: now,
+      expiresAt: targetSessionExpiresAt,
+    });
   });
 
   afterAll(async () => {
@@ -88,6 +173,7 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
     await repository.pool.query("DELETE FROM posting_requests WHERE tenant_id = $1", [tenantId]);
     await repository.pool.query("DELETE FROM xero_mutation_requests WHERE tenant_id = $1", [tenantId]);
     await repository.pool.query("DELETE FROM xero_mutation_preparations WHERE tenant_id = $1", [tenantId]);
+    await repository.pool.query("DELETE FROM ledger_target_sessions WHERE session_hash = $1", [targetSessionHash]);
     await repository.pool.query(
       "DELETE FROM oauth_installation_active_bindings WHERE oauth_installation_id = $1",
       [installationId],
@@ -96,6 +182,7 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
     await repository.pool.query("DELETE FROM oauth_installations WHERE installation_id = $1", [installationId]);
     await repository.pool.query("DELETE FROM provider_connections WHERE connection_id = $1", [connectionId]);
     await repository.pool.query("DELETE FROM provider_authorizations WHERE authorization_id = $1", [authorizationId]);
+    await repository.pool.query("DELETE FROM ledger_authority_snapshots WHERE provider_id = 'xero'");
     await repository.close();
   });
 
@@ -121,22 +208,56 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
       tenantId,
       ...overrides,
     };
-    return createOAuthRequestContext({ issuer: "https://mcp.example.test", resolvedToken: token });
+    return Object.freeze({
+      ...createOAuthRequestContext({ issuer: "https://mcp.example.test", resolvedToken: token }),
+      targetSessionId,
+      targetSessionHash,
+      targetSessionExpiresAt,
+    });
   }
 
-  function service() {
+  function legacyFoundationService() {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
     return new XeroMutationService(repository, {
       confirmationSecret: "postgres-confirmation-secret-that-is-at-least-32-bytes",
       now: () => now,
+      unsafeAllowLegacyContextForTests: true,
+      legacyBindingForTests: {
+        actorId: `${workspaceId}:user:${subjectId}`,
+        workspaceId,
+        tenantId,
+        installationId,
+        bindingId,
+        connectionId,
+        bindingRevision: 1,
+        targetSessionId,
+      },
+    });
+  }
+
+  function autonomousService(
+    targetRepository: PostgresAccountingRepository,
+    confirmationSecret: string,
+  ) {
+    return new XeroMutationService(targetRepository, {
+      confirmationSecret,
+      now: () => now,
+      authoritySnapshotResolver: new RepositoryLedgerAuthoritySnapshotResolver(targetRepository),
+      providerCapabilityEvaluator: {
+        evaluate: async () => ({
+          allowed: true,
+          denyReasons: [],
+          receiptHash: hashObject({ kind: "postgres-provider-capability", tenantId }),
+        }),
+      },
     });
   }
 
   it.each(["SUPPLIER_BILL", "SALES_INVOICE"] as const)(
-    "persists one-time %s DRAFT confirmation through exact readback",
+    "persists test-only legacy %s DRAFT authority through exact readback",
     async (objectType) => {
       if (!repository) throw new Error("TEST_DATABASE_URL is required");
-      const mutationService = service();
+      const mutationService = legacyFoundationService();
       const discriminator = `${objectType.toLowerCase()}-${suffix}`;
       const canonicalPayload = { objectType, status: "DRAFT", reference: discriminator };
       const prepared = await mutationService.prepare(context(), {
@@ -180,8 +301,8 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
     const secondRepository = new PostgresAccountingRepository(databaseUrl);
     try {
       const confirmationSecret = "postgres-invoice-cross-instance-secret-at-least-32-bytes";
-      const firstMutations = new XeroMutationService(repository, { confirmationSecret, now: () => now });
-      const secondMutations = new XeroMutationService(secondRepository, { confirmationSecret, now: () => now });
+      const firstMutations = autonomousService(repository, confirmationSecret);
+      const secondMutations = autonomousService(secondRepository, confirmationSecret);
       const discriminator = `invoice-cross-instance-${randomUUID()}`;
       const contactId = randomUUID();
       const xeroInvoiceId = randomUUID();
@@ -195,6 +316,7 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
         due_date: "2026-08-21",
         currency: "HKD",
         reference: `AP-${discriminator}`,
+        authoritative_provider_field: "INVOICE_NUMBER" as const,
         line_amount_type: "Exclusive" as const,
         lines: [{
           description: "Cross-instance accounting service",
@@ -213,7 +335,7 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
         invoiceDate: canonicalPayload.invoice_date,
         dueDate: canonicalPayload.due_date,
         currency: canonicalPayload.currency,
-        reference: canonicalPayload.reference,
+        invoiceNumber: canonicalPayload.reference,
         lineAmountType: canonicalPayload.line_amount_type,
         lines: [{
           description: canonicalPayload.lines[0]!.description,
@@ -257,6 +379,8 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
           taxType: "NONE",
           name: "No Tax",
           status: "ACTIVE",
+          displayTaxRate: "0.0000",
+          effectiveRate: "0.0000",
           canApplyToExpenses: true,
         }]),
         getContact: vi.fn(async () => ({ contactId, name: "Cross-instance Supplier", status: "ACTIVE" })),
@@ -280,12 +404,31 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
       const command = {
         preparation_id: prepared.preparationId,
         request_id: `confirm-${discriminator}`,
-        confirmation_phrase: prepared.confirmationPhrase,
       };
 
       const [first, second] = await Promise.all([
-        accounting(repository, firstMutations).executePreparedSupplierBillDraft(context(), command),
-        accounting(secondRepository, secondMutations).executePreparedSupplierBillDraft(context(), command),
+        accounting(repository, firstMutations).executePreparedSupplierBillDraft(
+          context(),
+          command,
+          undefined,
+          undefined,
+          {
+            route: "SUPPLIER_BILL",
+            referenceKind: "FORMAL_DOCUMENT_NUMBER",
+            authoritativeProviderField: "INVOICE_NUMBER",
+          },
+        ),
+        accounting(secondRepository, secondMutations).executePreparedSupplierBillDraft(
+          context(),
+          command,
+          undefined,
+          undefined,
+          {
+            route: "SUPPLIER_BILL",
+            referenceKind: "FORMAL_DOCUMENT_NUMBER",
+            authoritativeProviderField: "INVOICE_NUMBER",
+          },
+        ),
       ]);
 
       expect(createDraftSupplierBill).toHaveBeenCalledOnce();
@@ -302,9 +445,9 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
     }
   });
 
-  it("atomically confirms once, never stores phrase plaintext, and preserves mismatch/uncertain source guards", async () => {
+  it("atomically claims test-only legacy authority, never stores phrase plaintext, and preserves mismatch/uncertain source guards", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
-    const mutationService = service();
+    const mutationService = legacyFoundationService();
     const canonicalPayload = { objectType: "QUOTE", status: "DRAFT", reference: `QUOTE-${suffix}` };
     const phrase = `确认创建报价草稿｜校验 ${suffix.replaceAll("-", "").slice(0, 10).toUpperCase()}`;
     const prepared = await mutationService.prepare(context(), {
@@ -417,7 +560,7 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
 
   it("keeps UPDATE target and canonical source fields immutable at the database boundary", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
-    const mutationService = service();
+    const mutationService = legacyFoundationService();
     const targetXeroObjectId = `xero-item-${suffix}`;
     const prepared = await mutationService.prepare(context(), {
       objectType: "ITEM",
@@ -460,7 +603,7 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
 
   it("stores local validation evidence separately from provider write evidence", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
-    const mutationService = service();
+    const mutationService = legacyFoundationService();
     const prepared = await mutationService.prepare(context(), {
       objectType: "CONTACT",
       operation: "CREATE",
@@ -501,7 +644,7 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
 
   it("locks one known Xero object across CREATE and UPDATE, then permits UPDATE after verified CREATE", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
-    const mutationService = service();
+    const mutationService = legacyFoundationService();
     const xeroObjectId = `xero-contact-cross-operation-${suffix}`;
     const createPayload = { name: `Cross operation contact ${suffix}` };
     const createPrepared = await mutationService.prepare(context(), {
@@ -561,7 +704,7 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
 
   it("persists an exact provider rejection and allows a corrected retry for the same source row", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
-    const mutationService = service();
+    const mutationService = legacyFoundationService();
     const baseInput = {
       objectType: "CONTACT" as const,
       operation: "CREATE" as const,
@@ -612,7 +755,7 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
   });
 
   it("derives tenant only from the active binding and rejects token binding alterations", async () => {
-    const mutationService = service();
+    const mutationService = legacyFoundationService();
     const tenantClaimIgnored = await mutationService.prepare(context({ tenantId: "attacker-tenant-claim" }), {
       objectType: "CONTACT",
       operation: "CREATE",

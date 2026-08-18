@@ -24,10 +24,23 @@ import { hashObject } from "../src/security/hash.js";
 import { AccountingService } from "../src/services/accountingService.js";
 import type { ConnectionTicketService } from "../src/services/connectionTicketService.js";
 import { reviewActionForPosting } from "../src/services/reviewService.js";
+import {
+  issueProviderWriteTestPermit,
+  providerWriteTestContext,
+} from "./helpers/xeroProviderPermit.js";
 
 const tenantId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const invoiceId = "11111111-1111-4111-8111-111111111111";
 const contactId = "22222222-2222-4222-8222-222222222222";
+const providerConnectionId = "connection-sales-provider-test";
+
+const noneRevenueTaxRate = {
+  taxType: "NONE",
+  status: "ACTIVE",
+  displayTaxRate: "0.0000",
+  effectiveRate: "0.0000",
+  canApplyToRevenue: true,
+};
 
 const salesInput: CreateDraftSalesInvoiceInput = {
   request_id: "sales-create-20260807-a",
@@ -40,6 +53,7 @@ const salesInput: CreateDraftSalesInvoiceInput = {
   due_date: "2026-08-21",
   currency: "HKD",
   reference: "AR-20260807-001",
+  authoritative_provider_field: "INVOICE_NUMBER",
   line_amount_type: "Exclusive",
   lines: [{
     description: "Accounting advisory services",
@@ -59,7 +73,8 @@ const salesInvoice: InvoiceSnapshot = {
   invoiceDate: "2026-08-07",
   dueDate: "2026-08-21",
   currency: "HKD",
-  reference: "AR-20260807-001",
+  invoiceNumber: "AR-20260807-001",
+  reference: "supplementary-reference",
   lineAmountType: "Exclusive",
   lines: [{
     description: "Accounting advisory services",
@@ -84,12 +99,18 @@ const logger: Logger = {
 
 function providerWithClient(client: unknown): XeroAccountingProvider {
   const connection = {
+    connectionId: providerConnectionId,
     tenantId,
     tenantName: "Tenant A",
   };
   const manager = {
     withClient: async <T>(
       _principal: unknown,
+      action: (clientValue: unknown, connectionValue: typeof connection) => Promise<T>,
+    ): Promise<T> => action(client, connection),
+    withWriteClient: async <T>(
+      _principal: unknown,
+      _authorization: unknown,
       action: (clientValue: unknown, connectionValue: typeof connection) => Promise<T>,
     ): Promise<T> => action(client, connection),
   } as unknown as XeroClientManager;
@@ -111,6 +132,7 @@ function service(
     },
     logger,
     connectionTickets: {} as ConnectionTicketService,
+    unsafeAllowDirectMutationForTests: true,
   });
 }
 
@@ -131,7 +153,14 @@ describe("controlled ACCREC draft schema", () => {
       contacts: [{ contactId, name: "Demo Customer", status: "ACTIVE", isCustomer: true }],
       contactsComplete: true,
       accounts: [{ code: "200", name: "Consulting Revenue", class: "REVENUE", status: "ACTIVE" }],
-      taxRates: [{ taxType: "NONE", name: "No Tax", status: "ACTIVE" }],
+      taxRates: [{
+        taxType: "NONE",
+        name: "No Tax",
+        status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
+        canApplyToRevenue: true,
+      }],
     });
     const provider = {
       getSupplierBillDraftReferenceData,
@@ -146,6 +175,7 @@ describe("controlled ACCREC draft schema", () => {
       due_date: "2026-08-21",
       currency: "HKD",
       reference: "AR-PREP-001",
+      authoritative_provider_field: "INVOICE_NUMBER",
       line_amount_type: "Exclusive",
       lines: [{
         description: "Accounting advisory services",
@@ -158,8 +188,7 @@ describe("controlled ACCREC draft schema", () => {
 
     expect(prepared).toMatchObject({
       technicallyReady: true,
-      readyForUserConfirmation: true,
-      requiresUserConfirmation: true,
+      requiresUserConfirmation: false,
       executionAllowed: false,
       evidence: { customer: { selected: { contactId } } },
       proposal: {
@@ -167,6 +196,7 @@ describe("controlled ACCREC draft schema", () => {
         source_evidence_type: "SERVER_FINGERPRINTED_EXTRACTION",
       },
     });
+    expect(prepared).not.toHaveProperty("readyForUserConfirmation");
     expect(prepared.blockers).toEqual([]);
     expect(prepared.evidence).not.toHaveProperty("supplier");
     expect(prepared.proposal).not.toHaveProperty("user_confirmation");
@@ -194,6 +224,8 @@ describe("controlled ACCREC draft schema", () => {
           taxType: "OUTPUT",
           name: "Output Tax",
           status: "ACTIVE",
+          displayTaxRate: "9.0000",
+          effectiveRate: "9.0000",
           canApplyToRevenue: false,
         }],
       }),
@@ -242,7 +274,8 @@ describe("Xero ACCREC provider write", () => {
           date: "2026-08-07",
           dueDate: "2026-08-21",
           currencyCode: "HKD",
-          reference: "AR-20260807-001",
+          invoiceNumber: "AR-20260807-001",
+          reference: "supplementary-reference",
           lineAmountTypes: "Exclusive",
           lineItems: [{
             description: "Accounting advisory services",
@@ -262,10 +295,22 @@ describe("Xero ACCREC provider write", () => {
     });
     const provider = providerWithClient({ accountingApi: { createInvoices, getInvoices } });
 
+    const mutationRequestId = "xmr-sales-provider-test";
+    const { user_confirmation: _confirmation, ...canonicalPayload } = salesInput;
+    const recordWriteEvidence = vi.fn(async () => undefined);
     const result = await provider.createDraftSalesInvoice(
-      "actor-a",
+      providerWriteTestContext(providerConnectionId),
       salesInput,
       "zc:create:accrec:test-a",
+      recordWriteEvidence,
+      issueProviderWriteTestPermit({
+        adapterOperation: "XeroAccountingProvider.createDraftSalesInvoice",
+        mutationRequestId,
+        canonicalPayload,
+        tenantId,
+        connectionId: providerConnectionId,
+      }),
+      mutationRequestId,
     );
 
     expect(createInvoices).toHaveBeenCalledWith(
@@ -275,12 +320,14 @@ describe("Xero ACCREC provider write", () => {
           type: "ACCREC",
           status: "DRAFT",
           contact: { contactID: contactId },
+          invoiceNumber: "AR-20260807-001",
         })],
       },
       true,
       4,
-      "zc:create:accrec:test-a",
+      mutationRequestId,
     );
+    expect(recordWriteEvidence).toHaveBeenCalledOnce();
     expect(getInvoices).toHaveBeenCalledOnce();
     expect(result).toMatchObject({
       invoice: { invoiceId, tenantId, type: "ACCREC", status: "DRAFT" },
@@ -305,7 +352,7 @@ describe("controlled ACCREC service write", () => {
       new InMemoryAccountingRepository(),
       provider,
       { enabled: false, allowedTenantId: tenantId },
-    ).createDraftSalesInvoice("actor-a", salesInput)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    ).createDraftSalesInvoice("actor-a", salesInput)).rejects.toMatchObject({ code: "WRITE_GATE_DISABLED" });
     expect(listAccounts).not.toHaveBeenCalled();
     expect(createDraftSalesInvoice).not.toHaveBeenCalled();
   });
@@ -329,7 +376,7 @@ describe("controlled ACCREC service write", () => {
       new InMemoryAccountingRepository(),
       provider,
       { enabled: true, allowedTenantId: tenantId },
-    ).createDraftSalesInvoice("actor-a", salesInput)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    ).createDraftSalesInvoice("actor-a", salesInput)).rejects.toMatchObject({ code: "STANDING_DELEGATION_REQUIRED" });
     expect(listAccounts).not.toHaveBeenCalled();
     expect(createDraftSalesInvoice).not.toHaveBeenCalled();
   });
@@ -348,6 +395,8 @@ describe("controlled ACCREC service write", () => {
       listTaxRates: vi.fn().mockResolvedValue([{
         taxType: "NONE",
         status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
         [flag]: false,
       }]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
@@ -368,7 +417,7 @@ describe("controlled ACCREC service write", () => {
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId: "actor-a", tenantId, tenantName: "Tenant A" }),
       listAccounts: vi.fn().mockResolvedValue([{ code: "200", class: "REVENUE", status: "ACTIVE" }]),
-      listTaxRates: vi.fn().mockResolvedValue([{ taxType: "NONE", status: "ACTIVE" }]),
+      listTaxRates: vi.fn().mockResolvedValue([noneRevenueTaxRate]),
       getContact: vi.fn().mockResolvedValue({ contactId, name: "Demo Customer", status: "ACTIVE" }),
       createDraftSalesInvoice,
       getInvoice: vi.fn().mockResolvedValue(salesInvoice),
@@ -419,7 +468,7 @@ describe("controlled ACCREC service write", () => {
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId: "actor-a", tenantId, tenantName: "Tenant A" }),
       listAccounts: vi.fn().mockResolvedValue([{ code: "200", class: "REVENUE", status: "ACTIVE" }]),
-      listTaxRates: vi.fn().mockResolvedValue([{ taxType: "NONE", status: "ACTIVE" }]),
+      listTaxRates: vi.fn().mockResolvedValue([noneRevenueTaxRate]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
       createDraftSalesInvoice: vi.fn().mockResolvedValue({
         invoice: { ...salesInvoice, tenantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
@@ -438,7 +487,7 @@ describe("controlled ACCREC service write", () => {
     ["invoice date", () => ({ ...salesInvoice, invoiceDate: "2026-08-08" })],
     ["due date", () => ({ ...salesInvoice, dueDate: "2026-08-22" })],
     ["currency", () => ({ ...salesInvoice, currency: "USD" })],
-    ["reference", () => ({ ...salesInvoice, reference: "AR-DIFFERENT" })],
+    ["formal number", () => ({ ...salesInvoice, invoiceNumber: "AR-DIFFERENT" })],
     ["line description", () => ({
       ...salesInvoice,
       lines: [{ ...salesInvoice.lines[0]!, description: "Different service" }],
@@ -461,7 +510,7 @@ describe("controlled ACCREC service write", () => {
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId: "actor-a", tenantId, tenantName: "Tenant A" }),
       listAccounts: vi.fn().mockResolvedValue([{ code: "200", class: "REVENUE", status: "ACTIVE" }]),
-      listTaxRates: vi.fn().mockResolvedValue([{ taxType: "NONE", status: "ACTIVE" }]),
+      listTaxRates: vi.fn().mockResolvedValue([noneRevenueTaxRate]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
       createDraftSalesInvoice,
     } as unknown as AccountingProvider;
@@ -481,7 +530,7 @@ describe("controlled ACCREC service write", () => {
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId: "actor-a", tenantId, tenantName: "Tenant A" }),
       listAccounts: vi.fn().mockResolvedValue([{ code: "200", class: "REVENUE", status: "ACTIVE" }]),
-      listTaxRates: vi.fn().mockResolvedValue([{ taxType: "NONE", status: "ACTIVE" }]),
+      listTaxRates: vi.fn().mockResolvedValue([noneRevenueTaxRate]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
       createDraftSalesInvoice,
       getInvoice: vi.fn(),
@@ -514,7 +563,7 @@ describe("controlled ACCREC service write", () => {
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId: "actor-a", tenantId, tenantName: "Tenant A" }),
       listAccounts: vi.fn().mockResolvedValue([{ code: "200", class: "REVENUE", status: "ACTIVE" }]),
-      listTaxRates: vi.fn().mockResolvedValue([{ taxType: "NONE", status: "ACTIVE" }]),
+      listTaxRates: vi.fn().mockResolvedValue([noneRevenueTaxRate]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
       createDraftSalesInvoice,
       getInvoice,
@@ -604,22 +653,13 @@ describe("controlled ACCREC service write", () => {
   });
 });
 
-describe("sales invoice MCP public interface", () => {
+describe("sales invoice legacy MCP isolation", () => {
   const closeables: Array<{ close(): Promise<void> }> = [];
   afterEach(async () => Promise.all(closeables.splice(0).map((closeable) => closeable.close())));
 
-  it("routes preparation through xero.read and creation through xero.draft.write", async () => {
-    const proposal = {
-      ...salesInput,
-      user_confirmation: undefined,
-      source_sha256: hashObject(canonicalSalesInvoiceDraftExtractionFingerprint(salesInput)),
-    };
-    const prepareSalesInvoiceDraft = vi.fn().mockResolvedValue({ proposal, executionAllowed: false });
-    const executePreparedSalesInvoiceDraft = vi.fn().mockResolvedValue({ invoiceId, status: "DRAFT" });
+  it("does not expose object-level sales preparation or creation to the Agent", async () => {
     const withAudit = vi.fn().mockImplementation(async ({ action }: { action: () => Promise<unknown> }) => action());
     const accounting = {
-      prepareSalesInvoiceDraft,
-      executePreparedSalesInvoiceDraft,
       withAudit,
     } as unknown as AccountingService;
     const context = createLegacySharedBearerRequestContext({
@@ -635,60 +675,9 @@ describe("sales invoice MCP public interface", () => {
     await client.connect(clientTransport);
 
     const tools = await client.listTools();
-    expect(tools.tools.find((tool) => tool.name === "xero_prepare_sales_invoice_draft")?.annotations)
-      .toMatchObject({ readOnlyHint: true, idempotentHint: true, destructiveHint: false });
-    expect(tools.tools.find((tool) => tool.name === "xero_create_draft_sales_invoice")?.annotations)
-      .toMatchObject({ readOnlyHint: false, idempotentHint: true, destructiveHint: false });
-
-    await client.callTool({
-      name: "xero_prepare_sales_invoice_draft",
-      arguments: { customer_name: "Demo Customer", lines: [{}] },
-    });
-    const execution = {
-      preparation_id: `xmp_${"a".repeat(32)}`,
-      request_id: "sales-create-20260807-a",
-      confirmation_phrase: "确认创建 Sales Invoice DRAFT",
-    };
-    await client.callTool({ name: "xero_create_draft_sales_invoice", arguments: execution });
-
-    expect(prepareSalesInvoiceDraft).toHaveBeenCalledWith(context, {
-      customer_name: "Demo Customer",
-      lines: [{}],
-    });
-    expect(executePreparedSalesInvoiceDraft).toHaveBeenCalledWith(context, execution);
-    expect(withAudit.mock.calls.map(([call]) => [call.toolName, call.requiredScope])).toEqual([
-      ["xero_prepare_sales_invoice_draft", undefined],
-      ["xero_create_draft_sales_invoice", undefined],
-    ]);
-  });
-
-  it("denies AR draft creation at the MCP scope boundary without calling the service", async () => {
-    const executePreparedSalesInvoiceDraft = vi.fn();
-    const withAudit = vi.fn().mockImplementation(async ({ action }: { action: () => Promise<unknown> }) => action());
-    const accounting = { executePreparedSalesInvoiceDraft, withAudit } as unknown as AccountingService;
-    const context = createLegacySharedBearerRequestContext({
-      actorId: "read-only-actor",
-      audience: "https://xero-mcp.example.test/mcp",
-      scopes: ["xero.read"],
-    });
-    const server = createAccountingMcpServer(accounting, context);
-    const client = new Client({ name: "sales-invoice-scope-contract", version: "0.1.0" });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    closeables.push(client, server);
-    await server.connect(serverTransport as unknown as Transport);
-    await client.connect(clientTransport);
-
-    const result = await client.callTool({
-      name: "xero_create_draft_sales_invoice",
-      arguments: {
-        preparation_id: `xmp_${"b".repeat(32)}`,
-        request_id: "sales-create-read-only-001",
-        confirmation_phrase: "确认创建 Sales Invoice DRAFT",
-      },
-    });
-
-    expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.structuredContent)).toContain("xero.draft.write");
-    expect(executePreparedSalesInvoiceDraft).not.toHaveBeenCalled();
+    expect(tools.tools.map((tool) => tool.name)).not.toContain("xero_prepare_sales_invoice_draft");
+    expect(tools.tools.map((tool) => tool.name)).not.toContain("xero_create_draft_sales_invoice");
+    expect(tools.tools.map((tool) => tool.name)).toContain("xero_execute_accounting_case");
+    expect(withAudit).not.toHaveBeenCalled();
   });
 });

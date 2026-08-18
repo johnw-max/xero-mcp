@@ -61,6 +61,7 @@ describe("AccountingService controlled extension routing", () => {
       credit_note_date: "2026-08-07",
       currency: "SGD",
       reference: "CN-DEMO-001",
+      authoritative_provider_field: "CREDIT_NOTE_NUMBER",
       line_amount_type: "Exclusive",
       lines: [{
         description: "Controlled correction",
@@ -131,12 +132,10 @@ describe("AccountingService controlled extension routing", () => {
     expect(() => service.createCreditNoteDraft(context, {
       preparation_id: `xmp_${"a".repeat(32)}`,
       request_id: "request-controlled-001",
-      confirmation_phrase: "确认执行受控 Xero 操作",
     })).toThrow(/ledger-adjustment service is unavailable/i);
     expect(() => service.createContact(context, {
       preparation_id: `xmp_${"a".repeat(32)}`,
       request_id: "request-controlled-001",
-      confirmation_phrase: "确认执行受控 Xero 操作",
     })).toThrow(/Contact\/Item service is unavailable/i);
   });
 });

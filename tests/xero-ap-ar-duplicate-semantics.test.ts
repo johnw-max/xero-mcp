@@ -89,16 +89,14 @@ describe("Xero AP/AR business duplicate semantics", () => {
     expect(second.posting.postingRequestId).not.toBe(first.posting.postingRequestId);
   });
 
-  it("keeps contact plus supplier reference as a hard ACCPAY duplicate identity", async () => {
+  it("does not treat a reusable supplier reference as a hard ACCPAY identity", async () => {
     const repository = new InMemoryAccountingRepository();
     const first = await repository.createOrGetPosting(posting("ACCPAY", "ap-reference-first"));
     const second = await repository.createOrGetPosting(posting("ACCPAY", "ap-reference-second"));
 
     expect(first.created).toBe(true);
-    expect(second).toMatchObject({
-      created: false,
-      posting: { postingRequestId: first.posting.postingRequestId },
-    });
+    expect(second.created).toBe(true);
+    expect(second.posting.postingRequestId).not.toBe(first.posting.postingRequestId);
   });
 
   it("keeps one tenant-global source guard across ACCPAY and ACCREC", async () => {

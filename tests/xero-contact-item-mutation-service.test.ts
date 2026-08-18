@@ -30,6 +30,7 @@ import {
 import { hashObject } from "../src/security/hash.js";
 import { XeroContactItemMutationService } from "../src/services/xeroContactItemMutationService.js";
 import { XeroMutationService } from "../src/services/xeroMutationService.js";
+import { XERO_AUTONOMOUS_WRITE_ACTIONS } from "../src/policy/xeroAutonomousActions.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const contactId = "22222222-2222-4222-8222-222222222222";
@@ -176,8 +177,10 @@ function harness(options: {
     actorId: "workspace-test:user:user-test",
     audience: "https://mcp.example.test/mcp",
   });
-  const context: RequestContext = options.oauthBound
-    ? createOAuthRequestContext({
+  const oauthBound = options.oauthBound !== false;
+  const context: RequestContext = oauthBound
+    ? Object.freeze({
+        ...createOAuthRequestContext({
         issuer: "https://mcp.example.test",
         resolvedToken: {
           tokenId: "token-test",
@@ -199,14 +202,18 @@ function harness(options: {
           policyId: "policy-test",
           tenantId,
         } satisfies ResolvedMcpAccessToken,
+        }),
+        targetSessionId: "target-session-test",
+        targetSessionHash: "c".repeat(64),
+        targetSessionExpiresAt: new Date("2030-01-01T00:00:00.000Z"),
       })
     : {
         ...legacy,
         connectionId: "connection-test",
         scopes: Object.freeze(["xero.read", "xero.draft.write"]),
       };
-  if (options.oauthBound) {
-    vi.spyOn(repository, "resolveAgentConnectionBinding").mockResolvedValue({
+  if (oauthBound) {
+    const resolvedBinding = {
       installationId: "installation-test",
       bindingId: "binding-test",
       workspaceId: "workspace-test",
@@ -219,10 +226,39 @@ function harness(options: {
       tenantId,
       tenantName: "Demo Org",
       policyId: "policy-test",
+    };
+    vi.spyOn(repository, "resolveAgentConnectionBinding").mockResolvedValue(resolvedBinding);
+    vi.spyOn(repository, "resolveLedgerTargetSession").mockResolvedValue({
+      session: {
+        sessionId: "target-session-test",
+        sessionHash: "c".repeat(64),
+        installationId: "installation-test",
+        bindingId: "binding-test",
+        connectionId: "connection-test",
+        bindingRevision: 1,
+        createdAt: new Date("2026-08-12T00:00:00.000Z"),
+        expiresAt: new Date("2030-01-01T00:00:00.000Z"),
+      },
+      binding: resolvedBinding,
     });
   }
   const mutations = new XeroMutationService(repository, {
     confirmationSecret: "test-confirmation-secret-that-is-at-least-32-bytes",
+    writeKillSwitchEnabled: options.writeEnabled ?? true,
+    standingDelegations: [{
+      delegationId: "test-xero-standing-delegation",
+      revision: 1,
+      status: "ACTIVE",
+      providerId: "xero",
+      workspaceId: "workspace-test",
+      agentId: "agent-test",
+      installationId: "installation-test",
+      tenantIds: [tenantId],
+      actionIds: XERO_AUTONOMOUS_WRITE_ACTIONS,
+    }],
+    providerCapabilityEvaluator: {
+      evaluate: async () => ({ allowed: true, denyReasons: [], receiptHash: "e".repeat(64) }),
+    },
     unsafeAllowLegacyContextForTests: true,
     legacyBindingForTests: {
       actorId: context.actorId,
@@ -262,12 +298,11 @@ describe("XeroContactItemMutationService", () => {
     await expect(broker.service.createContact(broker.context, {
       preparation_id: prepared.preparation_id,
       request_id: "contact-broker-empty-allowlist",
-      confirmation_phrase: prepared.confirmation_phrase,
     })).resolves.toMatchObject({ state: "READBACK_VERIFIED", xero_object_id: contactId });
     expect(broker.provider.createContactCalls).toHaveBeenCalledTimes(1);
   });
 
-  it("prepares, confirms, creates and exactly reads back one Contact idempotently", async () => {
+  it("prepares, autonomously authorises, creates and exactly reads back one Contact idempotently", async () => {
     const { context, provider, service } = harness();
     const prepared = await service.prepareContactCreate(context, {
       source_ref: "work-material:contact-001",
@@ -280,14 +315,15 @@ describe("XeroContactItemMutationService", () => {
       state: "PREPARED",
       object_type: "CONTACT",
       operation: "CREATE",
-      execution_allowed_before_confirmation: false,
+      execution_mode: "STANDING_AUTONOMOUS_DELEGATION",
+      per_transaction_confirmation_required: false,
+      next_action: "CALL_EXECUTE_TOOL",
       proposal: { operation: "CREATE", target: { name: "Northwind Singapore" } },
     });
 
     const execution = {
       preparation_id: prepared.preparation_id,
       request_id: "contact-create-001",
-      confirmation_phrase: prepared.confirmation_phrase,
     };
     await expect(service.createContact(context, execution)).resolves.toMatchObject({
       state: "READBACK_VERIFIED",
@@ -331,7 +367,6 @@ describe("XeroContactItemMutationService", () => {
     await expect(service.updateContact(context, {
       preparation_id: prepared.preparation_id,
       request_id: "contact-update-001",
-      confirmation_phrase: prepared.confirmation_phrase,
     })).resolves.toMatchObject({
       state: "READBACK_VERIFIED",
       operation: "UPDATE",
@@ -356,7 +391,6 @@ describe("XeroContactItemMutationService", () => {
     await expect(service.createItem(context, {
       preparation_id: createPreparation.preparation_id,
       request_id: "item-create-001",
-      confirmation_phrase: createPreparation.confirmation_phrase,
     })).resolves.toMatchObject({
       state: "READBACK_VERIFIED",
       object_type: "ITEM",
@@ -384,7 +418,6 @@ describe("XeroContactItemMutationService", () => {
     await expect(service.updateItem(context, {
       preparation_id: updatePreparation.preparation_id,
       request_id: "item-update-001",
-      confirmation_phrase: updatePreparation.confirmation_phrase,
     })).resolves.toMatchObject({
       state: "READBACK_VERIFIED",
       object_type: "ITEM",
@@ -395,7 +428,7 @@ describe("XeroContactItemMutationService", () => {
     expect(provider.updateItemCalls).toHaveBeenCalledTimes(1);
   });
 
-  it("does not call Xero for a wrong confirmation phrase or a closed write gate", async () => {
+  it("does not call Xero for the removed phrase field or a closed write gate", async () => {
     const wrong = harness();
     const prepared = await wrong.service.prepareContactCreate(wrong.context, {
       source_ref: "work-material:contact-wrong-phrase",
@@ -405,8 +438,8 @@ describe("XeroContactItemMutationService", () => {
     await expect(wrong.service.createContact(wrong.context, {
       preparation_id: prepared.preparation_id,
       request_id: "contact-wrong-phrase",
-      confirmation_phrase: `${prepared.confirmation_phrase}-WRONG`,
-    })).rejects.toMatchObject({ code: "APPROVAL_INVALID" });
+      confirmation_phrase: "legacy-model-copied-phrase",
+    } as never)).rejects.toBeDefined();
     expect(wrong.provider.createContactCalls).not.toHaveBeenCalled();
 
     const closed = harness({ writeEnabled: false });
@@ -419,11 +452,10 @@ describe("XeroContactItemMutationService", () => {
     await expect(closed.service.createItem(closed.context, {
       preparation_id: closedPreparation.preparation_id,
       request_id: "item-write-gate-closed",
-      confirmation_phrase: closedPreparation.confirmation_phrase,
-    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    })).rejects.toMatchObject({ code: "WRITE_GATE_DISABLED" });
     expect(closed.provider.createItemCalls).not.toHaveBeenCalled();
 
-    const legacyWithoutAllowlist = harness({ omitAllowedTenantId: true });
+    const legacyWithoutAllowlist = harness({ oauthBound: false, omitAllowedTenantId: true });
     const legacyPrepared = await legacyWithoutAllowlist.service.prepareContactCreate(
       legacyWithoutAllowlist.context,
       {
@@ -435,9 +467,8 @@ describe("XeroContactItemMutationService", () => {
     await expect(legacyWithoutAllowlist.service.createContact(legacyWithoutAllowlist.context, {
       preparation_id: legacyPrepared.preparation_id,
       request_id: "contact-legacy-no-allowlist",
-      confirmation_phrase: legacyPrepared.confirmation_phrase,
     })).rejects.toMatchObject({
-      code: "FORBIDDEN",
+      code: "TARGET_SESSION_INVALID",
       details: { denyReasons: expect.arrayContaining(["WRITE_TENANT_NOT_ALLOWED"]) },
     });
     expect(legacyWithoutAllowlist.provider.createContactCalls).not.toHaveBeenCalled();
@@ -463,13 +494,25 @@ describe("XeroContactItemMutationService", () => {
     await expect(raced.service.createItem(raced.context, {
       preparation_id: prepared.preparation_id,
       request_id: "item-duplicate-race",
-      confirmation_phrase: prepared.confirmation_phrase,
     })).rejects.toMatchObject({ code: "CONFLICT" });
     expect(raced.provider.createItemCalls).not.toHaveBeenCalled();
-    await expect(raced.repository.getXeroMutationRequest(mutationId(prepared.preparation_id))).resolves.toMatchObject({
-      state: "FAILED_VALIDATION",
-      validationReceipt: { reason: "DUPLICATE", objectType: "ITEM", operation: "CREATE" },
+    await expect(raced.repository.getXeroMutationRequest(mutationId(prepared.preparation_id)))
+      .resolves.toBeUndefined();
+
+    const contactRace = harness();
+    const contactPreparation = await contactRace.service.prepareContactCreate(contactRace.context, {
+      source_ref: "work-material:contact-duplicate-race",
+      source_unit_key: "row:contact-race",
+      name: "Contact Duplicate Race Limited",
     });
+    contactRace.provider.contactDuplicate = true;
+    await expect(contactRace.service.createContact(contactRace.context, {
+      preparation_id: contactPreparation.preparation_id,
+      request_id: "contact-duplicate-race",
+    })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(contactRace.provider.createContactCalls).not.toHaveBeenCalled();
+    await expect(contactRace.repository.getXeroMutationRequest(mutationId(contactPreparation.preparation_id)))
+      .resolves.toBeUndefined();
   });
 
   it("fresh-reads immediately before update and records a stale object without writing", async () => {
@@ -497,13 +540,10 @@ describe("XeroContactItemMutationService", () => {
     await expect(service.updateItem(context, {
       preparation_id: prepared.preparation_id,
       request_id: "item-stale-update",
-      confirmation_phrase: prepared.confirmation_phrase,
     })).rejects.toMatchObject({ code: "CONFLICT" });
     expect(provider.updateItemCalls).not.toHaveBeenCalled();
-    await expect(repository.getXeroMutationRequest(mutationId(prepared.preparation_id))).resolves.toMatchObject({
-      state: "FAILED_VALIDATION",
-      validationReceipt: { reason: "STALE_VERSION", objectType: "ITEM", operation: "UPDATE" },
-    });
+    await expect(repository.getXeroMutationRequest(mutationId(prepared.preparation_id)))
+      .resolves.toBeUndefined();
   });
 
   it("separates a definite provider rejection from an unknown write outcome", async () => {
@@ -517,7 +557,6 @@ describe("XeroContactItemMutationService", () => {
     await expect(rejected.service.createContact(rejected.context, {
       preparation_id: rejectedPreparation.preparation_id,
       request_id: "contact-provider-rejected",
-      confirmation_phrase: rejectedPreparation.confirmation_phrase,
     })).rejects.toMatchObject({ code: "PROVIDER_ERROR", retryable: false });
     await expect(rejected.repository.getXeroMutationRequest(
       mutationId(rejectedPreparation.preparation_id),
@@ -537,7 +576,6 @@ describe("XeroContactItemMutationService", () => {
     await expect(unknown.service.createItem(unknown.context, {
       preparation_id: unknownPreparation.preparation_id,
       request_id: "item-provider-unknown",
-      confirmation_phrase: unknownPreparation.confirmation_phrase,
     })).rejects.toMatchObject({ code: "WRITE_RESULT_UNKNOWN" });
     await expect(unknown.repository.getXeroMutationRequest(
       mutationId(unknownPreparation.preparation_id),
@@ -555,7 +593,6 @@ describe("XeroContactItemMutationService", () => {
     await expect(service.createContact(context, {
       preparation_id: prepared.preparation_id,
       request_id: "contact-readback-mismatch",
-      confirmation_phrase: prepared.confirmation_phrase,
     })).rejects.toMatchObject({ code: "READBACK_MISMATCH" });
     await expect(repository.getXeroMutationRequest(mutationId(prepared.preparation_id))).resolves.toMatchObject({
       state: "READBACK_MISMATCH",
@@ -582,7 +619,6 @@ describe("XeroContactItemMutationService", () => {
     await expect(service.createItem(context, {
       preparation_id: prepared.preparation_id,
       request_id: "item-evidence-order",
-      confirmation_phrase: prepared.confirmation_phrase,
     })).resolves.toMatchObject({ state: "READBACK_VERIFIED", xero_object_id: itemId });
   });
 
@@ -609,7 +645,6 @@ describe("XeroContactItemMutationService", () => {
     expect(executePreparedXeroMutationSchema.safeParse({
       preparation_id: `xmp_${"a".repeat(32)}`,
       request_id: "strict-execute-001",
-      confirmation_phrase: "CONFIRM-EXACT",
       status: "ACTIVE",
       payload: { attacker: true },
     }).success).toBe(false);

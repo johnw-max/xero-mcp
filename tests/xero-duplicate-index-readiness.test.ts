@@ -25,7 +25,7 @@ function mutate(
 }
 
 describe("Xero duplicate-index readiness", () => {
-  it("requires exact legacy and v030 definitions at the same time", () => {
+  it("requires request and immutable-source legacy/v030 definitions without reference-only hard keys", () => {
     expect(EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_actor_tenant_request_create_unique_idx.keyDefinitions)
       .toEqual(["actor_id", "tenant_id", "request_id", "create_operation"]);
     expect(EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_actor_tenant_request_create_v030_unique_idx.keyDefinitions)
@@ -34,24 +34,15 @@ describe("Xero duplicate-index readiness", () => {
       .not.toContain("DRAFT_READBACK_VERIFIED");
     expect(EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_active_source_v030_unique_idx.predicate)
       .toContain("DRAFT_READBACK_VERIFIED");
-    expect(EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_active_supplier_reference_unique_idx.keyDefinitions)
-      .toHaveLength(4);
-    expect(EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_active_supplier_ref_v030_unique_idx.keyDefinitions)
-      .toEqual(expect.arrayContaining(["actor_id", "tenant_id", "document_type"]));
     expect(EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_tenant_active_source_unique_idx.keyDefinitions)
       .toEqual(["tenant_id", "source_sha256"]);
     expect(EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_tenant_active_source_unique_idx.predicate)
       .not.toContain("DRAFT_READBACK_VERIFIED");
     expect(EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_tenant_active_source_v030_unique_idx.predicate)
       .toContain("DRAFT_READBACK_VERIFIED");
-    expect(EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_tenant_active_supplier_reference_unique_idx.keyDefinitions)
-      .toHaveLength(3);
-    expect(EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_tenant_active_supplier_ref_v030_unique_idx.keyDefinitions)
-      .toHaveLength(4);
-    expect(EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_tenant_active_supplier_ref_v030_unique_idx.keyDefinitions[0])
-      .toBe("tenant_id");
-    expect(EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_tenant_active_supplier_ref_v030_unique_idx.keyDefinitions[1])
-      .toBe("document_type");
+    expect(Object.keys(EXPECTED_XERO_DUPLICATE_INDEXES)).toHaveLength(6);
+    expect(Object.keys(EXPECTED_XERO_DUPLICATE_INDEXES).some((name) => name.includes("supplier_ref")))
+      .toBe(false);
   });
 
   it("accepts only the exact intended keys, expressions, and active-state predicates", () => {
@@ -77,25 +68,6 @@ describe("Xero duplicate-index readiness", () => {
     expect(hasExactXeroDuplicateIndexes(mutate(
       "posting_requests_tenant_active_source_unique_idx",
       update,
-    ))).toBe(false);
-  });
-
-  it("rejects a supplier-reference index with weaker null/predicate semantics", () => {
-    const expected = EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_tenant_active_supplier_reference_unique_idx;
-    expect(hasExactXeroDuplicateIndexes(mutate(
-      "posting_requests_tenant_active_supplier_reference_unique_idx",
-      { predicate: expected.predicate?.replace(" IS NOT NULL", " IS NULL") ?? null },
-    ))).toBe(false);
-  });
-
-  it("rejects a contact-reference index that also reserves ACCREC references", () => {
-    const expected = EXPECTED_XERO_DUPLICATE_INDEXES.posting_requests_tenant_active_supplier_ref_v030_unique_idx;
-    expect(hasExactXeroDuplicateIndexes(mutate(
-      "posting_requests_tenant_active_supplier_ref_v030_unique_idx",
-      {
-        predicate: expected.predicate
-          ?.replace(" AND document_type = 'ACCPAY'::text", "") ?? null,
-      },
     ))).toBe(false);
   });
 

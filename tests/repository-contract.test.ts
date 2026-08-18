@@ -83,7 +83,7 @@ describe("Xero active posting duplicate contract", () => {
     });
   });
 
-  it("normalizes contact and supplier reference and preserves the identity after Xero readback replaces the payload", async () => {
+  it("does not promote normalized free-form contact/reference fields into a durable document identity", async () => {
     const repository = new InMemoryAccountingRepository();
     const first = await repository.createOrGetPosting(basePosting);
     await repository.markDraftCreated(first.posting.postingRequestId, {
@@ -102,7 +102,7 @@ describe("Xero active posting duplicate contract", () => {
       sourceSha256: "1".repeat(64),
       contactId: "22222222-2222-4222-8222-222222222222",
       normalizedReference: "supplier-inv-001",
-    })).resolves.toMatchObject({ postingRequestId: first.posting.postingRequestId, state: "APPROVAL_PENDING" });
+    })).resolves.toBeUndefined();
 
     await expect(repository.createOrGetPosting({
       ...basePosting,
@@ -114,13 +114,10 @@ describe("Xero active posting duplicate contract", () => {
       },
       requestId: "request-duplicate-guard-reference",
       createIdempotencyKey: "create-duplicate-guard-reference",
-    })).resolves.toMatchObject({
-      created: false,
-      posting: { postingRequestId: first.posting.postingRequestId },
-    });
+    })).resolves.toMatchObject({ created: true });
   });
 
-  it("keeps request idempotency actor-scoped while tenant-scoping business duplicate protection", async () => {
+  it("keeps request idempotency actor-scoped and immutable-source duplicate protection tenant-scoped", async () => {
     const repository = new InMemoryAccountingRepository();
     const first = await repository.createOrGetPosting(basePosting);
 
@@ -145,10 +142,7 @@ describe("Xero active posting duplicate contract", () => {
       sourceSha256: "2".repeat(64),
       requestId: "request-duplicate-guard-other-actor-reference",
       createIdempotencyKey: "create-duplicate-guard-other-actor-reference",
-    })).resolves.toMatchObject({
-      created: false,
-      posting: { postingRequestId: first.posting.postingRequestId },
-    });
+    })).resolves.toMatchObject({ created: true });
 
     await expect(repository.createOrGetPosting({
       ...basePosting,
@@ -185,7 +179,7 @@ describe("Xero active posting duplicate contract", () => {
     })).resolves.toMatchObject({ created: true });
   });
 
-  it("keeps both business identities reserved after an existing Xero DRAFT is rejected", async () => {
+  it("keeps the immutable source reserved after rejection without reserving a free-form reference", async () => {
     const repository = new InMemoryAccountingRepository();
     const first = await repository.createOrGetPosting(basePosting);
     await repository.markDraftCreated(first.posting.postingRequestId, {
@@ -224,10 +218,7 @@ describe("Xero active posting duplicate contract", () => {
       },
       requestId: "request-duplicate-guard-rejected-reference",
       createIdempotencyKey: "create-duplicate-guard-rejected-reference",
-    })).resolves.toMatchObject({
-      created: false,
-      posting: { postingRequestId: first.posting.postingRequestId, state: "REJECTED" },
-    });
+    })).resolves.toMatchObject({ created: true });
   });
 });
 
@@ -322,6 +313,7 @@ describe("OAuth and review browser capabilities", () => {
       deleted: {
         mcpRefreshRetryResponses: 0,
         organisationSwitchSessions: 0,
+        ledgerTargetSessions: 0,
         oauthBrokerFlows: 0,
         oauthStates: 1,
         connectTickets: 2,
@@ -340,6 +332,7 @@ describe("OAuth and review browser capabilities", () => {
     expect(third.deleted).toEqual({
       mcpRefreshRetryResponses: 0,
       organisationSwitchSessions: 0,
+      ledgerTargetSessions: 0,
       oauthBrokerFlows: 0,
       oauthStates: 0,
       connectTickets: 0,

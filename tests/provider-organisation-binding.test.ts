@@ -45,4 +45,45 @@ describe("provider organisation binding", () => {
     });
     expect(getOrganisations).toHaveBeenCalledWith("tenant-bound");
   });
+
+  it("returns direct tax, financial-year and lock settings without inferring them from tax rates", async () => {
+    const getOrganisations = vi.fn().mockResolvedValue({
+      body: {
+        organisations: [{
+          organisationID: "tenant-bound",
+          name: "Bound organisation",
+          countryCode: "SG",
+          baseCurrency: "SGD",
+          paysTax: false,
+          financialYearEndDay: 31,
+          financialYearEndMonth: 12,
+          salesTaxBasis: "INVOICE",
+          salesTaxPeriod: "QUARTERLY",
+          defaultSalesTax: "OUTPUTY24",
+          defaultPurchasesTax: "INPUTY24",
+          periodLockDate: "2026-06-30",
+          endOfYearLockDate: "2025-12-31",
+          isDemoCompany: true,
+          organisationStatus: "ACTIVE",
+        }],
+      },
+    });
+    const provider = providerWithClient({ accountingApi: { getOrganisations } });
+
+    await expect(provider.getOrganisation("actor-a")).resolves.toMatchObject({
+      organisationId: "tenant-bound",
+      paysTax: false,
+      financialYearEndDay: 31,
+      financialYearEndMonth: 12,
+      salesTaxBasis: "INVOICE",
+      salesTaxPeriod: "QUARTERLY",
+      defaultSalesTax: "OUTPUTY24",
+      defaultPurchasesTax: "INPUTY24",
+      periodLockDate: "2026-06-30",
+      endOfYearLockDate: "2025-12-31",
+      isDemoCompany: true,
+      organisationStatus: "ACTIVE",
+    });
+    expect(getOrganisations).toHaveBeenCalledWith("tenant-bound");
+  });
 });

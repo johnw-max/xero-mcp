@@ -13,7 +13,6 @@ const BASE_READ_CONTEXT: XeroEffectiveCapabilityContext = {
   grantedPermissions: ["XERO_ACCOUNTING_READ"],
   grantedXeroOAuthScopes: ["accounting.invoices.read"],
   writeGateEnabled: false,
-  explicitConfirmationVerified: false,
 };
 
 const BASE_WRITE_CONTEXT: XeroEffectiveCapabilityContext = {
@@ -23,7 +22,6 @@ const BASE_WRITE_CONTEXT: XeroEffectiveCapabilityContext = {
   grantedXeroOAuthScopes: ["accounting.invoices"],
   writeGateEnabled: true,
   allowedWriteTenantId: "tenant-1",
-  explicitConfirmationVerified: true,
 };
 
 describe("effective Xero capability evaluator", () => {
@@ -34,7 +32,6 @@ describe("effective Xero capability evaluator", () => {
       grantedPermissions: ["XERO_ACCOUNTING_READ"],
       grantedXeroOAuthScopes: [],
       writeGateEnabled: false,
-      explicitConfirmationVerified: false,
     };
 
     expect(
@@ -148,11 +145,6 @@ describe("effective Xero capability evaluator", () => {
       "allowed tenant",
       { ...BASE_WRITE_CONTEXT, allowedWriteTenantId: "tenant-other" },
       "WRITE_TENANT_NOT_ALLOWED",
-    ],
-    [
-      "confirmation",
-      { ...BASE_WRITE_CONTEXT, explicitConfirmationVerified: false },
-      "CONFIRMATION_NOT_VERIFIED",
     ],
     [
       "MCP scope",

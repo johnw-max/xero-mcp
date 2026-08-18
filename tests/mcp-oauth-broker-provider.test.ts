@@ -19,6 +19,7 @@ import type { XeroClientManager } from "../src/providers/xeroClientManager.js";
 
 const now = new Date("2026-08-05T10:00:00.000Z");
 const redirectUri = "https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callback";
+const workRedirectUri = "https://work.zcloak.ai/api/mcp/zcloak-ledger-mcp-xero-demo/oauth/callback";
 const verifier = "v".repeat(43);
 const retryCipher = new Aes256GcmTokenCipher(Buffer.alloc(32, 14));
 
@@ -77,12 +78,13 @@ function config(personalPocOnly = true, sharedTestUsers = false): AppConfig {
         clientSecret: "h".repeat(43),
         redirectUris: [redirectUri],
       }, {
-        name: "Strict Host",
-        clientId: "strict-host",
+        name: "Work",
+        clientId: "work-client",
         clientSecret: "s".repeat(43),
-        redirectUris: ["https://strict-host.example.test/oauth/callback"],
+        redirectUris: [workRedirectUri],
       }],
-      missingResourceCompatClientIds: ["agent2-client"],
+      missingResourceCompatClientIds: ["agent2-client", "work-client"],
+      manualReturnClientIds: ["agent2-client"],
       accessTokenTtlSeconds: 900,
       refreshTokenTtlSeconds: 2_592_000,
       authorizationCodeTtlSeconds: 300,
@@ -330,8 +332,20 @@ describe("MCP OAuth Broker provider", () => {
     expect(callback.body).toContain("Choose an organisation");
     expect(callback.body).toContain("Test connection · Intended for one user.");
     expect(callback.body).toContain("Demo Books Ltd");
+    expect(callback.cookies).toContainEqual(expect.objectContaining({
+      name: "__Host-zcloak_oauth_flow",
+      value: flowCookie?.value,
+      options: expect.objectContaining({
+        secure: true,
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+      }),
+    }));
     const csrfToken = callback.body?.match(/name="csrf_token" value="([^"]+)"/u)?.[1];
+    const selectionTicket = callback.body?.match(/name="selection_ticket" value="([^"]+)"/u)?.[1];
     expect(csrfToken).toBe("c".repeat(43));
+    expect(selectionTicket).toMatch(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u);
 
     await expect(provider.handleOrganisationSelection(request({
       originalUrl: "/oauth/xero/select",
@@ -339,14 +353,14 @@ describe("MCP OAuth Broker provider", () => {
       body: { csrf_token: csrfToken, connection_id: "conn_xero_demo" },
     }), capturedResponse().response)).rejects.toMatchObject({
       code: "FORBIDDEN",
-      details: { resultStatus: "COOKIE_MISSING_CSRF_OK_CONNECTION_OK" },
+      details: { resultStatus: "CSRF_OK_SELECTION_TICKET_MISSING_CONNECTION_OK" },
     });
     await expect(provider.handleOrganisationSelection(request({
       originalUrl: "/oauth/xero/select",
       cookie: `${flowCookie?.name}=${flowCookie?.value}`,
       origin: "https://evil.invalid",
       trustedNavigationMetadata: true,
-      body: { csrf_token: csrfToken, connection_id: "conn_xero_demo" },
+      body: { csrf_token: csrfToken, selection_ticket: selectionTicket, connection_id: "conn_xero_demo" },
     }), capturedResponse().response)).rejects.toMatchObject({
       code: "FORBIDDEN",
       details: { resultStatus: "OTHER_TRUSTED_SAME_ORIGIN_USER_NAVIGATION" },
@@ -356,9 +370,20 @@ describe("MCP OAuth Broker provider", () => {
       cookie: `${flowCookie?.name}=${flowCookie?.value}`,
       origin: "null",
       trustedNavigationMetadata: true,
-      body: { csrf_token: "wrong-csrf", connection_id: "conn_xero_demo" },
+      body: { csrf_token: "wrong-csrf", selection_ticket: selectionTicket, connection_id: "conn_xero_demo" },
     }), capturedResponse().response)).rejects.toMatchObject({
       code: "FORBIDDEN",
+      details: { resultStatus: "SELECTION_TICKET_INVALID" },
+    });
+    await expect(provider.handleOrganisationSelection(request({
+      originalUrl: "/oauth/xero/select",
+      cookie: `${flowCookie?.name}=${"q".repeat(43)}`,
+      origin: "null",
+      trustedNavigationMetadata: true,
+      body: { csrf_token: csrfToken, selection_ticket: selectionTicket, connection_id: "conn_xero_demo" },
+    }), capturedResponse().response)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      details: { resultStatus: "COOKIE_SELECTION_TICKET_MISMATCH" },
     });
 
     const selection = capturedResponse();
@@ -367,9 +392,8 @@ describe("MCP OAuth Broker provider", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     await provider.handleOrganisationSelection(request({
       originalUrl: "/oauth/xero/select",
-      cookie: `${flowCookie?.name}=${flowCookie?.value}`,
       origin: "null",
-      body: { csrf_token: csrfToken, connection_id: "conn_xero_demo" },
+      body: { csrf_token: csrfToken, selection_ticket: selectionTicket, connection_id: "conn_xero_demo" },
     }), selection.response);
     const logged = JSON.stringify([log.mock.calls, warn.mock.calls, error.mock.calls]);
     log.mockRestore();
@@ -388,12 +412,13 @@ describe("MCP OAuth Broker provider", () => {
       "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callback; base-uri 'none'; frame-ancestors 'none'",
     );
     expect(selection.body).toContain("Return to Agent2");
-    expect(selection.body).toContain(`name="code" value="${"o".repeat(43)}"`);
+    expect(selection.body).toContain(`name="code" value="${"r".repeat(43)}"`);
     expect(selection.body).toContain('name="state" value="agent2-host-state"');
     expect(selection.body).not.toContain("href=");
     expect(selection.body?.match(/id="return-to-host"/gu)).toHaveLength(1);
-    expect(logged).not.toContain("o".repeat(43));
+    expect(logged).not.toContain("r".repeat(43));
     expect(logged).not.toContain("agent2-host-state");
+    expect(logged).not.toContain(selectionTicket);
 
     const formAction = selection.body?.match(/<form method="get" action="([^"]+)"/u)?.[1];
     if (!formAction) throw new Error("expected Host return form action");
@@ -403,14 +428,14 @@ describe("MCP OAuth Broker provider", () => {
     }
     expect(`${hostCallback.origin}${hostCallback.pathname}`).toBe(redirectUri);
     expect(hostCallback.searchParams.get("state")).toBe("agent2-host-state");
-    expect(hostCallback.searchParams.get("code")).toBe("o".repeat(43));
+    expect(hostCallback.searchParams.get("code")).toBe("r".repeat(43));
 
     await expect(provider.handleOrganisationSelection(request({
       originalUrl: "/oauth/xero/select",
       cookie: `${flowCookie?.name}=${flowCookie?.value}`,
       origin: "null",
       trustedNavigationMetadata: true,
-      body: { csrf_token: csrfToken, connection_id: "conn_xero_demo" },
+      body: { csrf_token: csrfToken, selection_ticket: selectionTicket, connection_id: "conn_xero_demo" },
     }), capturedResponse().response)).rejects.toMatchObject({
       code: "FORBIDDEN",
       message: expect.stringMatching(/expired|already used/i),
@@ -516,14 +541,14 @@ describe("MCP OAuth Broker provider", () => {
     expect(first?.subjectId).not.toBe(second?.subjectId);
   });
 
-  it("keeps the non-POC Host handoff on the existing direct 302 path", () => {
+  it("returns a strict Work Host directly with the exact code and outer state", () => {
     const response = capturedResponse();
-    const returnUrl = `${redirectUri}?code=${"z".repeat(43)}&state=host-state`;
+    const returnUrl = `${workRedirectUri}?code=${"z".repeat(43)}&state=work-host-state`;
 
     sendBrokerHostAuthorizationResult(response.response, {
       manualPersonalPocReturn: false,
       returnUrl,
-      hostName: "Agent2",
+      hostName: "Work",
     });
 
     expect(response.redirects).toEqual([returnUrl]);
@@ -534,25 +559,37 @@ describe("MCP OAuth Broker provider", () => {
   });
 
   it("enables the manual return page only for an exact allowlisted Personal POC client", () => {
-    const allowedClientIds = ["agent2-client"];
+    const appConfig = config();
+    const broker = appConfig.mcpOAuthBroker;
+    if (!broker?.enabled) throw new Error("test broker must be enabled");
     expect(shouldUsePersonalPocManualReturn({
+      broker,
       personalPoc: true,
       clientId: "agent2-client",
-      allowedClientIds,
     })).toBe(true);
     expect(shouldUsePersonalPocManualReturn({
+      broker,
       personalPoc: true,
-      clientId: "strict-host",
-      allowedClientIds,
+      clientId: "work-client",
     })).toBe(false);
+
+    const brokerWithObservedHostCompatibility = {
+      ...broker,
+      manualReturnClientIds: ["agent2-client", "work-client"],
+    };
     expect(shouldUsePersonalPocManualReturn({
+      broker: brokerWithObservedHostCompatibility,
+      personalPoc: true,
+      clientId: "work-client",
+    })).toBe(true);
+    expect(shouldUsePersonalPocManualReturn({
+      broker: brokerWithObservedHostCompatibility,
       personalPoc: false,
-      clientId: "agent2-client",
-      allowedClientIds,
+      clientId: "work-client",
     })).toBe(false);
   });
 
-  it("rejects an omitted resource for an unmarked Host and any wrong non-empty resource", async () => {
+  it("keeps Work resource compatibility independent while rejecting a wrong non-empty resource", async () => {
     const appConfig = config();
     const brokerConfig = appConfig.mcpOAuthBroker;
     if (!brokerConfig?.enabled) throw new Error("test broker must be enabled");
@@ -569,24 +606,26 @@ describe("MCP OAuth Broker provider", () => {
       clock: () => now,
     });
     const agent2 = await provider.clientsStore.getClient("agent2-client") as OAuthClientInformationFull;
-    const strictHost = await provider.clientsStore.getClient("strict-host") as OAuthClientInformationFull;
+    const strictHost = await provider.clientsStore.getClient("work-client") as OAuthClientInformationFull;
     const baseParams = {
       state: "host-state",
       scopes: ["xero.read"],
       codeChallenge: pkceS256Challenge(verifier),
     };
 
+    const workAuthorize = capturedResponse();
     await expect(provider.authorize(strictHost, {
       ...baseParams,
-      redirectUri: "https://strict-host.example.test/oauth/callback",
+      redirectUri: workRedirectUri,
       resource: undefined,
-    }, capturedResponse().response)).rejects.toMatchObject({ errorCode: "invalid_target" });
+    }, workAuthorize.response)).resolves.toBeUndefined();
+    expect(workAuthorize.redirects[0]).toContain("https://login.xero.test/authorize");
     await expect(provider.authorize(agent2, {
       ...baseParams,
       redirectUri,
       resource: new URL("https://xero-mcp.example.test/other"),
     }, capturedResponse().response)).rejects.toMatchObject({ errorCode: "invalid_target" });
-    expect(manager.createOAuthClient).not.toHaveBeenCalled();
+    expect(manager.createOAuthClient).toHaveBeenCalledOnce();
   });
 
   it("fails closed without the explicit Personal POC profile", async () => {

@@ -11,6 +11,7 @@ import type { Logger } from "../src/logging.js";
 import { XeroClientManager } from "../src/providers/xeroClientManager.js";
 import { createOAuthRequestContext, type RequestContext } from "../src/security/requestContext.js";
 import { Aes256GcmTokenCipher } from "../src/security/tokenCipher.js";
+import { LedgerTargetSessionService } from "../src/services/ledgerTargetSessionService.js";
 
 const readXeroScopes = [
   "offline_access",
@@ -180,6 +181,7 @@ function manager(
       ],
     },
     logger: logger(),
+    legacyWriteEnabled: false,
   });
 }
 
@@ -201,7 +203,7 @@ describe("trusted OAuth accounting principals", () => {
       "bindingRevision",
     ]) {
       const invalid = { ...seeded.context, [field]: undefined } as unknown as RequestContext;
-      await expect(clientManager.resolveConnection(invalid)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(clientManager.resolveConnection(invalid)).rejects.toMatchObject({ code: "AUTH_REQUIRED" });
     }
   });
 
@@ -235,7 +237,10 @@ describe("trusted OAuth accounting principals", () => {
       currentBinding: { bindingRevision: 2 },
     });
 
-    await expect(clientManager.resolveConnection(seeded.context)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(clientManager.resolveConnection(seeded.context)).rejects.toMatchObject({
+      code: "NOT_CONNECTED",
+      details: { reasonCodes: ["CONNECTION_BINDING_INACTIVE"] },
+    });
     await expect(clientManager.resolveConnection({
       ...seeded.context,
       bindingRevision: 2,
@@ -264,11 +269,82 @@ describe("trusted OAuth accounting principals", () => {
     await expect(clientManager.resolveConnection({
       ...a.context,
       connectionId: b.connection.connectionId,
-    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    })).rejects.toMatchObject({ code: "NOT_CONNECTED" });
     await expect(clientManager.resolveConnection({
       ...a.context,
       bindingId: b.binding.bindingId,
-    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    })).rejects.toMatchObject({ code: "NOT_CONNECTED" });
+  });
+
+  it("uses immutable target sessions so concurrent conversations stay on different organisations", async () => {
+    const repository = new InMemoryAccountingRepository();
+    const cipher = new Aes256GcmTokenCipher(Buffer.alloc(32, 15));
+    const seeded = await seedOAuthPrincipal({ repository, cipher, suffix: "multi-org-session" });
+    const secondConnection: AuthorizedProviderConnection = {
+      connectionId: "connection-multi-org-session-b",
+      authorizationId: seeded.authorization.authorizationId,
+      provider: "xero",
+      providerConnectionId: "xero-connection-multi-org-session-b",
+      tenantId: "tenant-multi-org-session-b",
+      tenantName: "Organisation multi-org-session-b",
+      status: "ACTIVE",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    await repository.upsertAuthorizedProviderConnection(seeded.installation.workspaceId, secondConnection);
+    let sequence = 0;
+    const targets = new LedgerTargetSessionService({
+      repository,
+      secret: Buffer.alloc(32, 16),
+      required: true,
+      referenceFactory: () => {
+        sequence += 1;
+        return `xts_${Buffer.alloc(32, sequence).toString("base64url")}`;
+      },
+      sessionIdFactory: () => `multi-org-target-${sequence}`,
+    });
+    const pinnedA = await targets.issue(seeded.context);
+    const switchedAt = new Date();
+    const switchHash = "b".repeat(64);
+    await repository.saveOrganisationSwitchSession({
+      sessionHash: switchHash,
+      installationId: seeded.installation.installationId,
+      workspaceId: seeded.installation.workspaceId,
+      subjectType: seeded.installation.subjectType,
+      subjectId: seeded.installation.subjectId,
+      agentId: seeded.installation.agentId,
+      authorizationId: seeded.authorization.authorizationId,
+      sourceBindingId: seeded.binding.bindingId,
+      sourceConnectionId: seeded.connection.connectionId,
+      createdAt: switchedAt,
+      expiresAt: new Date(switchedAt.getTime() + 10 * 60_000),
+    });
+    const switched = await repository.completeOrganisationSwitch({
+      sessionHash: switchHash,
+      selectedConnectionId: secondConnection.connectionId,
+      newBindingId: "binding-multi-org-session-b",
+      now: new Date(switchedAt.getTime() + 1),
+    });
+    if (!switched) throw new Error("organisation switch did not complete");
+    const contextB = Object.freeze({
+      ...seeded.context,
+      bindingId: switched.currentBinding.bindingId,
+      connectionId: switched.currentBinding.connectionId,
+      bindingRevision: switched.currentBinding.bindingRevision,
+    });
+    const pinnedB = await targets.issue(contextB);
+    const [contextA, effectiveContextB] = await Promise.all([
+      targets.resolve(contextB, pinnedA.target_session_ref),
+      targets.resolve(contextB, pinnedB.target_session_ref),
+    ]);
+    const clientManager = manager(repository, cipher);
+
+    await expect(clientManager.resolveConnection(contextA)).resolves.toMatchObject({
+      connection: { connectionId: seeded.connection.connectionId, tenantId: seeded.connection.tenantId },
+    });
+    await expect(clientManager.resolveConnection(effectiveContextB)).resolves.toMatchObject({
+      connection: { connectionId: secondConnection.connectionId, tenantId: secondConnection.tenantId },
+    });
   });
 
   it("accepts read-only provider scopes for xero.read but not xero.draft.write", async () => {
@@ -284,7 +360,10 @@ describe("trusted OAuth accounting principals", () => {
     await expect(clientManager.resolveConnection({
       ...seeded.context,
       scopes: ["xero.read", "xero.draft.write"],
-    })).rejects.toMatchObject({ code: "NOT_CONNECTED" });
+    })).rejects.toMatchObject({
+      code: "SCOPE_MISSING",
+      details: { failureLayer: "PROVIDER_OAUTH_SCOPE" },
+    });
   });
 
   it("refreshes the ProviderAuthorization with authorization AAD and never writes legacy credentials", async () => {

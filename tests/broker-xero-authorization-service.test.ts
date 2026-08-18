@@ -21,18 +21,14 @@ const readOnlyXeroScopes = [
 
 const granularWriteXeroScopes = [
   ...readOnlyXeroScopes,
-  "accounting.settings",
   "accounting.contacts",
   "accounting.invoices",
-  "accounting.manualjournals",
 ];
 
 const draftOnlyXeroScopes = [
   "offline_access",
-  "accounting.settings",
   "accounting.contacts",
   "accounting.invoices",
-  "accounting.manualjournals",
 ];
 
 const config: AppConfig = {
@@ -380,9 +376,7 @@ describe("BrokerXeroAuthorizationService", () => {
 
   it.each([
     ["accounting.invoices", /draft invoice.*purchase-order write/i],
-    ["accounting.manualjournals", /manual journal draft write/i],
     ["accounting.contacts", /contact create and update/i],
-    ["accounting.settings", /item create and update/i],
   ])("rejects draft write when the granular token lacks %s", async (missingScope, message) => {
     const { service } = createSubject({
       scopes: granularWriteXeroScopes.filter((scope) => scope !== missingScope),

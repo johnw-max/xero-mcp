@@ -15,6 +15,7 @@ describe("Xero broker organisation selection page", () => {
         tenantType: "ORGANISATION",
       }],
       csrfToken: "csrf-secret",
+      selectionTicket: "selection-ticket",
       requestedScopes: ["xero.read"],
       personalPocOnly: true,
     });
@@ -24,7 +25,9 @@ describe("Xero broker organisation selection page", () => {
     expect(html).toContain("required");
     expect(html).not.toMatch(/<input[^>]+\schecked(?:\s|>|=)/iu);
     expect(html).toContain("Test connection · Intended for one user.");
-    expect(html).toContain('action="/oauth/xero/select"');
+    expect(html).toContain('action="/oauth/xero/callback"');
+    expect(html).not.toContain('action="/oauth/xero/select"');
+    expect(html).toContain('name="selection_ticket" value="selection-ticket"');
     expect(html).toContain("You can switch organisations later from the conversation.");
     expect(html).toContain("Choose an organisation");
     expect(html).not.toContain("Your connection stays controlled");
@@ -38,6 +41,7 @@ describe("Xero broker organisation selection page", () => {
         { connectionId: 'conn-\"><script>alert(1)</script>', tenantName: "<Beta>", tenantId: "tenant-beta" },
       ],
       csrfToken: '"><img src=x onerror=alert(1)>',
+      selectionTicket: '"><script>alert(2)</script>',
       requestedScopes: ["xero.read", "xero.draft.write"],
       personalPocOnly: false,
     });
@@ -46,6 +50,7 @@ describe("Xero broker organisation selection page", () => {
     expect(html).toContain("&lt;Beta&gt;");
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("<img src=x onerror=alert(1)>");
+    expect(html).not.toContain("<script>alert(2)</script>");
     expect(html).toContain('data-connection-page="xero"');
     expect(html).toContain('alt="Xero"');
     expect(html.match(/name="connection_id"/g)).toHaveLength(2);
@@ -56,6 +61,7 @@ describe("Xero broker organisation selection page", () => {
     expect(() => renderXeroOrganisationSelectionPage({
       organisations: [],
       csrfToken: "csrf",
+      selectionTicket: "selection-ticket",
       requestedScopes: ["xero.read"],
       personalPocOnly: true,
     })).toThrow(/at least one/i);
@@ -90,6 +96,28 @@ describe("Personal POC Host return page", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toMatch(/http-equiv=["']refresh/iu);
     expect(html).toContain("Do not share this page.");
+  });
+
+  it("renders the same strict user-activated return contract for an allowlisted Work Host", () => {
+    const callback = new URL("https://work.zcloak.ai/api/mcp/zcloak-ledger-mcp-xero-demo/oauth/callback");
+    callback.searchParams.set("code", "work-one-time-code");
+    callback.searchParams.set("state", "work-outer-state");
+
+    const html = renderPersonalPocHostReturnPage({
+      returnUrl: callback.href,
+      hostName: "Work",
+      organisationName: "Demo Company (Global)",
+    });
+
+    expect(personalPocHostReturnAction(callback.href)).toBe(
+      "https://work.zcloak.ai/api/mcp/zcloak-ledger-mcp-xero-demo/oauth/callback",
+    );
+    expect(html).toContain('method="get"');
+    expect(html).toContain('name="code" value="work-one-time-code"');
+    expect(html).toContain('name="state" value="work-outer-state"');
+    expect(html).toContain("Return to Work");
+    expect(html).not.toContain("href=");
+    expect(html).not.toContain("<script>");
   });
 
   it.each([

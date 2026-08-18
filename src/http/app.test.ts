@@ -89,6 +89,7 @@ function requestContextTestConfig(): AppConfig {
       scopes: ["offline_access", "accounting.invoices"],
     },
     xeroWriteEnabled: false,
+    xeroAuthorityRevision: 1,
     tokenEncryptionKey: Buffer.alloc(32),
     xeroMutationConfirmationKey: Buffer.alloc(32, 1),
     demoActorId: "trusted-demo-actor",
@@ -211,10 +212,11 @@ describe("browser review boundary", () => {
     expect(html).toContain("<dt>Xero organisation</dt><dd>Synthetic &amp; Demo Organisation</dd>");
     expect(html).toContain("<dt>Tenant ID</dt><dd>11111111-1111-4111-8111-111111111111</dd>");
     expect(html).toContain("<dt>Xero Invoice ID</dt><dd>22222222-2222-4222-8222-222222222222</dd>");
-    expect(html).toContain("Approve and post to Xero");
+    expect(html).toContain("Legacy browser approval is disabled");
+    expect(html).not.toContain("Approve and post to Xero");
     expect(html).toContain("View this bill in Xero");
     expect(html).toContain("Reject");
-    expect(html.match(/<form /g)).toHaveLength(2);
+    expect(html.match(/<form /g)).toHaveLength(1);
   });
 
   it("renders a verified result with business evidence and a Xero handoff", () => {
@@ -253,13 +255,13 @@ describe("browser review boundary", () => {
 
     expect(html).toContain("Workflow status: VALIDATED");
     expect(html).toContain("No verified Xero bill snapshot is available.");
-    expect(html).toContain("No Review action is available.");
+    expect(html).toContain("No browser write action is available.");
     expect(html).not.toContain("<form");
     expect(html).not.toContain("csrf_token");
     expect(html).not.toContain("must-not-be-rendered");
   });
 
-  it("shows only the readback recovery action for a fully bound authorise unknown", () => {
+  it("keeps a legacy authorise-unknown page read-only and points to the same Xero InvoiceID", () => {
     const html = renderReviewPage({
       postingRequestId: "pr_recovery_contract_1234",
       csrfToken: "recovery-csrf-token",
@@ -281,9 +283,11 @@ describe("browser review boundary", () => {
       },
     });
 
-    expect(html).toContain("Check Xero status safely");
-    expect(html).toContain("will not submit another write");
-    expect(html.match(/<form /g)).toHaveLength(1);
+    expect(html).toContain("prior legacy authorisation attempt may have reached Xero");
+    expect(html).toContain("inspect the same InvoiceID directly in Xero");
+    expect(html).toContain("No browser write action is available.");
+    expect(html).not.toContain("Check Xero status safely");
+    expect(html).not.toContain("<form");
     expect(html).not.toContain(">Reject<");
   });
 });
@@ -501,6 +505,7 @@ describe("MCP request context boundary", () => {
         redirectUris: ["https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callback"],
       }],
       missingResourceCompatClientIds: [],
+      manualReturnClientIds: [],
       accessTokenTtlSeconds: 900,
       refreshTokenTtlSeconds: 2_592_000,
       authorizationCodeTtlSeconds: 300,
@@ -543,6 +548,7 @@ describe("MCP request context boundary", () => {
       personalPocOnly: true,
       hostClients,
       missingResourceCompatClientIds: [],
+      manualReturnClientIds: [],
       accessTokenTtlSeconds: 900,
       refreshTokenTtlSeconds: 2_592_000,
       authorizationCodeTtlSeconds: 300,
@@ -574,11 +580,14 @@ describe("MCP request context boundary", () => {
       mcpOAuthProvider,
     });
     const stack = (app as unknown as {
-      router: { stack: Array<{ route?: { path?: string } }> };
+      router: { stack: Array<{ route?: { path?: string; methods?: Record<string, boolean> } }> };
     }).router.stack;
     const paths = stack.map((layer) => layer.route?.path).filter((path): path is string => typeof path === "string");
+    const callbackRoutes = stack.filter((layer) => layer.route?.path === "/oauth/xero/callback");
 
     expect(paths).toContain("/oauth/xero/callback");
+    expect(callbackRoutes.some((layer) => layer.route?.methods?.get === true)).toBe(true);
+    expect(callbackRoutes.some((layer) => layer.route?.methods?.post === true)).toBe(true);
     expect(paths).toContain("/oauth/xero/select");
     expect(paths).not.toContain("/connect/xero");
   });
@@ -603,6 +612,7 @@ describe("ticket-bound Xero OAuth identity boundary", () => {
         scopes: ["offline_access", "accounting.invoices"],
       },
       xeroWriteEnabled: false,
+      xeroAuthorityRevision: 1,
       tokenEncryptionKey: Buffer.alloc(32),
       xeroMutationConfirmationKey: Buffer.alloc(32, 1),
       demoActorId: "demo-actor",

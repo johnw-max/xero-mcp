@@ -130,6 +130,39 @@ describe("provider contact search evidence", () => {
     });
   });
 
+  it("asks Xero to include inactive rows when scanning GDPRREQUEST contacts", async () => {
+    const getContacts = vi.fn().mockResolvedValue({
+      body: {
+        contacts: [{
+          contactID: "99999999-9999-4999-8999-999999999999",
+          name: "Erasure Requested Contact",
+          contactStatus: "GDPRREQUEST",
+        }],
+        pagination: { page: 1, pageSize: 100, pageCount: 1, itemCount: 1 },
+      },
+    });
+    const provider = providerWithClient({ accountingApi: { getContacts } });
+
+    await provider.listContacts("actor-a", {
+      status: "GDPRREQUEST",
+      page: 1,
+      limit: 100,
+    });
+
+    expect(getContacts).toHaveBeenCalledWith(
+      "tenant-a",
+      undefined,
+      'ContactStatus=="GDPRREQUEST"',
+      "Name ASC",
+      undefined,
+      1,
+      true,
+      false,
+      undefined,
+      100,
+    );
+  });
+
   it("reads only the requested ContactID and returns the safe contact projection", async () => {
     const contactId = "11111111-1111-4111-8111-111111111111";
     const getContacts = vi.fn().mockResolvedValue({

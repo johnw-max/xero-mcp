@@ -22,11 +22,11 @@ describe("Xero capability and risk policy", () => {
 
   it("separates current availability from the risk control required", () => {
     expect(policy("supplier_bill.create_draft")).toMatchObject({
-      riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+      riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
       releaseDecision: "AVAILABLE_NOW",
     });
     expect(policy("customer_invoice.create_draft")).toMatchObject({
-      riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+      riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
       releaseDecision: "AVAILABLE_NOW",
     });
     expect(policy("manual_journal.post")).toMatchObject({
@@ -75,14 +75,14 @@ describe("Xero capability and risk policy", () => {
       knownAction: true,
       policyAllowsExecution: true,
       policyAllowsMutation: true,
-      controlRequirement: "EXPLICIT_CONFIRMATION",
+      controlRequirement: "STANDING_DELEGATION",
       requiredScopes: ["xero.draft.write"],
       requiredPermissions: ["XERO_DRAFT_WRITE"],
     });
     expect(invoiceDraft).toMatchObject({
       policyAllowsExecution: true,
       policyAllowsMutation: true,
-      controlRequirement: "EXPLICIT_CONFIRMATION",
+      controlRequirement: "STANDING_DELEGATION",
       requiredScopes: ["xero.draft.write"],
       requiredPermissions: ["XERO_DRAFT_WRITE"],
     });
@@ -133,7 +133,7 @@ describe("Xero capability and risk policy", () => {
       }
       if (entry.policyAllowsMutation) {
         expect(entry.riskClass, entry.actionId).toBe(
-          "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+          "AUTONOMOUS_CONTROLLED_WRITE",
         );
       }
     }
@@ -179,7 +179,7 @@ describe("Xero capability and risk policy", () => {
       "credit_note.create_draft",
     ] as const) {
       expect(policy(actionId)).toMatchObject({
-        riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+        riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
         releaseDecision: "AVAILABLE_NOW",
       });
     }
