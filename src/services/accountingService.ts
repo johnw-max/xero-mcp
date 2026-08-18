@@ -61,16 +61,13 @@ import type { AccountingRepository } from "../db/repository.js";
 import { xeroSupplierPostingIdentity } from "../db/xeroPostingDuplicate.js";
 import { AppError, toSafeError } from "../errors.js";
 import { xeroCapabilityDenied } from "../policy/xeroCapabilityError.js";
+import { resolveStableXeroTaxRate } from "../policy/xeroTaxRateResolver.js";
 import {
-  resolveStableXeroTaxRate,
-  type XeroTaxDirection,
-} from "../policy/xeroTaxRateResolver.js";
-import {
-  XeroTenantCoaProfileError,
-  assertXeroTenantCoaExecutionConstraints,
-  parseXeroTenantCoaExecutionConstraints,
-  type XeroTenantCoaExecutionConstraints,
-} from "../policy/xeroTenantCoaProfile.js";
+  XeroDeclaredLedgerBindingError,
+  assertXeroDeclaredLedgerExecutionConstraints,
+  parseXeroDeclaredLedgerExecutionConstraints,
+  type XeroDeclaredLedgerExecutionConstraints,
+} from "../policy/xeroDeclaredLedgerBinding.js";
 import type { Logger } from "../logging.js";
 import { hashObject, safeEqual, sha256 } from "../security/hash.js";
 import { safeLedgerTargetReference } from "../security/ledgerTargetReference.js";
@@ -411,10 +408,10 @@ export class AccountingService {
   async prepareSupplierBillDraft(
     principal: AccountingPrincipal,
     input: PrepareSupplierBillDraftInput,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
   ): Promise<SupplierBillDraftPreparationResult> {
     const serverAccountIds = serverCoaConstraints?.lines.map((line) => line.accountId);
-    const prepared = await this.#prepareSupplierBillDraftProposal(principal, input, "INPUT", serverAccountIds);
+    const prepared = await this.#prepareSupplierBillDraftProposal(principal, input, serverAccountIds);
     if (prepared.proposal && typeof principal !== "string") {
       // Case-level preflight must discover every deterministic source,
       // reference and duplicate blocker before the first Provider mutation.
@@ -439,7 +436,6 @@ export class AccountingService {
     input: Omit<PrepareSupplierBillDraftInput, "authoritative_provider_field"> & {
       authoritative_provider_field?: "INVOICE_NUMBER" | "REFERENCE" | undefined;
     },
-    direction: XeroTaxDirection,
     serverAccountIds?: readonly string[],
   ): Promise<SupplierBillDraftPreparationResult> {
     const referenceData = await this.#provider.getSupplierBillDraftReferenceData(principal, input.supplier_name);
@@ -597,7 +593,6 @@ export class AccountingService {
         ? resolveStableXeroTaxRate({
             taxRates: referenceData.taxRates,
             taxType: stableTaxType,
-            direction,
             account: selectedAccount,
           })
         : undefined;
@@ -741,7 +736,7 @@ export class AccountingService {
   async prepareSalesInvoiceDraft(
     principal: AccountingPrincipal,
     input: PrepareSalesInvoiceDraftInput,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
   ): Promise<SalesInvoiceDraftPreparationResult> {
     const serverAccountIds = serverCoaConstraints?.lines.map((line) => line.accountId);
     const prepared = await this.#prepareSupplierBillDraftProposal(principal, {
@@ -760,7 +755,7 @@ export class AccountingService {
         : {}),
       ...(input.line_amount_type ? { line_amount_type: input.line_amount_type } : {}),
       ...(input.lines ? { lines: input.lines } : {}),
-    }, "OUTPUT", serverAccountIds);
+    }, serverAccountIds);
 
     let proposal = prepared.proposal as Omit<CreateDraftSalesInvoiceInput, "user_confirmation"> | null;
     if (proposal) {
@@ -888,7 +883,7 @@ export class AccountingService {
   async executePreparedSupplierBillDraft(
     principal: AccountingPrincipal,
     input: ExecutePreparedXeroMutationInput,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
     beforeProviderWriteClaim?: () => Promise<void>,
     sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
   ): Promise<DraftSupplierBillResult & { mutationRequestId: string }> {
@@ -906,7 +901,7 @@ export class AccountingService {
   async executePreparedSalesInvoiceDraft(
     principal: AccountingPrincipal,
     input: ExecutePreparedXeroMutationInput,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
     beforeProviderWriteClaim?: () => Promise<void>,
     sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
   ): Promise<DraftSalesInvoiceResult & { mutationRequestId: string }> {
@@ -925,7 +920,7 @@ export class AccountingService {
     principal: AccountingPrincipal,
     input: ExecutePreparedXeroMutationInput,
     objectType: "SUPPLIER_BILL" | "SALES_INVOICE",
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
     beforeProviderWriteClaim?: () => Promise<void>,
     sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
   ): Promise<(DraftSupplierBillResult | DraftSalesInvoiceResult) & { mutationRequestId: string }> {
@@ -1124,7 +1119,7 @@ export class AccountingService {
             status: "DRAFT",
             canonicalPayload: confirmed.canonicalPayload,
             ...(serverCoaConstraints ? {
-              serverCoaExecutionConstraints: parseXeroTenantCoaExecutionConstraints(serverCoaConstraints),
+              serverCoaExecutionConstraints: parseXeroDeclaredLedgerExecutionConstraints(serverCoaConstraints),
             } : {}),
             evidence: {
               postingRequestId: written.postingRequestId,
@@ -1155,7 +1150,7 @@ export class AccountingService {
     principal: AccountingPrincipal,
     objectType: "SUPPLIER_BILL" | "SALES_INVOICE",
     input: CreateDraftSupplierBillInput,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
   ): Promise<void> {
     const expectedSourceHash = objectType === "SUPPLIER_BILL"
       ? hashObject(canonicalDraftExtractionFingerprint(input))
@@ -1211,23 +1206,19 @@ export class AccountingService {
         },
       );
     }
-    await this.#validateDraftContext(
-      principal,
-      input,
-      objectType === "SUPPLIER_BILL" ? "INPUT" : "OUTPUT",
-    );
+    await this.#validateDraftContext(principal, input);
     await this.#assertServerCoaExecutionConstraints(principal, input, serverCoaConstraints);
   }
 
   async #assertServerCoaExecutionConstraints(
     principal: AccountingPrincipal,
     input: CreateDraftSupplierBillInput | CreateDraftSalesInvoiceInput,
-    rawConstraints: XeroTenantCoaExecutionConstraints | undefined,
+    rawConstraints: XeroDeclaredLedgerExecutionConstraints | undefined,
   ): Promise<void> {
     if (!rawConstraints) return;
-    let constraints: XeroTenantCoaExecutionConstraints;
+    let constraints: XeroDeclaredLedgerExecutionConstraints;
     try {
-      constraints = parseXeroTenantCoaExecutionConstraints(rawConstraints);
+      constraints = parseXeroDeclaredLedgerExecutionConstraints(rawConstraints);
     } catch (error) {
       throw new AppError("PERSISTENCE_FAILURE", "The server-owned COA execution constraints are invalid.", {
         httpStatus: 503,
@@ -1241,7 +1232,7 @@ export class AccountingService {
       this.#provider.listAccounts(principal),
     ]);
     try {
-      assertXeroTenantCoaExecutionConstraints({
+      assertXeroDeclaredLedgerExecutionConstraints({
         constraints,
         tenantId: resolved.tenantId,
         accounts,
@@ -1252,14 +1243,14 @@ export class AccountingService {
         })),
       });
     } catch (error) {
-      if (!(error instanceof XeroTenantCoaProfileError)) throw error;
+      if (!(error instanceof XeroDeclaredLedgerBindingError)) throw error;
       throw new AppError("STALE_PREFLIGHT", error.message, {
         httpStatus: 409,
         retryable: false,
         details: {
-          failureLayer: "XERO_TENANT_COA_PROFILE",
+          failureLayer: "XERO_DECLARED_LEDGER_BINDING",
           reasonCodes: [error.reasonCode],
-          ...(error.category ? { accountingCategory: error.category } : {}),
+          ...(error.declared ? { declaredCoordinate: error.declared } : {}),
           recoveryAction: "PREPARE_NEW_ACCOUNTING_CASE_VERSION",
           providerMutationPossible: false,
         },
@@ -1325,7 +1316,7 @@ export class AccountingService {
   prepareCreditNoteDraft(
     principal: AccountingPrincipal,
     input: PrepareCreditNoteDraftInput,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
   ) {
     return this.#requireCreditNoteManualJournalMutations()
       .prepareCreditNoteDraft(this.#requestContext(principal), input, serverCoaConstraints);
@@ -1334,7 +1325,7 @@ export class AccountingService {
   createCreditNoteDraft(
     principal: AccountingPrincipal,
     input: ExecutePreparedXeroMutationInput,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
     beforeProviderWriteClaim?: () => Promise<void>,
     sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
   ) {
@@ -1542,7 +1533,7 @@ export class AccountingService {
       );
     }
     if (!providerReferencesAlreadyValidated) {
-      await this.#validateDraftContext(principal, input, "INPUT");
+      await this.#validateDraftContext(principal, input);
     }
 
     const created = await this.#repository.createOrGetPosting({
@@ -1781,7 +1772,7 @@ export class AccountingService {
       );
     }
     if (!providerReferencesAlreadyValidated) {
-      await this.#validateDraftContext(principal, input, "OUTPUT");
+      await this.#validateDraftContext(principal, input);
     }
 
     const created = await this.#repository.createOrGetPosting({
@@ -2611,7 +2602,6 @@ export class AccountingService {
   async #validateDraftContext(
     principal: AccountingPrincipal,
     input: CreateDraftSupplierBillInput | CreateDraftSalesInvoiceInput,
-    direction: XeroTaxDirection,
   ): Promise<void> {
     const [accounts, taxRates, contact] = await Promise.all([
       this.#provider.listAccounts(principal),
@@ -2640,7 +2630,6 @@ export class AccountingService {
       const taxResolution = resolveStableXeroTaxRate({
         taxRates,
         taxType: line.tax_type,
-        direction,
         account,
       });
       if (!taxResolution.ok) {

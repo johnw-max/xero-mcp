@@ -11,15 +11,18 @@ import {
   quantizeAccountingLineTax,
   type SupportedAccountingMonetaryRule,
 } from "../control-kernel/accountingMonetary.js";
-import type { InvoiceSnapshot } from "../providers/types.js";
+import type { AccountSummary, InvoiceSnapshot, TaxRateSummary } from "../providers/types.js";
 import { hashObject } from "../security/hash.js";
 import {
   XERO_ORIGINAL_TRANSACTION_BINDING_VERSION,
-  xeroTaxSemanticsForTaxType,
   type XeroOriginalTransactionBinding,
 } from "./xeroAccountingCaseProviderContract.js";
-import type { AccountingPolicyEnforcementContract } from "../control-kernel/accountingPolicyEnforcementContract.js";
-import type { XeroTenantCoaProfileBinding } from "./xeroTenantCoaProfile.js";
+import {
+  bindXeroDeclaredLedger,
+  xeroDeclaredLedgerAccount,
+  xeroDeclaredLedgerTaxRate,
+  xeroTaxRateAppliesToAccountClass,
+} from "./xeroDeclaredLedgerBinding.js";
 
 export class XeroOriginalTransactionEvidenceError extends Error {
   constructor(readonly reasonCodes: readonly string[]) {
@@ -100,9 +103,10 @@ export function createXeroOriginalTransactionEvidence(input: {
   expectedTenantId: string;
   expectedContactId: string;
   checkedObjectCount: number;
-  tenantCoaProfile: XeroTenantCoaProfileBinding;
+  /** Complete live tenant reads used to prove the original's own coordinates. */
+  accounts: readonly AccountSummary[];
+  taxRates: readonly TaxRateSummary[];
   monetaryRule: SupportedAccountingMonetaryRule;
-  accountingPolicy: AccountingPolicyEnforcementContract;
 }): Readonly<{
   evidence: OriginalTransactionEvidenceFact;
   binding: XeroOriginalTransactionBinding;
@@ -142,39 +146,36 @@ export function createXeroOriginalTransactionEvidence(input: {
   if (reasons.length > 0) fail(...reasons);
 
   const lineAmountType = normalizedLineAmountType(snapshot.lineAmountType);
-  const policyProjection = input.accountingPolicy.planProjection;
-  const rawPeriods = Array.isArray(policyProjection.periods) ? policyProjection.periods : [];
-  const periods = rawPeriods.flatMap((value) =>
-    value && typeof value === "object" && !Array.isArray(value) &&
-    typeof (value as Record<string, unknown>).policyPeriodId === "string" &&
-    typeof (value as Record<string, unknown>).startsOn === "string" &&
-    typeof (value as Record<string, unknown>).endsOn === "string" &&
-    typeof (value as Record<string, unknown>).rateBps === "number"
-      ? [value as { policyPeriodId: string; startsOn: string; endsOn: string; rateBps: number }]
-      : []);
-  const originalPeriod = periods.filter((period) =>
-    credit.originalDocumentDate! >= period.startsOn && credit.originalDocumentDate! <= period.endsOn);
-  if (originalPeriod.length !== 1) fail("ORIGINAL_TAX_POLICY_PERIOD_UNSUPPORTED");
-  const categoryEntries = Object.entries(input.tenantCoaProfile.categories);
+  // Every coordinate below is read from the already-posted Xero document and
+  // proven against the same live tenant data. There is no jurisdiction period
+  // table and no tax-semantics mapping.
+  let originalBinding;
+  try {
+    originalBinding = bindXeroDeclaredLedger({
+      tenantId: input.expectedTenantId,
+      jurisdiction: "READBACK",
+      accountCodes: snapshot.lines.map((line) => line.accountCode),
+      taxTypes: snapshot.lines.map((line) => line.taxType),
+      accounts: input.accounts,
+      taxRates: input.taxRates,
+    });
+  } catch {
+    return fail("ORIGINAL_LEDGER_COORDINATE_UNBINDABLE");
+  }
   const lines: OriginalTransactionEvidenceLine[] = snapshot.lines.map((line, index) => {
-    const accountMatches = categoryEntries.filter(([, category]) =>
-      category.accountId === line.accountId && category.accountCode === line.accountCode);
-    if (accountMatches.length !== 1) fail("ORIGINAL_ACCOUNT_SEMANTIC_BINDING_MISMATCH");
-    const accountingCategory = accountMatches[0]![0];
-    const taxSemantics = xeroTaxSemanticsForTaxType(line.taxType, originalRoute);
-    if (!taxSemantics) fail("ORIGINAL_TAX_SEMANTIC_BINDING_MISMATCH");
-    const taxClass = taxSemantics.startsWith("STANDARD_")
-      ? "SG_STANDARD_RATED"
-      : taxSemantics === "NO_TAX"
-        ? "NO_TAX"
-        : taxSemantics.startsWith("ZERO_RATED_")
-          ? "ZERO_RATED"
-          : taxSemantics.startsWith("OUT_OF_SCOPE_")
-            ? "OUT_OF_SCOPE"
-            : taxSemantics.startsWith("EXEMPT_")
-              ? "EXEMPT"
-              : fail("ORIGINAL_TAX_CLASS_UNRESOLVED");
-    const effectiveTaxRateBps = taxClass === "SG_STANDARD_RATED" ? originalPeriod[0]!.rateBps : 0;
+    const account = xeroDeclaredLedgerAccount(originalBinding, line.accountCode);
+    if (!account || (line.accountId && account.accountId.toLowerCase() !== line.accountId.toLowerCase())) {
+      fail("ORIGINAL_ACCOUNT_LEDGER_BINDING_MISMATCH");
+    }
+    const taxRate = xeroDeclaredLedgerTaxRate(originalBinding, line.taxType);
+    if (!taxRate) fail("ORIGINAL_TAX_TYPE_LEDGER_BINDING_MISMATCH");
+    if (!xeroTaxRateAppliesToAccountClass(taxRate, account.accountClass)) {
+      fail("ORIGINAL_TAX_TYPE_NOT_APPLICABLE_TO_ACCOUNT_CLASS");
+    }
+    const accountCode = account.accountCode;
+    const taxType = taxRate.taxType;
+    const taxSemantics = taxType;
+    const effectiveTaxRateBps = taxRate.effectiveTaxRateBps;
     const quantity = fixed(line.quantity, "ORIGINAL_LINE_QUANTITY_INVALID");
     const unitAmount = fixed(line.unitAmount, "ORIGINAL_LINE_UNIT_AMOUNT_INVALID");
     const expectedNet = formatAccountingFixedFour(quantizeAccountingLineNet(
@@ -191,7 +192,7 @@ export function createXeroOriginalTransactionEvidence(input: {
       input.monetaryRule,
     ));
     if (tax !== expectedTax) fail("ORIGINAL_LINE_TAX_MISMATCH");
-    if (lineAmountType === "NO_TAX" && (tax !== "0.0000" || taxSemantics !== "NO_TAX")) {
+    if (lineAmountType === "NO_TAX" && (tax !== "0.0000" || effectiveTaxRateBps !== 0)) {
       fail("ORIGINAL_NO_TAX_LINE_MISMATCH");
     }
     const semanticProjection = {
@@ -201,11 +202,10 @@ export function createXeroOriginalTransactionEvidence(input: {
       unitAmount,
       net,
       tax,
-      accountingCategory,
-      taxClass,
+      accountCode,
+      taxType,
       effectiveTaxRateBps,
       taxSemantics,
-      taxPolicyPeriodId: originalPeriod[0]!.policyPeriodId,
     };
     return Object.freeze({
       evidenceLineKey: `original-line-${hashObject(semanticProjection).slice(0, 32)}`,
@@ -214,11 +214,10 @@ export function createXeroOriginalTransactionEvidence(input: {
       unitAmount,
       net,
       tax,
-      accountingCategory,
-      taxClass,
+      accountCode,
+      taxType,
       effectiveTaxRateBps,
       taxSemantics,
-      taxPolicyPeriodId: originalPeriod[0]!.policyPeriodId,
     });
   });
   if (new Set(lines.map((line) => line.evidenceLineKey)).size !== lines.length) {

@@ -23,6 +23,8 @@ import type {
   AccountingCaseOperationRecord,
   AccountingCaseOperationReseal,
   AccountingCasePreflightResealReceipt,
+  AccountingCaseSourceCaseClaim,
+  AccountingCaseSourceCaseReference,
   AccountingCaseVersionRecord,
 } from "../domain/accountingCasePersistence.js";
 import {
@@ -57,7 +59,7 @@ import {
   createXeroAccountingCaseProviderContract,
   createXeroAccountingCaseProviderContractFromProjection,
   XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION,
-  xeroTenantCoaProfileFromProviderProjection,
+  xeroDeclaredLedgerBindingFromProviderProjection,
   xeroContactDurableBusinessIdentityHash,
   xeroOriginalTransactionBindingFromProviderProjection,
   type XeroOriginalTransactionBindings,
@@ -65,10 +67,10 @@ import {
   type XeroAccountingCaseContactBindings,
 } from "../policy/xeroAccountingCaseProviderContract.js";
 import {
-  createXeroSingaporeAccountingPolicy,
-  createXeroSingaporeAccountingPolicyFromProjection,
-  XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION,
-} from "../policy/xeroSingaporeAccountingPolicy.js";
+  createXeroDeclaredLedgerPolicy,
+  createXeroDeclaredLedgerPolicyFromProjection,
+  XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION,
+} from "../policy/xeroDeclaredLedgerPolicy.js";
 import { AppError, toSafeError } from "../errors.js";
 import type { AccountingProvider, ContactSummary } from "../providers/types.js";
 import { hashObject, safeEqual, sha256, stableStringify } from "../security/hash.js";
@@ -94,16 +96,15 @@ import {
   type XeroContactIdentityEvidence,
 } from "../policy/xeroContactIdentity.js";
 import {
-  XeroTenantCoaProfileError,
-  bindXeroTenantCoaProfile,
-  createXeroTenantCoaExecutionConstraints,
-  createXeroTenantCoaProfileRegistry,
-  type XeroAccountingCategory,
-  type XeroTenantCoaExecutionConstraints,
-  type XeroTenantCoaProfile,
-  type XeroTenantCoaProfileBinding,
-  type XeroTenantCoaProfileRegistry,
-} from "../policy/xeroTenantCoaProfile.js";
+  XeroDeclaredLedgerBindingError,
+  bindXeroDeclaredLedger,
+  createXeroDeclaredLedgerExecutionConstraints,
+  requireXeroDeclaredLedgerAccount,
+  xeroDeclaredLedgerAccount,
+  type XeroDeclaredLedgerBinding,
+  type XeroDeclaredLedgerExecutionConstraints,
+} from "../policy/xeroDeclaredLedgerBinding.js";
+import type { XeroTenantCoaProfile } from "../policy/xeroTenantCoaProfile.js";
 import {
   findTrustedXeroRecurringSeriesAuthority,
   parseXeroAccountingCaseBusinessAuthorityProjection,
@@ -133,7 +134,7 @@ type CaseMutationProjectionState =
 type CasePreparationProviderReferences = {
   contact?: ContactSummary;
   creditLineAccountIds?: readonly string[];
-  tenantCoaProfile?: XeroTenantCoaProfileBinding;
+  ledgerBinding?: XeroDeclaredLedgerBinding;
 };
 
 type ContactResolution = Readonly<{
@@ -263,6 +264,38 @@ function caseBinding(context: RequestContext, tenantId: string): AccountingCaseB
     targetSessionHash: principal.targetSessionHash,
     targetSessionExpiresAt: new Date(principal.targetSessionExpiresAt),
   };
+}
+
+/** Every provider-native coordinate a submitted Case explicitly declares. */
+function declaredLedgerCoordinates(
+  facts: readonly AccountingFact[],
+): Readonly<{ accountCodes: readonly string[]; taxTypes: readonly string[] }> {
+  const accountCodes = new Set<string>();
+  const taxTypes = new Set<string>();
+  for (const fact of facts) {
+    if (fact.kind !== "NATIVE_DOCUMENT") continue;
+    for (const line of fact.lines) {
+      accountCodes.add(line.accountCode);
+      taxTypes.add(line.taxType);
+    }
+  }
+  return Object.freeze({ accountCodes: [...accountCodes], taxTypes: [...taxTypes] });
+}
+
+/** Recover the declared coordinate set a sealed binding was built from. */
+function sealedDeclaredLedgerCoordinates(
+  binding: XeroDeclaredLedgerBinding,
+): Readonly<{ accountCodes: readonly string[]; taxTypes: readonly string[] }> {
+  return Object.freeze({
+    accountCodes: [
+      ...binding.accounts.map((account) => account.declaredCode),
+      ...binding.unresolvedAccountCodes.map((entry) => entry.declared),
+    ],
+    taxTypes: [
+      ...binding.taxRates.map((taxRate) => taxRate.taxType),
+      ...binding.unresolvedTaxTypes.map((entry) => entry.declared),
+    ],
+  });
 }
 
 function canonicalContactName(value: string): string {
@@ -586,7 +619,6 @@ export class XeroAccountingCaseService {
   readonly #testTenantIds: ReadonlySet<string>;
   readonly #clock: () => Date;
   readonly #continuationSecret: Buffer;
-  readonly #tenantCoaProfiles: XeroTenantCoaProfileRegistry;
   readonly #businessAuthorities: ReadonlyMap<string, XeroAccountingCaseBusinessAuthorityProfile>;
 
   constructor(
@@ -597,7 +629,12 @@ export class XeroAccountingCaseService {
     options: {
       continuationSecret: Buffer;
       testTenantIds?: readonly string[];
-      tenantCoaProfiles: readonly XeroTenantCoaProfile[];
+      /**
+       * ADR-002: retained for deployment compatibility only. Account and tax
+       * coordinates are declared by the caller and verified against the target
+       * tenant's live data, so this profile no longer gates any write.
+       */
+      tenantCoaProfiles?: readonly XeroTenantCoaProfile[];
       businessAuthorityProfiles?: readonly XeroAccountingCaseBusinessAuthorityProfile[];
       clock?: () => Date;
     },
@@ -608,7 +645,6 @@ export class XeroAccountingCaseService {
     this.#testTenantIds = new Set(options?.testTenantIds ?? []);
     this.#clock = options?.clock ?? (() => new Date());
     this.#continuationSecret = Buffer.from(options.continuationSecret);
-    this.#tenantCoaProfiles = createXeroTenantCoaProfileRegistry(options.tenantCoaProfiles);
     const authorities = options.businessAuthorityProfiles ?? [];
     this.#businessAuthorities = new Map(authorities.map((profile) => [profile.tenant_id, profile]));
     if (this.#businessAuthorities.size !== authorities.length) {
@@ -621,7 +657,7 @@ export class XeroAccountingCaseService {
   ): Readonly<Pick<AccountingCaseTarget,
     "periodLockDate" | "endOfYearLockDate" | "organisationStatus"> & { paysTax: boolean }> {
     if (organisation.paysTax === undefined) {
-      throw new AppError("VALIDATION_FAILED", "The Xero organisation GST registration status is unknown.", {
+      throw new AppError("VALIDATION_FAILED", "The Xero organisation sales-tax registration status is unknown.", {
         httpStatus: 422,
         details: { reasonCodes: ["ORGANISATION_GST_REGISTRATION_UNKNOWN"] },
       });
@@ -641,25 +677,41 @@ export class XeroAccountingCaseService {
     };
   }
 
-  async #currentTenantCoaProfile(
+  /**
+   * Bind the coordinates a Case declared to the target tenant's live chart of
+   * accounts and tax-rate table. Unresolvable declarations are carried inside
+   * the binding so the accounting policy can block the Case with deterministic
+   * per-line reason codes and zero provider writes.
+   */
+  async #currentLedgerBinding(
     context: RequestContext,
     tenantId: string,
     jurisdiction: string,
-  ): Promise<XeroTenantCoaProfileBinding> {
+    declared: Readonly<{ accountCodes: readonly string[]; taxTypes: readonly string[] }>,
+  ): Promise<XeroDeclaredLedgerBinding> {
+    const [accounts, taxRates] = await Promise.all([
+      this.accounting.listAccounts(context, {}),
+      this.accounting.listTaxRates(context),
+    ]);
     try {
-      const profile = this.#tenantCoaProfiles.resolve(tenantId, jurisdiction);
-      const accounts = await this.accounting.listAccounts(context, {});
-      return bindXeroTenantCoaProfile(profile, accounts);
+      return bindXeroDeclaredLedger({
+        tenantId,
+        jurisdiction,
+        accountCodes: declared.accountCodes,
+        taxTypes: declared.taxTypes,
+        accounts,
+        taxRates,
+      });
     } catch (error) {
-      if (!(error instanceof XeroTenantCoaProfileError)) throw error;
+      if (!(error instanceof XeroDeclaredLedgerBindingError)) throw error;
       throw new AppError("VALIDATION_FAILED", error.message, {
         httpStatus: 422,
         retryable: false,
         details: {
-          failureLayer: "XERO_TENANT_COA_PROFILE",
+          failureLayer: "XERO_DECLARED_LEDGER_BINDING",
           reasonCodes: [error.reasonCode],
-          ...(error.category ? { accountingCategory: error.category } : {}),
-          recoveryAction: "CONFIGURE_OR_REFRESH_TENANT_COA_PROFILE_AND_PREPARE_NEW_CASE_VERSION",
+          ...(error.declared ? { declaredCoordinate: error.declared } : {}),
+          recoveryAction: "CORRECT_DECLARED_LEDGER_COORDINATES_AND_PREPARE_NEW_CASE_VERSION",
           providerMutationPossible: false,
         },
         cause: error,
@@ -671,9 +723,17 @@ export class XeroAccountingCaseService {
     context: RequestContext,
     record: AccountingCaseVersionRecord,
   ): Promise<void> {
-    const [organisation, currentCoaProfile] = await Promise.all([
+    const pinnedLedgerBinding = xeroDeclaredLedgerBindingFromProviderProjection(
+      record.compiled.providerProjection,
+    );
+    const [organisation, currentLedgerBinding] = await Promise.all([
       this.provider.getOrganisation(context),
-      this.#currentTenantCoaProfile(context, record.binding.tenantId, record.compiled.target.taxJurisdiction),
+      this.#currentLedgerBinding(
+        context,
+        record.binding.tenantId,
+        record.compiled.target.taxJurisdiction,
+        sealedDeclaredLedgerCoordinates(pinnedLedgerBinding),
+      ),
     ]);
     if (organisation.organisationId !== record.binding.tenantId) {
       throw new AppError("CONFLICT", "Xero organisation settings no longer match the Accounting Case target.", {
@@ -682,8 +742,7 @@ export class XeroAccountingCaseService {
     }
     const current = this.#organisationTargetSettings(organisation);
     const pinned = record.compiled.target;
-    const pinnedPolicy = createXeroSingaporeAccountingPolicyFromProjection(record.compiled.policyProjection);
-    const pinnedCoaProfile = xeroTenantCoaProfileFromProviderProjection(record.compiled.providerProjection);
+    const pinnedPolicy = createXeroDeclaredLedgerPolicyFromProjection(record.compiled.policyProjection);
     const pinnedOrganisation = pinnedPolicy.planProjection.organisation as Readonly<Record<string, unknown>>;
     if (
       current.paysTax !== pinnedOrganisation.paysTax ||
@@ -696,13 +755,13 @@ export class XeroAccountingCaseService {
         details: { reasonCodes: ["ORGANISATION_POLICY_SNAPSHOT_STALE"] },
       });
     }
-    if (stableStringify(currentCoaProfile) !== stableStringify(pinnedCoaProfile)) {
-      throw new AppError("STALE_PREFLIGHT", "The server-owned tenant chart-of-accounts profile or live Xero binding changed after this Case was compiled.", {
+    if (currentLedgerBinding.bindingHash !== pinnedLedgerBinding.bindingHash) {
+      throw new AppError("STALE_PREFLIGHT", "The live Xero binding for this Case's declared accounts or tax codes changed after it was compiled.", {
         httpStatus: 409,
         retryable: false,
         details: {
-          failureLayer: "XERO_TENANT_COA_PROFILE",
-          reasonCodes: ["XERO_TENANT_COA_PROFILE_DRIFT"],
+          failureLayer: "XERO_DECLARED_LEDGER_BINDING",
+          reasonCodes: ["XERO_DECLARED_LEDGER_BINDING_DRIFT"],
           recoveryAction: "PREPARE_NEW_ACCOUNTING_CASE_VERSION",
           providerMutationPossible: false,
         },
@@ -714,7 +773,7 @@ export class XeroAccountingCaseService {
     const policyVersion = record.compiled.policyProjection.schemaVersion;
     const providerVersion = record.compiled.providerProjection.schemaVersion;
     if (
-      policyVersion === XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION &&
+      policyVersion === XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION &&
       providerVersion === XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION
     ) return;
     const recoveryRequired = record.state === "RECOVERY_REQUIRED" || record.operations.some((operation) =>
@@ -733,7 +792,7 @@ export class XeroAccountingCaseService {
         providerMutationPossible: false,
         storedPolicyProjectionVersion: policyVersion ?? null,
         storedProviderProjectionVersion: providerVersion ?? null,
-        requiredPolicyProjectionVersion: XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION,
+        requiredPolicyProjectionVersion: XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION,
         requiredProviderProjectionVersion: XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION,
       },
     });
@@ -1000,13 +1059,17 @@ export class XeroAccountingCaseService {
         },
       });
     }
-    const accountingPolicy = createXeroSingaporeAccountingPolicyFromProjection(record.compiled.policyProjection);
+    const accountingPolicy = createXeroDeclaredLedgerPolicyFromProjection(record.compiled.policyProjection);
     const monetary = resolveSupportedAccountingMonetaryRule(accountingPolicy, sealed.credit.currency);
     if (!monetary.rule) {
       throw new AppError("PERSISTENCE_FAILURE", "The sealed original transaction has no supported monetary rule.", {
         httpStatus: 503,
       });
     }
+    const [liveAccounts, liveTaxRates] = await Promise.all([
+      this.accounting.listAccounts(context, {}),
+      this.accounting.listTaxRates(context),
+    ]);
     try {
       const current = createXeroOriginalTransactionEvidence({
         credit: sealed.credit,
@@ -1014,9 +1077,9 @@ export class XeroAccountingCaseService {
         expectedTenantId: record.binding.tenantId,
         expectedContactId: this.#stringField(operation.canonicalPayload, "xeroContactId"),
         checkedObjectCount: lookup.checkedObjectCount,
-        tenantCoaProfile: xeroTenantCoaProfileFromProviderProjection(record.compiled.providerProjection),
+        accounts: liveAccounts,
+        taxRates: liveTaxRates,
         monetaryRule: monetary.rule,
-        accountingPolicy,
       });
       if (
         lookup.exactReadback.invoiceId.toLowerCase() !== sealed.binding.providerObjectId.toLowerCase() ||
@@ -1076,11 +1139,14 @@ export class XeroAccountingCaseService {
         httpStatus: 409,
       });
     }
-    const country = organisation.countryCode?.toUpperCase();
-    if (country !== "SG" && country !== "SGP") {
-      throw new AppError("VALIDATION_FAILED", "The released Accounting Case policy requires verified Singapore organisation settings.", {
+    // ADR-002: the ledger gateway holds no jurisdiction rules. The tenant's
+    // country code is carried as informational target evidence only; it never
+    // selects a policy and never gates a write.
+    const country = organisation.countryCode?.trim().toUpperCase();
+    if (!country || !/^[A-Z]{2,3}$/u.test(country)) {
+      throw new AppError("VALIDATION_FAILED", "The Xero organisation country code is unknown.", {
         httpStatus: 422,
-        details: { reasonCodes: [country ? "UNSUPPORTED_TAX_JURISDICTION" : "ORGANISATION_COUNTRY_UNKNOWN"] },
+        details: { reasonCodes: ["ORGANISATION_COUNTRY_UNKNOWN"] },
       });
     }
     const baseCurrency = organisation.baseCurrency?.toUpperCase();
@@ -1182,38 +1248,46 @@ export class XeroAccountingCaseService {
       continuationAuthorization = { sourceVersion: prior.compiled.version, templateHash };
     }
     const organisationSettings = this.#organisationTargetSettings(organisation);
-    const [contactProjection, tenantCoaProfile] = await Promise.all([
+    const [contactProjection, ledgerBinding] = await Promise.all([
       this.#resolvePublicContactFacts(
         context,
         resolved.tenantId,
         input.facts as AccountingFact[],
         recoveryResidualToken ? undefined : continuationSource,
       ),
-      this.#currentTenantCoaProfile(context, resolved.tenantId, "SG"),
+      this.#currentLedgerBinding(
+        context,
+        resolved.tenantId,
+        country,
+        declaredLedgerCoordinates(input.facts as AccountingFact[]),
+      ),
     ]);
     const target: AccountingCaseTarget = {
       tenantId: resolved.tenantId,
       environment: this.#testTenantIds.has(resolved.tenantId) ? "TEST" : "PRODUCTION",
       baseCurrency,
-      taxJurisdiction: "SG",
+      taxJurisdiction: country,
       ...(organisationSettings.periodLockDate ? { periodLockDate: organisationSettings.periodLockDate } : {}),
       ...(organisationSettings.endOfYearLockDate
         ? { endOfYearLockDate: organisationSettings.endOfYearLockDate }
         : {}),
       organisationStatus: organisationSettings.organisationStatus,
     };
-    const accountingPolicy = createXeroSingaporeAccountingPolicy({ paysTax: organisationSettings.paysTax });
+    const accountingPolicy = createXeroDeclaredLedgerPolicy({
+      jurisdiction: country,
+      paysTax: organisationSettings.paysTax,
+      ledgerBinding,
+    });
     const originalProjection = await this.#resolveOriginalTransactionEvidence(
       context,
       resolved.tenantId,
       contactProjection.facts,
       contactProjection.contactBindings,
-      tenantCoaProfile,
       accountingPolicy,
     );
     const providerContract = createXeroAccountingCaseProviderContract(
       contactProjection.contactBindings,
-      tenantCoaProfile,
+      ledgerBinding,
       undefined,
       this.#businessAuthorities.get(resolved.tenantId),
       originalProjection.bindings,
@@ -1258,10 +1332,48 @@ export class XeroAccountingCaseService {
       }
     }
     const compiledPlanHash = accountingCasePlanHash(binding, compiled);
+    // Cross-MCP consistency: an upstream source case (for example a Drive case)
+    // binds to exactly one Xero tenant on first use. This proves the pairing is
+    // consistent, never that the upstream material is correct, so it does not
+    // touch source_truth_claim. Material pasted straight into chat cites no
+    // upstream case and is recorded as ABSENT rather than treated as suspect.
+    const sourceCase: AccountingCaseSourceCaseReference | undefined = input.source_case
+      ? { system: input.source_case.system, caseRefHash: sha256(input.source_case.case_ref) }
+      : undefined;
+    let sourceCaseClaim: AccountingCaseSourceCaseClaim = "SOURCE_CASE_ABSENT";
+    if (sourceCase) {
+      const bound = await this.repository.bindAccountingCaseSourceCase({
+        workspaceId: binding.workspaceId,
+        sourceCase,
+        tenantId: binding.tenantId,
+        now: this.#now(),
+      });
+      if (bound.outcome === "TENANT_CONFLICT") {
+        throw new AppError(
+          "CONFLICT",
+          "This upstream source case is already bound to a different Xero organisation.",
+          {
+            httpStatus: 409,
+            retryable: false,
+            details: {
+              failureLayer: "ACCOUNTING_CASE_SOURCE_CASE_BINDING",
+              reasonCodes: ["SOURCE_CASE_TENANT_CONFLICT"],
+              providerMutationPossible: false,
+              recoveryAction: "GET_CURRENT_CASE_STATUS",
+            },
+          },
+        );
+      }
+      sourceCaseClaim = bound.outcome === "BOUND_FIRST_USE"
+        ? "SOURCE_CASE_BOUND_FIRST_USE"
+        : "SOURCE_CASE_BOUND_CONFIRMED";
+    }
     const persisted = await this.repository.createOrAdvanceAccountingCase({
       binding,
       compiled,
       compiledPlanHash,
+      ...(sourceCase ? { sourceCase } : {}),
+      sourceCaseClaim,
       ...(continuationAuthorization ? { continuationAuthorization } : {}),
       ...(recoveryResidualAuthorization ? { recoveryResidualAuthorization } : {}),
       now: this.#now(),
@@ -1274,8 +1386,7 @@ export class XeroAccountingCaseService {
     tenantId: string,
     publicFacts: readonly AccountingFact[],
     contactBindings: XeroAccountingCaseContactBindings,
-    tenantCoaProfile: XeroTenantCoaProfileBinding,
-    accountingPolicy: ReturnType<typeof createXeroSingaporeAccountingPolicy>,
+    accountingPolicy: ReturnType<typeof createXeroDeclaredLedgerPolicy>,
   ): Promise<Readonly<{
     facts: AccountingFact[];
     bindings: XeroOriginalTransactionBindings;
@@ -1374,6 +1485,10 @@ export class XeroAccountingCaseService {
           },
         });
       }
+      const [liveAccounts, liveTaxRates] = await Promise.all([
+        this.accounting.listAccounts(context, {}),
+        this.accounting.listTaxRates(context),
+      ]);
       try {
         const resolved = createXeroOriginalTransactionEvidence({
           credit: fact,
@@ -1381,9 +1496,9 @@ export class XeroAccountingCaseService {
           expectedTenantId: tenantId,
           expectedContactId: contactBinding.contactId,
           checkedObjectCount: lookup.checkedObjectCount,
-          tenantCoaProfile,
+          accounts: liveAccounts,
+          taxRates: liveTaxRates,
           monetaryRule: monetary.rule,
-          accountingPolicy,
         });
         if (bindings.has(resolved.evidence.evidenceHash)) {
           throw new AppError("CONFLICT", "Two credits resolve to the same sealed original evidence identity.", {
@@ -2052,7 +2167,7 @@ export class XeroAccountingCaseService {
     const providerContract = createXeroAccountingCaseProviderContractFromProjection(
       record.compiled.providerProjection,
     );
-    const accountingPolicy = createXeroSingaporeAccountingPolicyFromProjection(
+    const accountingPolicy = createXeroDeclaredLedgerPolicyFromProjection(
       record.compiled.policyProjection,
     );
     for (const operationRecord of record.operations) {
@@ -2424,9 +2539,9 @@ export class XeroAccountingCaseService {
         };
       } else if (operation.nativeRoute === "SALES_INVOICE" || operation.nativeRoute === "SUPPLIER_BILL") {
         const contact = providerReferences.contact;
-        const coaProfile = providerReferences.tenantCoaProfile;
-        if (!contact || !coaProfile || !exactName(contact.name, this.#stringField(casePayload, "contactName"))) {
-          fail(["providerReferences.contact", "providerReferences.tenantCoaProfile"]);
+        const sealedBinding = providerReferences.ledgerBinding;
+        if (!contact || !sealedBinding || !exactName(contact.name, this.#stringField(casePayload, "contactName"))) {
+          fail(["providerReferences.contact", "providerReferences.ledgerBinding"]);
         }
         const resolvedContact = contact as ContactSummary;
         const expectedLines = this.#payloadLines(casePayload).map((line, index) => {
@@ -3367,7 +3482,7 @@ export class XeroAccountingCaseService {
     binding: AccountingCaseBinding,
     record: AccountingCaseVersionRecord,
     operationRecord: AccountingCaseOperationRecord,
-    serverCoaConstraints: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints: XeroDeclaredLedgerExecutionConstraints,
   ): Promise<AccountingCaseVersionRecord> {
     const operation = operationRecord.operation;
     const preparationId = operationRecord.preparationId;
@@ -3417,10 +3532,7 @@ export class XeroAccountingCaseService {
         },
       });
     }
-    const direction = operation.nativeRoute === "SUPPLIER_BILL" || operation.nativeRoute === "SUPPLIER_CREDIT"
-      ? "INPUT" as const
-      : "OUTPUT" as const;
-    const sealedCoaProfile = xeroTenantCoaProfileFromProviderProjection(record.compiled.providerProjection);
+    const sealedLedgerBinding = xeroDeclaredLedgerBindingFromProviderProjection(record.compiled.providerProjection);
     const serverCoaConstraints = this.#serverCoaExecutionConstraints(record, operation);
     const [accounts, taxes] = await Promise.all([
       this.accounting.listAccounts(context, {}),
@@ -3429,33 +3541,34 @@ export class XeroAccountingCaseService {
     const resolvedLines = this.#payloadLines(payload).map((line, index) => {
       const code = this.#stringField(line, "accountCode");
       const accountId = this.#stringField(line, "accountId");
-      const accountingCategory = this.#stringField(line, "accountingCategory");
       const taxType = this.#stringField(line, "taxType");
-      const sealedCategory = sealedCoaProfile.categories[
-        accountingCategory as keyof typeof sealedCoaProfile.categories
-      ];
+      let sealedAccount;
+      try {
+        sealedAccount = requireXeroDeclaredLedgerAccount(sealedLedgerBinding, code);
+      } catch (error) {
+        throw new AppError("PERSISTENCE_FAILURE", `Native-document line ${index + 1} has no sealed live account binding.`, {
+          httpStatus: 503,
+          cause: error,
+        });
+      }
       const rawProviderBinding = line.providerAccountBinding;
-      if (!sealedCategory || !rawProviderBinding || typeof rawProviderBinding !== "object" || Array.isArray(rawProviderBinding)) {
-        throw new AppError("PERSISTENCE_FAILURE", `Native-document line ${index + 1} has no sealed tenant COA binding.`, {
+      if (!rawProviderBinding || typeof rawProviderBinding !== "object" || Array.isArray(rawProviderBinding)) {
+        throw new AppError("PERSISTENCE_FAILURE", `Native-document line ${index + 1} has no sealed provider account binding.`, {
           httpStatus: 503,
         });
       }
       const providerBinding = rawProviderBinding as Record<string, unknown>;
       if (
-        accountId !== sealedCategory.accountId || code !== sealedCategory.accountCode ||
-        providerBinding.profileId !== sealedCoaProfile.profileId ||
-        providerBinding.profileRevision !== sealedCoaProfile.revision ||
-        providerBinding.profileHash !== sealedCoaProfile.profileHash ||
-        providerBinding.tenantId !== sealedCoaProfile.tenantId ||
-        providerBinding.jurisdiction !== sealedCoaProfile.jurisdiction ||
-        providerBinding.accountingCategory !== accountingCategory ||
+        accountId !== sealedAccount.accountId || code !== sealedAccount.accountCode ||
+        providerBinding.bindingHash !== sealedLedgerBinding.bindingHash ||
+        providerBinding.tenantId !== sealedLedgerBinding.tenantId ||
         providerBinding.accountId !== accountId || providerBinding.accountCode !== code ||
-        providerBinding.expectedType !== sealedCategory.expectedType ||
-        providerBinding.expectedClass !== sealedCategory.expectedClass
+        providerBinding.expectedType !== sealedAccount.accountType ||
+        providerBinding.expectedClass !== sealedAccount.accountClass
       ) {
-        throw new AppError("PERSISTENCE_FAILURE", `Native-document line ${index + 1} tenant COA binding integrity failed.`, {
+        throw new AppError("PERSISTENCE_FAILURE", `Native-document line ${index + 1} live account binding integrity failed.`, {
           httpStatus: 503,
-          details: { reasonCodes: ["XERO_TENANT_COA_BINDING_MISMATCH"] },
+          details: { reasonCodes: ["XERO_DECLARED_LEDGER_BINDING_MISMATCH"] },
         });
       }
       const idMatches = accounts.filter((account) => account.accountId === accountId);
@@ -3467,33 +3580,27 @@ export class XeroAccountingCaseService {
           httpStatus: 409,
           retryable: false,
           details: {
-            reasonCodes: ["XERO_TENANT_COA_PROFILE_DRIFT"],
+            reasonCodes: ["XERO_DECLARED_LEDGER_BINDING_DRIFT"],
             recoveryAction: "PREPARE_NEW_ACCOUNTING_CASE_VERSION",
             providerMutationPossible: false,
           },
         });
       }
-      if (account.type?.toUpperCase() !== sealedCategory.expectedType ||
-          account.class?.toUpperCase() !== sealedCategory.expectedClass ||
-          (sealedCategory.expectedName && compactCaseText(account.name ?? "").toLocaleLowerCase("en") !==
-            compactCaseText(sealedCategory.expectedName).toLocaleLowerCase("en"))) {
-        throw new AppError("STALE_PREFLIGHT", `Native-document line ${index + 1} Xero account semantics drifted from the server-owned profile.`, {
+      if (account.type?.toUpperCase() !== sealedAccount.accountType ||
+          account.class?.toUpperCase() !== sealedAccount.accountClass ||
+          (sealedAccount.accountName && compactCaseText(account.name ?? "").toLocaleLowerCase("en") !==
+            compactCaseText(sealedAccount.accountName).toLocaleLowerCase("en"))) {
+        throw new AppError("STALE_PREFLIGHT", `Native-document line ${index + 1} Xero account semantics drifted from the sealed live binding.`, {
           httpStatus: 409,
           retryable: false,
           details: {
-            reasonCodes: ["XERO_TENANT_COA_PROFILE_DRIFT"],
+            reasonCodes: ["XERO_DECLARED_LEDGER_BINDING_DRIFT"],
             recoveryAction: "PREPARE_NEW_ACCOUNTING_CASE_VERSION",
             providerMutationPossible: false,
           },
         });
       }
-      if (sealedCategory.allowedTaxTypes && !sealedCategory.allowedTaxTypes.includes(taxType)) {
-        throw new AppError("VALIDATION_FAILED", `Native-document line ${index + 1} tax type is not allowed by its tenant COA category.`, {
-          httpStatus: 422,
-          details: { reasonCodes: ["XERO_COA_CATEGORY_TAX_TYPE_NOT_ALLOWED"], providerMutationPossible: false },
-        });
-      }
-      const taxResolution = resolveStableXeroTaxRate({ taxRates: taxes, taxType, direction, account });
+      const taxResolution = resolveStableXeroTaxRate({ taxRates: taxes, taxType, account });
       if (!taxResolution.ok) {
         throw new AppError("VALIDATION_FAILED", `${taxResolution.message} [${taxResolution.code}]`, {
           httpStatus: 422,
@@ -3548,7 +3655,7 @@ export class XeroAccountingCaseService {
         providerReferences: {
           contact,
           creditLineAccountIds: lines.map((line) => line.account_id),
-          tenantCoaProfile: sealedCoaProfile,
+          ledgerBinding: sealedLedgerBinding,
         },
       };
     }
@@ -3589,7 +3696,7 @@ export class XeroAccountingCaseService {
     }
     return {
       preparationId: prepared.preparation_id,
-      providerReferences: { contact, tenantCoaProfile: sealedCoaProfile },
+      providerReferences: { contact, ledgerBinding: sealedLedgerBinding },
     };
   }
 
@@ -3603,20 +3710,21 @@ export class XeroAccountingCaseService {
   #serverCoaExecutionConstraints(
     record: AccountingCaseVersionRecord,
     operation: AccountingCaseOperation,
-  ): XeroTenantCoaExecutionConstraints {
-    const profile = xeroTenantCoaProfileFromProviderProjection(record.compiled.providerProjection);
-    const categories = this.#payloadLines(operation.canonicalPayload).map((line, index) => {
-      const category = this.#stringField(line, "accountingCategory");
-      if (!Object.hasOwn(profile.categories, category)) {
-        throw new AppError("PERSISTENCE_FAILURE", `Native-document line ${index + 1} has no sealed COA category.`, {
+  ): XeroDeclaredLedgerExecutionConstraints {
+    const ledgerBinding = xeroDeclaredLedgerBindingFromProviderProjection(record.compiled.providerProjection);
+    const lines = this.#payloadLines(operation.canonicalPayload).map((line, index) => {
+      const accountCode = this.#stringField(line, "accountCode");
+      const taxType = this.#stringField(line, "taxType");
+      if (!xeroDeclaredLedgerAccount(ledgerBinding, accountCode)) {
+        throw new AppError("PERSISTENCE_FAILURE", `Native-document line ${index + 1} has no sealed live account binding.`, {
           httpStatus: 503,
           retryable: false,
           details: { providerMutationPossible: false },
         });
       }
-      return category as XeroAccountingCategory;
+      return { accountCode, taxType };
     });
-    return createXeroTenantCoaExecutionConstraints(profile, categories);
+    return createXeroDeclaredLedgerExecutionConstraints(ledgerBinding, lines);
   }
 
   #stringField(payload: Record<string, unknown>, field: string): string {

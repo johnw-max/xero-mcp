@@ -86,10 +86,14 @@ import type {
   AccountingCaseOperationRecord,
   AccountingCaseOperationState,
   AccountingCasePreflightResealReceipt,
+  AccountingCaseSourceCaseClaim,
+  AccountingCaseSourceCaseReference,
   AccountingCaseVersionRecord,
   ClaimAccountingCaseExecutionInput,
   ClaimAccountingCaseExecutionResult,
   CompleteExpiredTargetAccountingCaseRecoveryInput,
+  BindAccountingCaseSourceCaseInput,
+  BindAccountingCaseSourceCaseResult,
   CreateOrAdvanceAccountingCaseInput,
   CreateOrAdvanceAccountingCaseResult,
   AwaitAccountingCaseContinuationInput,
@@ -117,11 +121,13 @@ import {
 } from "../domain/accountingCaseContinuation.js";
 import {
   ACCOUNTING_CASE_MIN_PREPARATION_RUNWAY_MS,
+  ACCOUNTING_CASE_SOURCE_CASE_CLAIMS,
   accountingCaseMutationRoute,
   accountingCasePlanHash,
   accountingCasePreflightReceiptHash,
   accountingCasePreflightResealReceiptHash,
   accountingCaseTerminalSummary,
+  sameAccountingCaseSourceCaseReference,
 } from "../domain/accountingCasePersistence.js";
 import {
   createLedgerAuthoritySnapshot,
@@ -161,7 +167,7 @@ import {
   type PostgresActiveRecoveryProjectionRow,
 } from "./accountingCaseRecoveryProjectionReadiness.js";
 import { XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION } from "../policy/xeroAccountingCaseProviderContract.js";
-import { XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION } from "../policy/xeroSingaporeAccountingPolicy.js";
+import { XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION } from "../policy/xeroDeclaredLedgerPolicy.js";
 import { validateXeroAccountingCaseReadbackEconomics } from "../policy/xeroAccountingCaseReadbackProjection.js";
 import type { AccountingCaseBusinessReservation } from "../domain/accountingCase.js";
 import { xeroExistingDocumentNoWriteEvidenceMatches } from "../policy/xeroAccountingCaseExistingDocumentEvidence.js";
@@ -1128,6 +1134,33 @@ function mapAccountingCaseBinding(row: Row): AccountingCaseBinding {
   };
 }
 
+/**
+ * Case-head identity: fixed forever by whichever version first prepared the
+ * case_id, exactly like its tenant. Both columns are set together (the
+ * migration's shape check enforces this), so either both are present or
+ * neither is.
+ */
+function mapAccountingCaseSourceCase(row: Row): AccountingCaseSourceCaseReference | undefined {
+  if (row.source_case_system === null || row.source_case_system === undefined) return undefined;
+  return {
+    system: row.source_case_system as AccountingCaseSourceCaseReference["system"],
+    caseRefHash: String(row.source_case_ref_hash),
+  };
+}
+
+function mapAccountingCaseSourceCaseClaim(row: Row): AccountingCaseSourceCaseClaim {
+  const claim = row.source_case_claim;
+  if (
+    typeof claim !== "string" ||
+    !(ACCOUNTING_CASE_SOURCE_CASE_CLAIMS as readonly string[]).includes(claim)
+  ) {
+    throw new AppError("PERSISTENCE_FAILURE", "Accounting Case source-case claim is invalid.", {
+      httpStatus: 503,
+    });
+  }
+  return claim as AccountingCaseSourceCaseClaim;
+}
+
 function mapAccountingCaseRecoveryResidualGrant(row: Row): AccountingCaseRecoveryResidualGrant {
   const grant: AccountingCaseRecoveryResidualGrant = {
     grantId: String(row.grant_id),
@@ -1276,7 +1309,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
              COALESCE(jsonb_typeof(recovery.compiled_case #> '{policyProjection,schemaVersion}') = 'string', false)
              AND COALESCE(jsonb_typeof(recovery.compiled_case #> '{providerProjection,schemaVersion}') = 'string', false)
              AND COALESCE(recovery.compiled_case #>> '{policyProjection,schemaVersion}'
-               ~ '^xero-sg-accounting-policy-projection:v[1-9][0-9]*$', false)
+               ~ '^xero-(sg-accounting-policy|declared-ledger-policy)-projection:v[1-9][0-9]*$', false)
              AND COALESCE(recovery.compiled_case #>> '{providerProjection,schemaVersion}'
                ~ '^xero-accounting-case-provider-projection:v[1-9][0-9]*$', false)
            )
@@ -1292,7 +1325,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
            FROM active_recovery recovery
          ), true) AS active_recovery_projection_compatible`,
       [
-        XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION,
+        XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION,
         XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION,
       ],
     );
@@ -1975,7 +2008,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
                COALESCE(jsonb_typeof(recovery.compiled_case #> '{policyProjection,schemaVersion}') = 'string', false)
                AND COALESCE(jsonb_typeof(recovery.compiled_case #> '{providerProjection,schemaVersion}') = 'string', false)
                AND COALESCE(recovery.compiled_case #>> '{policyProjection,schemaVersion}'
-                 ~ '^xero-sg-accounting-policy-projection:v[1-9][0-9]*$', false)
+                 ~ '^xero-(sg-accounting-policy|declared-ledger-policy)-projection:v[1-9][0-9]*$', false)
                AND COALESCE(recovery.compiled_case #>> '{providerProjection,schemaVersion}'
                  ~ '^xero-accounting-case-provider-projection:v[1-9][0-9]*$', false)
              )
@@ -1992,7 +2025,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
            ), true) AS active_recovery_projection_compatible`,
         [
           requiredMigration,
-          XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION,
+          XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION,
           XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION,
         ],
       );
@@ -6698,6 +6731,40 @@ export class PostgresAccountingRepository implements AccountingRepository {
     }
   }
 
+  /**
+   * Bind-or-conflict in one statement. The upsert returns the row that now
+   * holds the pairing, so a losing concurrent bind observes the winner's
+   * tenant rather than overwriting it; the primary key is what actually
+   * guarantees one upstream case cannot span two organisations.
+   */
+  async bindAccountingCaseSourceCase(
+    input: BindAccountingCaseSourceCaseInput,
+  ): Promise<BindAccountingCaseSourceCaseResult> {
+    const result = await this.pool.query(
+      `INSERT INTO accounting_case_source_case_bindings AS binding (
+         workspace_id, source_system, source_case_ref_hash, tenant_id,
+         first_bound_at, last_seen_at, case_count
+       ) VALUES ($1, $2, $3, $4, $5, $5, 1)
+       ON CONFLICT (workspace_id, source_system, source_case_ref_hash) DO UPDATE
+         SET last_seen_at = CASE WHEN binding.tenant_id = EXCLUDED.tenant_id
+                                 THEN EXCLUDED.last_seen_at ELSE binding.last_seen_at END,
+             case_count = binding.case_count
+               + CASE WHEN binding.tenant_id = EXCLUDED.tenant_id THEN 1 ELSE 0 END
+       RETURNING tenant_id, case_count, (xmax = 0) AS inserted`,
+      [
+        input.workspaceId,
+        input.sourceCase.system,
+        input.sourceCase.caseRefHash,
+        input.tenantId,
+        input.now,
+      ],
+    );
+    const row = result.rows[0] as { tenant_id: string; inserted: boolean } | undefined;
+    if (!row) throw new AppError("PERSISTENCE_FAILURE", "The source-case binding did not return a row.");
+    if (row.tenant_id !== input.tenantId) return { outcome: "TENANT_CONFLICT" };
+    return { outcome: row.inserted ? "BOUND_FIRST_USE" : "BOUND_CONFIRMED" };
+  }
+
   async createOrAdvanceAccountingCase(
     input: CreateOrAdvanceAccountingCaseInput,
   ): Promise<CreateOrAdvanceAccountingCaseResult> {
@@ -6870,6 +6937,21 @@ export class PostgresAccountingRepository implements AccountingRepository {
         } else if (input.continuationAuthorization) {
           throw new AppError("CONFLICT", "Accounting Case is not awaiting continuation.", { httpStatus: 409 });
         }
+        // The upstream source case is Case identity, fixed by version 1 (the
+        // Case head, already locked by the FOR UPDATE select above). A later
+        // version citing a different one -- or newly citing/dropping one --
+        // is an identity change, never a silent reinterpretation.
+        if (!sameAccountingCaseSourceCaseReference(mapAccountingCaseSourceCase(head), input.sourceCase)) {
+          throw new AppError("CONFLICT", "Accounting Case upstream source case cannot change across versions.", {
+            httpStatus: 409,
+            retryable: false,
+            details: {
+              failureLayer: "ACCOUNTING_CASE_SOURCE_CASE_BINDING",
+              reasonCodes: ["SOURCE_CASE_CHANGED"],
+              providerMutationPossible: false,
+            },
+          });
+        }
         // Preserve the global row-lock -> coordinate-lock order used by
         // preflight/reseal. This Case head/version is already locked here.
         await this.#lockAccountingCaseNativeDocumentReservations(client, input);
@@ -6919,11 +7001,20 @@ export class PostgresAccountingRepository implements AccountingRepository {
            case_id, provider_id, actor_id, workspace_id, subject_type, subject_id, agent_id,
            oauth_installation_id, binding_id, binding_revision, connection_id, tenant_id,
            target_session_id, target_session_hash, target_session_expires_at,
+           source_case_system, source_case_ref_hash,
            current_version, created_at, updated_at
-         ) VALUES ($1,'xero',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,1,$15,$15)
+         ) VALUES ($1,'xero',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,1,$17,$17)
          ON CONFLICT (case_id) DO NOTHING
          RETURNING case_id`,
-        [input.compiled.caseId, ...accountingCaseBindingValues(input.binding), input.now],
+        [
+          input.compiled.caseId,
+          ...accountingCaseBindingValues(input.binding),
+          // Case-head identity: fixed forever by whichever version first
+          // prepares this case_id, exactly like its tenant.
+          input.sourceCase?.system ?? null,
+          input.sourceCase?.caseRefHash ?? null,
+          input.now,
+        ],
       );
       if (insertedHead.rowCount === 0) {
         // A concurrent creator committed the same identity after our initial
@@ -9229,8 +9320,8 @@ export class PostgresAccountingRepository implements AccountingRepository {
       `INSERT INTO accounting_case_versions(
          case_id, version, compiled_case, compiled_plan_hash, source_revision_hash,
          initial_state, state, execution_request_id, execution_started_at,
-         terminal_summary, created_at, updated_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$6,NULL,NULL,NULL,$7,$7)
+         terminal_summary, source_case_claim, created_at, updated_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$6,NULL,NULL,NULL,$7,$8,$8)
        ON CONFLICT (case_id, version) DO NOTHING
        RETURNING case_id`,
       [
@@ -9240,6 +9331,11 @@ export class PostgresAccountingRepository implements AccountingRepository {
         input.compiledPlanHash,
         input.compiled.sourceRevisionHash,
         input.compiled.status,
+        // Sealed once, at preparation time: never recomputed on a later read.
+        // Falls back to the column's own honest-absent default so a caller
+        // that omits the (required-by-type) claim never trips the NOT NULL
+        // constraint instead of a clear domain error.
+        input.sourceCaseClaim ?? "SOURCE_CASE_ABSENT",
         input.now,
       ],
     );
@@ -9339,6 +9435,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
          case_head.binding_id, case_head.binding_revision, case_head.connection_id,
          case_head.tenant_id, case_head.target_session_id, case_head.target_session_hash,
          case_head.target_session_expires_at, case_head.current_version,
+         case_head.source_case_system, case_head.source_case_ref_hash,
          version_row.case_id, version_row.version, version_row.compiled_case,
          version_row.compiled_plan_hash, version_row.source_revision_hash,
          version_row.initial_state, version_row.state AS version_state,
@@ -9350,6 +9447,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
          version_row.preflight_reseal_revision,
          version_row.execution_request_id, version_row.execution_started_at,
          version_row.last_execution_error_receipt, version_row.terminal_summary,
+         version_row.source_case_claim,
          version_row.created_at AS version_created_at,
          version_row.updated_at AS version_updated_at
        FROM accounting_cases case_head
@@ -9382,6 +9480,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
          case_head.binding_id, case_head.binding_revision, case_head.connection_id,
          case_head.tenant_id, case_head.target_session_id, case_head.target_session_hash,
          case_head.target_session_expires_at, case_head.current_version,
+         case_head.source_case_system, case_head.source_case_ref_hash,
          version_row.case_id, version_row.version, version_row.compiled_case,
          version_row.compiled_plan_hash, version_row.source_revision_hash,
          version_row.initial_state, version_row.state AS version_state,
@@ -9393,6 +9492,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
          version_row.preflight_reseal_revision,
          version_row.execution_request_id, version_row.execution_started_at,
          version_row.last_execution_error_receipt, version_row.terminal_summary,
+         version_row.source_case_claim,
          version_row.created_at AS version_created_at,
          version_row.updated_at AS version_updated_at
        FROM accounting_cases case_head
@@ -9461,10 +9561,13 @@ export class PostgresAccountingRepository implements AccountingRepository {
         httpStatus: 503,
       });
     }
+    const sourceCase = mapAccountingCaseSourceCase(row);
     const record: AccountingCaseVersionRecord = {
       binding,
       compiled,
       compiledPlanHash,
+      ...(sourceCase ? { sourceCase } : {}),
+      sourceCaseClaim: mapAccountingCaseSourceCaseClaim(row),
       state: row.version_state as AccountingCaseVersionRecord["state"],
       operations: operationRecords,
       createdAt: date(row.version_created_at),

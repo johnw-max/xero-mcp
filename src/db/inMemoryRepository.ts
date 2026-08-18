@@ -95,6 +95,8 @@ import type {
   ClaimAccountingCaseExecutionInput,
   ClaimAccountingCaseExecutionResult,
   CompleteExpiredTargetAccountingCaseRecoveryInput,
+  BindAccountingCaseSourceCaseInput,
+  BindAccountingCaseSourceCaseResult,
   CreateOrAdvanceAccountingCaseInput,
   CreateOrAdvanceAccountingCaseResult,
   AwaitAccountingCaseContinuationInput,
@@ -133,6 +135,7 @@ import {
   accountingCasePreflightResealReceiptHash,
   accountingCaseTerminalSummary,
   sameAccountingCaseAccessIdentity,
+  sameAccountingCaseSourceCaseReference,
 } from "../domain/accountingCasePersistence.js";
 import { hashObject, stableStringify } from "../security/hash.js";
 import { governanceAuditEventHash } from "../governance/governanceAudit.js";
@@ -665,6 +668,16 @@ export class InMemoryAccountingRepository implements AccountingRepository {
   readonly #xeroMutationRequestKeys = new Map<string, string>();
   readonly #accountingCases = new Map<string, InMemoryAccountingCaseAggregate>();
   readonly #accountingCaseRecoveryResidualGrants = new Map<string, AccountingCaseRecoveryResidualGrant>();
+  /**
+   * Upstream source case -> Xero tenant, keyed exactly like the PostgreSQL
+   * primary key so both stores enforce the same many-to-one rule.
+   */
+  readonly #accountingCaseSourceCaseBindings = new Map<string, {
+    tenantId: string;
+    firstBoundAt: Date;
+    lastSeenAt: Date;
+    caseCount: number;
+  }>();
   readonly audits: AuditLog[] = [];
   readonly governanceAuditEvents: GovernanceAuditEvent[] = [];
 
@@ -3712,6 +3725,33 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       : undefined;
   }
 
+  async bindAccountingCaseSourceCase(
+    input: BindAccountingCaseSourceCaseInput,
+  ): Promise<BindAccountingCaseSourceCaseResult> {
+    const key = JSON.stringify([
+      input.workspaceId,
+      input.sourceCase.system,
+      input.sourceCase.caseRefHash,
+    ]);
+    const existing = this.#accountingCaseSourceCaseBindings.get(key);
+    if (!existing) {
+      this.#accountingCaseSourceCaseBindings.set(key, {
+        tenantId: input.tenantId,
+        firstBoundAt: input.now,
+        lastSeenAt: input.now,
+        caseCount: 1,
+      });
+      return { outcome: "BOUND_FIRST_USE" };
+    }
+    // One upstream case may never span two Xero organisations. The conflicting
+    // tenant is deliberately not returned: the caller must not learn which
+    // other organisation this upstream case belongs to.
+    if (existing.tenantId !== input.tenantId) return { outcome: "TENANT_CONFLICT" };
+    existing.lastSeenAt = input.now;
+    existing.caseCount += 1;
+    return { outcome: "BOUND_CONFIRMED" };
+  }
+
   async createOrAdvanceAccountingCase(
     input: CreateOrAdvanceAccountingCaseInput,
   ): Promise<CreateOrAdvanceAccountingCaseResult> {
@@ -3837,10 +3877,27 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       }
       this.#assertNoPendingContactReservationConflict(input);
       this.#assertNoPendingNativeDocumentReservationConflict(input);
+      // The upstream source case is Case identity, fixed by version 1. A later
+      // version citing a different one -- or newly citing/dropping one -- is an
+      // identity change, never a silent reinterpretation.
+      const originalSourceCase = existing.versions.get(1)?.sourceCase;
+      if (!sameAccountingCaseSourceCaseReference(originalSourceCase, input.sourceCase)) {
+        throw new AppError("CONFLICT", "Accounting Case upstream source case cannot change across versions.", {
+          httpStatus: 409,
+          retryable: false,
+          details: {
+            failureLayer: "ACCOUNTING_CASE_SOURCE_CASE_BINDING",
+            reasonCodes: ["SOURCE_CASE_CHANGED"],
+            providerMutationPossible: false,
+          },
+        });
+      }
       const advanced: AccountingCaseVersionRecord = {
         binding: clone(input.binding),
         compiled: clone(input.compiled),
         compiledPlanHash: input.compiledPlanHash,
+        ...(originalSourceCase ? { sourceCase: clone(originalSourceCase) } : {}),
+        sourceCaseClaim: input.sourceCaseClaim,
         state: input.compiled.status,
         operations: input.compiled.operations.map((operation, ordinal) => ({
           operation: clone(operation),
@@ -3869,6 +3926,8 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       binding: clone(input.binding),
       compiled: clone(input.compiled),
       compiledPlanHash: input.compiledPlanHash,
+      ...(input.sourceCase ? { sourceCase: clone(input.sourceCase) } : {}),
+      sourceCaseClaim: input.sourceCaseClaim,
       state: input.compiled.status,
       operations: input.compiled.operations.map((operation, ordinal) => ({
         operation: clone(operation),

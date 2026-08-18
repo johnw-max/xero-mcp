@@ -15,7 +15,7 @@ export const XERO_RELEASE_ATTESTATION = Object.freeze({
   ledgerAuthoritySnapshot: LEDGER_AUTHORITY_SNAPSHOT_SCHEMA_VERSION,
   accountingCaseCompiler: ACCOUNTING_CASE_COMPILER_VERSION,
   accountingPolicy: XERO_ACCOUNTING_CASE_POLICY_VERSION,
-  accountingPolicyProjection: XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION,
+  accountingPolicyProjection: XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION,
   accountingCaseProviderContract: XERO_ACCOUNTING_CASE_PROVIDER_CONTRACT_VERSION,
   accountingCaseProviderProjection: XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION,
   accountingCaseBusinessAuthorityProjection: XERO_ACCOUNTING_CASE_BUSINESS_AUTHORITY_PROJECTION_VERSION,
@@ -23,7 +23,7 @@ export const XERO_RELEASE_ATTESTATION = Object.freeze({
   xeroNativeRouteContract: XERO_NATIVE_ROUTE_CONTRACT_VERSION,
   xeroContactIdentityContract: XERO_CONTACT_IDENTITY_CONTRACT_VERSION,
   requiredMigration: REQUIRED_MIGRATION_HEAD,
-  publicToolProfile: "xero-accounting-case-business-intake-v3",
+  publicToolProfile: "xero-accounting-case-business-intake-v4",
   executionAuthority: "STANDING_DELEGATION",
   writeCompletion: "PROVIDER_ID_RECEIPT_EXACT_READBACK",
 });
@@ -66,7 +66,7 @@ import {
   XERO_ACCOUNTING_CASE_PROVIDER_CONTRACT_VERSION,
   XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION,
 } from "./policy/xeroAccountingCaseProviderContract.js";
-import { XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION } from "./policy/xeroSingaporeAccountingPolicy.js";
+import { XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION } from "./policy/xeroDeclaredLedgerPolicy.js";
 import { ACCOUNTING_CASE_READBACK_VALIDATOR_VERSION } from "./control-kernel/accountingCaseReadbackValidator.js";
 import { XERO_NATIVE_ROUTE_CONTRACT_VERSION } from "./policy/xeroNativeRouteContract.js";
 import { XERO_CONTACT_IDENTITY_CONTRACT_VERSION } from "./policy/xeroContactIdentity.js";

@@ -26,11 +26,11 @@ import { xeroCapabilityDenied } from "../policy/xeroCapabilityError.js";
 import { issueObjectPreparationValidationReceipt } from "../control-kernel/deterministicValidation.js";
 import { resolveStableXeroTaxRate } from "../policy/xeroTaxRateResolver.js";
 import {
-  XeroTenantCoaProfileError,
-  assertXeroTenantCoaExecutionConstraints,
-  parseXeroTenantCoaExecutionConstraints,
-  type XeroTenantCoaExecutionConstraints,
-} from "../policy/xeroTenantCoaProfile.js";
+  XeroDeclaredLedgerBindingError,
+  assertXeroDeclaredLedgerExecutionConstraints,
+  parseXeroDeclaredLedgerExecutionConstraints,
+  type XeroDeclaredLedgerExecutionConstraints,
+} from "../policy/xeroDeclaredLedgerBinding.js";
 import type { XeroFirmGovernanceExpectation } from "../policy/xeroFirmGovernanceClaim.js";
 
 type SupportedObjectType = "CREDIT_NOTE" | "MANUAL_JOURNAL";
@@ -115,7 +115,7 @@ export class XeroCreditNoteManualJournalService {
   async prepareCreditNoteDraft(
     context: RequestContext,
     rawInput: PrepareCreditNoteDraftInput,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
   ): Promise<LedgerAdjustmentDraftPreparationResult> {
     const input = prepareCreditNoteDraftInputSchema.parse(rawInput);
     const prepared = buildCreditNoteDraftPrimitive(input);
@@ -137,7 +137,7 @@ export class XeroCreditNoteManualJournalService {
   async createCreditNoteDraft(
     context: RequestContext,
     rawInput: ExecutePreparedXeroMutationInput,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
     beforeProviderWriteClaim?: () => Promise<void>,
     sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
   ): Promise<LedgerAdjustmentDraftWriteResult> {
@@ -218,7 +218,7 @@ export class XeroCreditNoteManualJournalService {
     context: RequestContext,
     rawInput: ExecutePreparedXeroMutationInput,
     expectedObjectType: SupportedObjectType,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
     beforeProviderWriteClaim?: () => Promise<void>,
     sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
   ): Promise<LedgerAdjustmentDraftWriteResult> {
@@ -478,7 +478,7 @@ export class XeroCreditNoteManualJournalService {
     xeroObjectId: string,
     canonicalPayload: Record<string, unknown>,
     providerSnapshot: Record<string, unknown>,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
   ) {
     const { canonicalPayload: snapshotCanonicalPayload, ...providerEvidence } = providerSnapshot;
     let effectiveCanonicalPayload = canonicalPayload;
@@ -508,7 +508,7 @@ export class XeroCreditNoteManualJournalService {
       canonicalPayload: effectiveCanonicalPayload,
       evidence: effectiveEvidence,
       ...(serverCoaConstraints ? {
-        serverCoaExecutionConstraints: parseXeroTenantCoaExecutionConstraints(serverCoaConstraints),
+        serverCoaExecutionConstraints: parseXeroDeclaredLedgerExecutionConstraints(serverCoaConstraints),
       } : {}),
     };
   }
@@ -516,12 +516,12 @@ export class XeroCreditNoteManualJournalService {
   async #assertServerCoaExecutionConstraints(
     context: RequestContext,
     input: CanonicalCreditNoteDraftPayload,
-    rawConstraints: XeroTenantCoaExecutionConstraints | undefined,
+    rawConstraints: XeroDeclaredLedgerExecutionConstraints | undefined,
   ): Promise<void> {
     if (!rawConstraints) return;
-    let constraints: XeroTenantCoaExecutionConstraints;
+    let constraints: XeroDeclaredLedgerExecutionConstraints;
     try {
-      constraints = parseXeroTenantCoaExecutionConstraints(rawConstraints);
+      constraints = parseXeroDeclaredLedgerExecutionConstraints(rawConstraints);
     } catch (error) {
       throw new AppError("PERSISTENCE_FAILURE", "The server-owned COA execution constraints are invalid.", {
         httpStatus: 503,
@@ -535,7 +535,7 @@ export class XeroCreditNoteManualJournalService {
       this.readProvider.listAccounts(context),
     ]);
     try {
-      assertXeroTenantCoaExecutionConstraints({
+      assertXeroDeclaredLedgerExecutionConstraints({
         constraints,
         tenantId: resolved.tenantId,
         accounts,
@@ -546,14 +546,14 @@ export class XeroCreditNoteManualJournalService {
         })),
       });
     } catch (error) {
-      if (!(error instanceof XeroTenantCoaProfileError)) throw error;
+      if (!(error instanceof XeroDeclaredLedgerBindingError)) throw error;
       throw new AppError("STALE_PREFLIGHT", error.message, {
         httpStatus: 409,
         retryable: false,
         details: {
-          failureLayer: "XERO_TENANT_COA_PROFILE",
+          failureLayer: "XERO_DECLARED_LEDGER_BINDING",
           reasonCodes: [error.reasonCode],
-          ...(error.category ? { accountingCategory: error.category } : {}),
+          ...(error.declared ? { declaredCoordinate: error.declared } : {}),
           recoveryAction: "PREPARE_NEW_ACCOUNTING_CASE_VERSION",
           providerMutationPossible: false,
         },
@@ -587,7 +587,6 @@ export class XeroCreditNoteManualJournalService {
       const taxResolution = resolveStableXeroTaxRate({
         taxRates: taxes,
         taxType: line.taxType,
-        direction: input.creditNoteType === "ACCRECCREDIT" ? "OUTPUT" : "INPUT",
         account,
       });
       if (!taxResolution.ok) {

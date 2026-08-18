@@ -1,14 +1,15 @@
 import { z } from "zod/v4";
 import {
   prepareAccountingCasePublicSchema,
+  sourceCaseSchema,
   type PrepareAccountingCasePublicInput,
 } from "../domain/accountingCaseSchemas.js";
 import { ACCOUNTING_DOCUMENT_REFERENCE_KINDS } from "../domain/accountingCase.js";
 import { hashObject } from "../security/hash.js";
 import {
-  XERO_SINGAPORE_ACCOUNTING_CATEGORY_KEYS,
-  XERO_SINGAPORE_TAX_CLASS_KEYS,
-} from "../policy/xeroSingaporeAccountingPolicy.js";
+  XERO_DECLARED_ACCOUNT_CODE_PATTERN,
+  XERO_DECLARED_TAX_TYPE_PATTERN,
+} from "../policy/xeroDeclaredLedgerBinding.js";
 
 const publicId = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9._:/-]+$/u);
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u).refine((value) => {
@@ -27,7 +28,8 @@ const positiveDecimal4 = decimal4.refine((value) => scaledDecimal(value) > 0n, "
 // minor-unit currencies without guessing one universal money scale here.
 const money = decimal4;
 const positiveMoney = positiveDecimal4;
-const percentage = z.string().regex(/^(?:100(?:\.0{1,2})?|(?:0|[1-9]\d?)(?:\.\d{1,2})?)$/u);
+const accountCode = z.string().trim().regex(XERO_DECLARED_ACCOUNT_CODE_PATTERN);
+const taxType = z.string().trim().regex(XERO_DECLARED_TAX_TYPE_PATTERN);
 
 export const XERO_ACCOUNTING_CASE_BUSINESS_DOCUMENT_TYPES = [
   "CUSTOMER_INVOICE",
@@ -140,27 +142,13 @@ const lineBaseShape = {
   source_tax_amount: money.describe("Tax printed for this source line, as a decimal string."),
 } as const;
 
-const defaultLineSchema = z.object({
+const lineSchema = z.object({
   ...lineBaseShape,
-}).strict().superRefine((line, context) => {
-  if (scaledDecimal(line.quantity) <= 0n) {
-    context.addIssue({ code: "custom", path: ["quantity"], message: "must be greater than zero" });
-  }
-});
-
-const perLineSchema = z.object({
-  ...lineBaseShape,
-  accounting_category: z.enum(XERO_SINGAPORE_ACCOUNTING_CATEGORY_KEYS).describe(
-    "The policy category supported for this exact source line.",
+  account_code: accountCode.describe(
+    "The exact ledger account code this line must post to, as it appears in the target organisation's chart of accounts. The server verifies it exists, is active and is postable; it never selects or corrects it.",
   ),
-  tax_class: z.enum(XERO_SINGAPORE_TAX_CLASS_KEYS).describe(
-    "The tax class supported for this exact source line.",
-  ),
-  effective_tax_rate_percent: percentage.describe(
-    "The source-supported effective tax percentage for this exact line.",
-  ),
-  exempt_classification: z.enum(["REGULATION_33", "NON_REGULATION_33"]).optional().describe(
-    "Line-specific exemption evidence; valid only with a complete PER_LINE accounting override.",
+  tax_type: taxType.describe(
+    "The exact ledger tax code (TaxType) for this line, as it appears in the target organisation's tax rates. The server verifies it exists, is active, is applicable to the account, and that source_tax_amount equals the organisation's real rate applied to this line.",
   ),
 }).strict().superRefine((line, context) => {
   if (scaledDecimal(line.quantity) <= 0n) {
@@ -195,8 +183,8 @@ const documentBaseShape = {
   invoice_exchange_rate: positiveDecimal4.optional().describe(
     "Optional source-supported invoice exchange rate. Omit rather than guess; the server will block a foreign-currency route when required evidence is absent.",
   ),
-  transition_review_required: z.boolean().describe(
-    "Required source-review conclusion. Use true when GST transition facts are present or unresolved; use false only when the transaction has been reviewed as non-transitional. Never decide this from invoice date alone.",
+  review_note: z.string().trim().min(1).max(256).optional().describe(
+    "Optional free-text source-review record kept with the document for audit. It is recorded verbatim and never changes any server decision.",
   ),
   declared_net: positiveMoney,
   declared_tax: money,
@@ -205,32 +193,10 @@ const documentBaseShape = {
   original_document: originalDocumentSchema.optional(),
 } as const;
 
-const defaultAccountingDocumentSchema = z.object({
+const documentSchema = z.object({
   ...documentBaseShape,
-  line_accounting_mode: z.literal("DOCUMENT_DEFAULT_FOR_ALL_LINES"),
-  accounting_category: z.enum(XERO_SINGAPORE_ACCOUNTING_CATEGORY_KEYS).describe(
-    `Explicit document line default. Used only in DOCUMENT_DEFAULT_FOR_ALL_LINES mode: ${XERO_SINGAPORE_ACCOUNTING_CATEGORY_KEYS.join(", ")}.`,
-  ),
-  tax_class: z.enum(XERO_SINGAPORE_TAX_CLASS_KEYS).describe(
-    `Explicit document line default. Used only in DOCUMENT_DEFAULT_FOR_ALL_LINES mode: ${XERO_SINGAPORE_TAX_CLASS_KEYS.join(", ")}.`,
-  ),
-  effective_tax_rate_percent: percentage.describe(
-    "Explicit document line default effective tax percentage. Used only in DOCUMENT_DEFAULT_FOR_ALL_LINES mode.",
-  ),
-  exempt_classification: z.enum(["REGULATION_33", "NON_REGULATION_33"]).optional(),
-  lines: z.array(defaultLineSchema).min(1).max(100),
-}).strict();
-
-const perLineAccountingDocumentSchema = z.object({
-  ...documentBaseShape,
-  line_accounting_mode: z.literal("PER_LINE"),
-  lines: z.array(perLineSchema).min(1).max(100),
-}).strict();
-
-const documentSchema = z.discriminatedUnion("line_accounting_mode", [
-  defaultAccountingDocumentSchema,
-  perLineAccountingDocumentSchema,
-]).superRefine((document, context) => {
+  lines: z.array(lineSchema).min(1).max(100),
+}).strict().superRefine((document, context) => {
   const credit = document.document_type.endsWith("CREDIT_NOTE");
   if (!credit && !document.due_date) {
     context.addIssue({ code: "custom", path: ["due_date"], message: "invoices and bills require a due date" });
@@ -250,40 +216,6 @@ const documentSchema = z.discriminatedUnion("line_accounting_mode", [
   }
   if (!credit && document.original_document) {
     context.addIssue({ code: "custom", path: ["original_document"], message: "only credit notes accept original-document evidence" });
-  }
-  if (document.line_accounting_mode === "DOCUMENT_DEFAULT_FOR_ALL_LINES" &&
-      document.tax_class === "EXEMPT" && document.document_type.startsWith("CUSTOMER_") &&
-      !document.exempt_classification) {
-    context.addIssue({
-      code: "custom",
-      path: ["exempt_classification"],
-      message: "customer exempt documents require a Regulation 33 classification",
-    });
-  }
-  if (document.line_accounting_mode === "DOCUMENT_DEFAULT_FOR_ALL_LINES" &&
-      document.tax_class !== "EXEMPT" && document.exempt_classification) {
-    context.addIssue({ code: "custom", path: ["exempt_classification"], message: "only exempt tax accepts this field" });
-  }
-  if (document.line_accounting_mode === "PER_LINE") {
-    for (const [index, line] of document.lines.entries()) {
-      if (
-        line.tax_class === "EXEMPT" && document.document_type.startsWith("CUSTOMER_") &&
-        !line.exempt_classification
-      ) {
-        context.addIssue({
-          code: "custom",
-          path: ["lines", index, "exempt_classification"],
-          message: "customer exempt lines require a Regulation 33 classification",
-        });
-      }
-      if (line.tax_class !== "EXEMPT" && line.exempt_classification) {
-        context.addIssue({
-          code: "custom",
-          path: ["lines", index, "exempt_classification"],
-          message: "only exempt lines accept this field",
-        });
-      }
-    }
   }
 });
 
@@ -308,6 +240,12 @@ export const xeroAccountingCaseBusinessIntakeSchema = z.object({
   expected_version: z.number().int().min(0).describe("Use 0 when creating the first Case version."),
   continuation_token: z.string().regex(/^(?:acc|acr)_[0-9a-f]{64}$/u).optional().describe(
     "Opaque server-issued continuation token. Never construct or modify it.",
+  ),
+  source_case: sourceCaseSchema.optional().describe(
+    "Optional citation of the upstream case this submitted batch was read from, for example a Google Drive " +
+    "case shared with a separate connector. Omit when material arrived some other way, such as a direct chat " +
+    "upload; that is an ordinary Case and is not degraded by the omission. One upstream case binds to exactly " +
+    "one Xero organisation on first use; citing it again against a different organisation is refused.",
   ),
   source_label: z.string().trim().min(1).max(256),
   source_set_complete: z.literal(true).describe(
@@ -442,11 +380,6 @@ function documentKind(
   return documentType.endsWith("CREDIT_NOTE") ? "CREDIT_NOTE" : "INVOICE";
 }
 
-function percentageToBasisPoints(value: string): number {
-  const [whole = "0", fraction = ""] = value.split(".");
-  return Number(whole) * 100 + Number((fraction + "00").slice(0, 2));
-}
-
 /** Deterministic MCP-layer normalization; it performs no ledger or policy decision. */
 export function normalizeXeroAccountingCaseBusinessIntake(
   raw: XeroAccountingCaseBusinessIntake,
@@ -556,49 +489,15 @@ export function normalizeXeroAccountingCaseBusinessIntake(
     const kind = documentKind(document.document_type);
     const counterpartyRole = role(document.document_type);
     const eventKey = derivedId("event", identity);
-    const documentAccountingSummary = document.line_accounting_mode === "PER_LINE"
-      ? (() => {
-          const firstLine = document.lines[0]!;
-          return {
-          accountingCategory: firstLine.accounting_category,
-          taxClass: firstLine.tax_class,
-          ...(firstLine.exempt_classification
-            ? { exemptClassification: firstLine.exempt_classification }
-            : {}),
-          effectiveTaxRateBps: percentageToBasisPoints(firstLine.effective_tax_rate_percent),
-          };
-        })()
-      : {
-          accountingCategory: document.accounting_category,
-          taxClass: document.tax_class,
-          ...(document.exempt_classification
-            ? { exemptClassification: document.exempt_classification }
-            : {}),
-          effectiveTaxRateBps: percentageToBasisPoints(document.effective_tax_rate_percent),
-        };
-    const normalizedLines = document.line_accounting_mode === "PER_LINE"
-      ? document.lines.map((line, lineIndex) => ({
-          lineId: derivedId("line", { ...identity, lineIndex, description: line.description }),
-          description: line.description,
-          quantity: line.quantity,
-          unitAmount: line.unit_amount_excluding_tax,
-          sourceTax: line.source_tax_amount,
-          accountingCategory: line.accounting_category,
-          taxClass: line.tax_class,
-          ...(line.exempt_classification ? { exemptClassification: line.exempt_classification } : {}),
-          effectiveTaxRateBps: percentageToBasisPoints(line.effective_tax_rate_percent),
-        }))
-      : document.lines.map((line, lineIndex) => ({
-          lineId: derivedId("line", { ...identity, lineIndex, description: line.description }),
-          description: line.description,
-          quantity: line.quantity,
-          unitAmount: line.unit_amount_excluding_tax,
-          sourceTax: line.source_tax_amount,
-          accountingCategory: document.accounting_category,
-          taxClass: document.tax_class,
-          ...(document.exempt_classification ? { exemptClassification: document.exempt_classification } : {}),
-          effectiveTaxRateBps: percentageToBasisPoints(document.effective_tax_rate_percent),
-        }));
+    const normalizedLines = document.lines.map((line, lineIndex) => ({
+      lineId: derivedId("line", { ...identity, lineIndex, description: line.description }),
+      description: line.description,
+      quantity: line.quantity,
+      unitAmount: line.unit_amount_excluding_tax,
+      sourceTax: line.source_tax_amount,
+      accountCode: line.account_code,
+      taxType: line.tax_type,
+    }));
     return {
       factId: derivedId("fact", identity),
       lineageKey: derivedId("lineage", identity),
@@ -630,11 +529,7 @@ export function normalizeXeroAccountingCaseBusinessIntake(
               number: document.contact.durable_identity.number,
             },
       } : {}),
-      ...documentAccountingSummary,
-      taxPolicyBasis: document.transition_review_required
-        ? "TRANSITION_REVIEW_REQUIRED"
-        : kind === "CREDIT_NOTE" ? "ORIGINAL_TRANSACTION" : "DOCUMENT_DATE_NON_TRANSITION",
-      lineAccountingMode: document.line_accounting_mode,
+      ...(document.review_note ? { taxPolicyBasis: document.review_note } : {}),
       ...(document.invoice_exchange_rate ? { invoiceRate: document.invoice_exchange_rate } : {}),
       ...(kind === "CREDIT_NOTE" ? {
         ...(submittedOriginalForCredit.has(index)
@@ -645,9 +540,9 @@ export function normalizeXeroAccountingCaseBusinessIntake(
         originalDocumentDate: document.original_document!.document_date,
         allocationStatus: "UNALLOCATED" as const,
       } : {}),
-      lineAmountType: normalizedLines.every((line) => line.taxClass === "NO_TAX")
-        ? "NO_TAX" as const
-        : "EXCLUSIVE" as const,
+      // Tax is always computed by the provider from the per-line net and the
+      // organisation's own rate for the declared TaxType.
+      lineAmountType: "EXCLUSIVE" as const,
       lines: normalizedLines,
       declaredNet: document.declared_net,
       declaredTax: document.declared_tax,
@@ -659,6 +554,7 @@ export function normalizeXeroAccountingCaseBusinessIntake(
     case_id: intake.case_id,
     expected_version: intake.expected_version,
     ...(intake.continuation_token ? { continuation_token: intake.continuation_token } : {}),
+    ...(intake.source_case ? { source_case: intake.source_case } : {}),
     sources: [...(documentUnits.length > 0 ? [{
       artifactId: documentArtifactId,
       label: intake.source_label,

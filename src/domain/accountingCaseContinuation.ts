@@ -35,43 +35,20 @@ function publicDurableIdentity(identity: ContactDurableIdentity): Record<string,
       };
 }
 
-function percentFromBasisPoints(value: number): string {
-  return `${Math.floor(value / 100)}.${String(value % 100).padStart(2, "0")}`;
-}
-
 function publicDocument(fact: NativeDocumentFact): Record<string, unknown> {
   const documentType = fact.documentKind === "INVOICE"
     ? fact.counterpartyRole === "CUSTOMER" ? "CUSTOMER_INVOICE" : "SUPPLIER_BILL"
     : fact.counterpartyRole === "CUSTOMER" ? "CUSTOMER_CREDIT_NOTE" : "SUPPLIER_CREDIT_NOTE";
-  const accountingProjection = fact.lineAccountingMode === "PER_LINE"
-    ? {
-        line_accounting_mode: "PER_LINE",
-        lines: fact.lines.map((line) => ({
-          description: line.description,
-          quantity: line.quantity,
-          unit_amount_excluding_tax: line.unitAmount,
-          source_tax_amount: line.sourceTax,
-          accounting_category: line.accountingCategory,
-          tax_class: line.taxClass,
-          effective_tax_rate_percent: percentFromBasisPoints(line.effectiveTaxRateBps!),
-          ...(line.exemptClassification
-            ? { exempt_classification: line.exemptClassification }
-            : {}),
-        })),
-      }
-    : {
-        line_accounting_mode: "DOCUMENT_DEFAULT_FOR_ALL_LINES",
-        accounting_category: fact.accountingCategory,
-        tax_class: fact.taxClass,
-        effective_tax_rate_percent: percentFromBasisPoints(fact.effectiveTaxRateBps),
-        ...(fact.exemptClassification ? { exempt_classification: fact.exemptClassification } : {}),
-        lines: fact.lines.map((line) => ({
-          description: line.description,
-          quantity: line.quantity,
-          unit_amount_excluding_tax: line.unitAmount,
-          source_tax_amount: line.sourceTax,
-        })),
-      };
+  const accountingProjection = {
+    lines: fact.lines.map((line) => ({
+      description: line.description,
+      quantity: line.quantity,
+      unit_amount_excluding_tax: line.unitAmount,
+      source_tax_amount: line.sourceTax,
+      account_code: line.accountCode,
+      tax_type: line.taxType,
+    })),
+  };
   return {
     document_type: documentType,
     reference: fact.reference,
@@ -87,7 +64,7 @@ function publicDocument(fact: NativeDocumentFact): Record<string, unknown> {
     },
     ...accountingProjection,
     ...(fact.invoiceRate ? { invoice_exchange_rate: fact.invoiceRate } : {}),
-    transition_review_required: fact.taxPolicyBasis === "TRANSITION_REVIEW_REQUIRED",
+    ...(fact.taxPolicyBasis ? { review_note: fact.taxPolicyBasis } : {}),
     declared_net: fact.declaredNet,
     declared_tax: fact.declaredTax,
     declared_gross: fact.declaredGross,

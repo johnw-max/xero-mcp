@@ -1,5 +1,5 @@
 import type { BindingSubjectType } from "./models.js";
-import type { AccountingCaseOperation, CompiledAccountingCase } from "./accountingCase.js";
+import type { AccountingCaseOperation, AccountingCaseSourceSystem, CompiledAccountingCase } from "./accountingCase.js";
 import type { AccountingCaseBusinessContinuationTemplate } from "./accountingCaseContinuation.js";
 import type { XeroMutationObjectType, XeroMutationOperation } from "./xeroMutation.js";
 import { hashObject } from "../security/hash.js";
@@ -190,6 +190,10 @@ export interface AccountingCaseVersionRecord {
   binding: AccountingCaseBinding;
   compiled: CompiledAccountingCase;
   compiledPlanHash: string;
+  /** Immutable for the life of this case_id, fixed by whichever version first cited it (or omitted it). */
+  sourceCase?: AccountingCaseSourceCaseReference;
+  /** Fixed evidence observed the exact instant this version was prepared; never recomputed on later reads. */
+  sourceCaseClaim: AccountingCaseSourceCaseClaim;
   state: AccountingCaseVersionState;
   preflightRequestId?: string;
   preflightReceipt?: Record<string, unknown>;
@@ -216,6 +220,9 @@ export interface CreateOrAdvanceAccountingCaseInput {
   binding: AccountingCaseBinding;
   compiled: CompiledAccountingCase;
   compiledPlanHash: string;
+  /** Must equal the case_id's already-established source case (if any); the repository re-checks this. */
+  sourceCase?: AccountingCaseSourceCaseReference;
+  sourceCaseClaim: AccountingCaseSourceCaseClaim;
   continuationAuthorization?: {
     sourceVersion: number;
     templateHash: string;
@@ -490,6 +497,57 @@ export function accountingCaseMutationRoute(
     case "credit_note.create_draft":
       return { objectType: "CREDIT_NOTE", operation: "CREATE_DRAFT" };
   }
+}
+
+/**
+ * Trust-on-first-use identity of the upstream (cross-MCP) material a Case's
+ * submitted batch cites. Only the sha256 digest of the raw upstream case
+ * reference is ever carried past the MCP boundary; the clear-text reference
+ * itself must never be persisted, returned, or logged.
+ */
+export interface AccountingCaseSourceCaseReference {
+  system: AccountingCaseSourceSystem;
+  /** sha256 digest of the raw upstream case reference; never the reference itself. */
+  caseRefHash: string;
+}
+
+export const ACCOUNTING_CASE_SOURCE_CASE_CLAIMS = [
+  "SOURCE_CASE_ABSENT",
+  "SOURCE_CASE_BOUND_FIRST_USE",
+  "SOURCE_CASE_BOUND_CONFIRMED",
+] as const;
+
+/**
+ * Evidence recorded once, at the exact version a Case was prepared, proving
+ * only that this submission's upstream source case is consistently paired
+ * with one Xero tenant. It never asserts the upstream material is correct.
+ */
+export type AccountingCaseSourceCaseClaim = typeof ACCOUNTING_CASE_SOURCE_CASE_CLAIMS[number];
+
+/** True when both reference the same upstream case, or both cite none. */
+export function sameAccountingCaseSourceCaseReference(
+  left: AccountingCaseSourceCaseReference | undefined,
+  right: AccountingCaseSourceCaseReference | undefined,
+): boolean {
+  if (!left && !right) return true;
+  if (!left || !right) return false;
+  return left.system === right.system && left.caseRefHash === right.caseRefHash;
+}
+
+export type AccountingCaseSourceCaseBindingOutcome =
+  | "BOUND_FIRST_USE"
+  | "BOUND_CONFIRMED"
+  | "TENANT_CONFLICT";
+
+export interface BindAccountingCaseSourceCaseInput {
+  workspaceId: string;
+  sourceCase: AccountingCaseSourceCaseReference;
+  tenantId: string;
+  now: Date;
+}
+
+export interface BindAccountingCaseSourceCaseResult {
+  outcome: AccountingCaseSourceCaseBindingOutcome;
 }
 
 /** Same durable authority subject; target-session evidence is intentionally excluded. */

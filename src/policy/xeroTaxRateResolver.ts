@@ -1,39 +1,19 @@
 import type { AccountSummary, TaxRateSummary } from "../providers/types.js";
 
+/**
+ * Direction label retained for provider adapters that still describe a document
+ * side. It is evidence only: tax applicability is proven from Xero's own
+ * `CanApplyTo*` attributes, never from an MCP-owned direction policy.
+ */
 export type XeroTaxDirection = "INPUT" | "OUTPUT";
 
 type KnownAccountClass = "EXPENSE" | "ASSET" | "LIABILITY" | "REVENUE" | "EQUITY";
 
-interface StableTaxPolicy {
-  direction: XeroTaxDirection | "BOTH";
-  expectedRateScaled4: bigint;
-}
-
-/**
- * Stable TaxTypes emitted by the SG Accounting Case compiler. Display names
- * are deliberately absent: tenant-renamed labels are evidence only and must
- * never select tax semantics.
- */
-const STABLE_TAX_POLICIES: Readonly<Record<string, StableTaxPolicy>> = Object.freeze({
-  INPUTY24: { direction: "INPUT", expectedRateScaled4: 90_000n },
-  OUTPUTY24: { direction: "OUTPUT", expectedRateScaled4: 90_000n },
-  NONE: { direction: "BOTH", expectedRateScaled4: 0n },
-  EPINPUT: { direction: "INPUT", expectedRateScaled4: 0n },
-  ES33OUTPUT: { direction: "OUTPUT", expectedRateScaled4: 0n },
-  ESN33OUTPUT: { direction: "OUTPUT", expectedRateScaled4: 0n },
-  ZERORATEDINPUT: { direction: "INPUT", expectedRateScaled4: 0n },
-  ZERORATEDOUTPUT: { direction: "OUTPUT", expectedRateScaled4: 0n },
-  OPINPUT: { direction: "INPUT", expectedRateScaled4: 0n },
-  OSOUTPUT2: { direction: "OUTPUT", expectedRateScaled4: 0n },
-});
-
 export type XeroTaxRateResolutionFailureCode =
-  | "UNSUPPORTED_STABLE_TAX_TYPE"
-  | "TAX_DIRECTION_MISMATCH"
   | "UNKNOWN_ACCOUNT_CLASS"
   | "NO_UNIQUE_ACTIVE_TAX_RATE"
   | "MISSING_TAX_RATE_EVIDENCE"
-  | "TAX_RATE_MISMATCH"
+  | "TAX_RATE_EVIDENCE_INCONSISTENT"
   | "TAX_NOT_APPLICABLE_TO_ACCOUNT_CLASS";
 
 export type XeroTaxRateResolution =
@@ -41,6 +21,7 @@ export type XeroTaxRateResolution =
       ok: true;
       taxRate: TaxRateSummary;
       accountClass: KnownAccountClass;
+      /** The tenant's own rate for this TaxType, not an MCP-owned expectation. */
       expectedRate: string;
     }
   | {
@@ -90,33 +71,24 @@ function appliesToAccountClass(tax: TaxRateSummary, accountClass: KnownAccountCl
 }
 
 /**
- * Resolve one exact Provider TaxRate for a compiler-emitted stable TaxType.
- * Every field used for a write decision is fail-closed: missing status/rates,
- * duplicate active rows, unknown account class and absent applicability flags
- * are all rejections, not defaults.
+ * Verify one caller-declared Xero TaxType against the target tenant's live tax
+ * table and the exact account it will be written to.
+ *
+ * This is verification, not judgment. The MCP holds no list of permitted tax
+ * types and no direction policy; it proves only that
+ *
+ *  1. the declared TaxType resolves to exactly one explicitly ACTIVE TaxRate,
+ *  2. that TaxRate carries canonical, self-consistent rate evidence, and
+ *  3. Xero itself says the rate may be applied to that account's class.
+ *
+ * Display names are deliberately ignored: a tenant-renamed label is evidence
+ * only and must never select tax semantics.
  */
 export function resolveStableXeroTaxRate(input: {
   taxRates: readonly TaxRateSummary[];
   taxType: string;
-  direction: XeroTaxDirection;
   account: AccountSummary;
 }): XeroTaxRateResolution {
-  const policy = STABLE_TAX_POLICIES[input.taxType];
-  if (!policy) {
-    return {
-      ok: false,
-      code: "UNSUPPORTED_STABLE_TAX_TYPE",
-      message: `Tax type ${input.taxType} is not in the deterministic Accounting Case tax policy.`,
-    };
-  }
-  if (policy.direction !== "BOTH" && policy.direction !== input.direction) {
-    return {
-      ok: false,
-      code: "TAX_DIRECTION_MISMATCH",
-      message: `Tax type ${input.taxType} is not valid for the ${input.direction} document direction.`,
-    };
-  }
-
   const accountClass = knownAccountClass(input.account.class);
   if (!accountClass) {
     return {
@@ -145,11 +117,11 @@ export function resolveStableXeroTaxRate(input: {
       message: `Tax type ${input.taxType} is missing a canonical DisplayTaxRate or EffectiveRate.`,
     };
   }
-  if (displayRate !== policy.expectedRateScaled4 || effectiveRate !== policy.expectedRateScaled4) {
+  if (displayRate !== effectiveRate) {
     return {
       ok: false,
-      code: "TAX_RATE_MISMATCH",
-      message: `Tax type ${input.taxType} does not match the deterministic ${fixedRate(policy.expectedRateScaled4)}% rate policy.`,
+      code: "TAX_RATE_EVIDENCE_INCONSISTENT",
+      message: `Tax type ${input.taxType} reports a DisplayTaxRate that differs from its EffectiveRate.`,
     };
   }
   if (!appliesToAccountClass(selected, accountClass)) {
@@ -163,6 +135,6 @@ export function resolveStableXeroTaxRate(input: {
     ok: true,
     taxRate: selected,
     accountClass,
-    expectedRate: fixedRate(policy.expectedRateScaled4),
+    expectedRate: fixedRate(effectiveRate),
   };
 }

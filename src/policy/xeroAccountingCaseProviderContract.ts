@@ -20,10 +20,10 @@ import {
 import type { AccountingCaseProviderEnforcementContract } from "../control-kernel/accountingCaseProviderContract.js";
 import type { AccountingCaseProviderCapabilityBounds } from "../control-kernel/accountingCaseProviderContract.js";
 import {
-  createXeroSingaporeAccountingPolicy,
-  createXeroSingaporeAccountingPolicyFromProjection,
-  XERO_SINGAPORE_ACCOUNTING_POLICY_VERSION,
-} from "./xeroSingaporeAccountingPolicy.js";
+  createXeroDeclaredLedgerPolicy,
+  createXeroDeclaredLedgerPolicyFromProjection,
+  XERO_DECLARED_LEDGER_POLICY_VERSION,
+} from "./xeroDeclaredLedgerPolicy.js";
 import {
   evaluateXeroNativeRouteContract,
   XERO_NATIVE_ROUTE_CONTRACT_VERSION,
@@ -34,10 +34,10 @@ import {
 } from "./xeroContactIdentity.js";
 import { hashObject } from "../security/hash.js";
 import {
-  parseXeroTenantCoaProfileBinding,
-  xeroTenantCoaCategoryBinding,
-  type XeroTenantCoaProfileBinding,
-} from "./xeroTenantCoaProfile.js";
+  parseXeroDeclaredLedgerBinding,
+  requireXeroDeclaredLedgerAccount,
+  type XeroDeclaredLedgerBinding,
+} from "./xeroDeclaredLedgerBinding.js";
 import {
   findTrustedXeroRecurringSeriesAuthority,
   normalizeXeroBusinessReference,
@@ -50,10 +50,10 @@ import {
   type XeroAccountingCaseBusinessAuthorityProjection,
 } from "./xeroBusinessCoordinateAuthority.js";
 
-export const XERO_ACCOUNTING_CASE_POLICY_VERSION = XERO_SINGAPORE_ACCOUNTING_POLICY_VERSION;
-export const XERO_ACCOUNTING_CASE_PROVIDER_CONTRACT_VERSION = "xero-accounting-case-provider-v13";
+export const XERO_ACCOUNTING_CASE_POLICY_VERSION = XERO_DECLARED_LEDGER_POLICY_VERSION;
+export const XERO_ACCOUNTING_CASE_PROVIDER_CONTRACT_VERSION = "xero-accounting-case-provider-v14";
 export const XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION =
-  "xero-accounting-case-provider-projection:v8";
+  "xero-accounting-case-provider-projection:v9";
 
 const durableContactIdentitySchema = z.discriminatedUnion("kind", [
   z.object({
@@ -179,7 +179,7 @@ const xeroProviderProjectionSchema = z.object({
     z.string().regex(/^[a-f0-9]{64}$/u),
     xeroOriginalTransactionBindingSchema,
   ),
-  tenantCoaProfile: z.unknown(),
+  ledgerBinding: z.unknown(),
   capabilityBounds: capabilityBoundsSchema,
   businessAuthority: xeroAccountingCaseBusinessAuthorityProjectionSchema,
 }).strict();
@@ -206,7 +206,7 @@ function normalizedBinding(binding: XeroAccountingCaseContactBinding): XeroAccou
 
 function providerProjection(
   bindings: XeroAccountingCaseContactBindings,
-  tenantCoaProfile: XeroTenantCoaProfileBinding,
+  ledgerBinding: XeroDeclaredLedgerBinding,
   capabilityBounds: AccountingCaseProviderCapabilityBounds,
   businessAuthority: XeroAccountingCaseBusinessAuthorityProjection,
   originalTransactionBindings: XeroOriginalTransactionBindings,
@@ -231,7 +231,7 @@ function providerProjection(
     schemaVersion: XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION,
     contactBindings: Object.freeze(contactBindings),
     originalTransactionBindings: Object.freeze(sealedOriginalTransactionBindings),
-    tenantCoaProfile: parseXeroTenantCoaProfileBinding(tenantCoaProfile),
+    ledgerBinding: parseXeroDeclaredLedgerBinding(ledgerBinding),
     capabilityBounds: capabilityBoundsSchema.parse(capabilityBounds),
     businessAuthority: parseXeroAccountingCaseBusinessAuthorityProjection(businessAuthority),
   });
@@ -295,56 +295,32 @@ function bindingsFromProjection(
   );
 }
 
-export function xeroTenantCoaProfileFromProviderProjection(
+export function xeroDeclaredLedgerBindingFromProviderProjection(
   projection: Readonly<Record<string, unknown>>,
-): XeroTenantCoaProfileBinding {
-  return parseXeroTenantCoaProfileBinding(xeroProviderProjectionSchema.parse(projection).tenantCoaProfile);
-}
-
-const XERO_TAX_TYPE_BY_SEMANTICS: Readonly<Record<string, string>> = Object.freeze({
-  STANDARD_INPUT: "INPUTY24",
-  STANDARD_OUTPUT: "OUTPUTY24",
-  NO_TAX: "NONE",
-  EXEMPT_INPUT: "EPINPUT",
-  EXEMPT_OUTPUT_REGULATION_33: "ES33OUTPUT",
-  EXEMPT_OUTPUT_NON_REGULATION_33: "ESN33OUTPUT",
-  ZERO_RATED_INPUT: "ZERORATEDINPUT",
-  ZERO_RATED_OUTPUT: "ZERORATEDOUTPUT",
-  OUT_OF_SCOPE_INPUT: "OPINPUT",
-  OUT_OF_SCOPE_OUTPUT: "OSOUTPUT2",
-} as const);
-
-export function xeroTaxSemanticsForTaxType(
-  taxType: string,
-  originalRoute: "SALES_INVOICE" | "SUPPLIER_BILL",
-): string | undefined {
-  const direction = originalRoute === "SUPPLIER_BILL" ? "INPUT" : "OUTPUT";
-  const matches = Object.entries(XERO_TAX_TYPE_BY_SEMANTICS).filter(([semantics, providerTaxType]) =>
-    providerTaxType === taxType &&
-    (semantics === "NO_TAX" || semantics.endsWith(`_${direction}`) || semantics.includes(`${direction}_`)));
-  return matches.length === 1 ? matches[0]![0] : undefined;
+): XeroDeclaredLedgerBinding {
+  return parseXeroDeclaredLedgerBinding(xeroProviderProjectionSchema.parse(projection).ledgerBinding);
 }
 
 /** Builds the Xero composition root around an immutable provider-owned binding projection. */
 export function createXeroAccountingCaseProviderContract(
   bindings: XeroAccountingCaseContactBindings,
-  tenantCoaProfile: XeroTenantCoaProfileBinding,
+  ledgerBinding: XeroDeclaredLedgerBinding,
   capabilityBounds: AccountingCaseProviderCapabilityBounds = XERO_ACCOUNTING_CASE_CAPABILITY_BOUNDS,
   businessAuthority?: XeroAccountingCaseBusinessAuthorityProfile | XeroAccountingCaseBusinessAuthorityProjection,
   originalTransactionBindings: XeroOriginalTransactionBindings = new Map(),
 ): AccountingCaseProviderEnforcementContract {
   const authorityProjection = businessAuthority && "schemaVersion" in businessAuthority
     ? parseXeroAccountingCaseBusinessAuthorityProjection(businessAuthority)
-    : projectXeroAccountingCaseBusinessAuthority(tenantCoaProfile.tenantId, businessAuthority);
+    : projectXeroAccountingCaseBusinessAuthority(ledgerBinding.tenantId, businessAuthority);
   const projection = providerProjection(
     bindings,
-    tenantCoaProfile,
+    ledgerBinding,
     capabilityBounds,
     authorityProjection,
     originalTransactionBindings,
   );
   const sealedBindings = bindingsFromProjection(projection);
-  const sealedCoaProfile = parseXeroTenantCoaProfileBinding(tenantCoaProfile);
+  const sealedLedgerBinding = parseXeroDeclaredLedgerBinding(ledgerBinding);
   const sealedCapabilityBounds = capabilityBoundsSchema.parse(capabilityBounds);
   const sealedBusinessAuthority = parseXeroAccountingCaseBusinessAuthorityProjection(
     xeroProviderProjectionSchema.parse(projection).businessAuthority,
@@ -367,45 +343,40 @@ export function createXeroAccountingCaseProviderContract(
         }),
       });
     },
+    // The declared TaxType passes through unchanged. There is no semantics ->
+    // provider tax-code mapping table left in this adapter.
     taxBinding(_fact: NativeDocumentFact, semantics: AccountingTaxSemantics) {
-      const taxType = XERO_TAX_TYPE_BY_SEMANTICS[semantics];
-      if (!taxType) throw new Error(`Unsupported Xero accounting tax semantics: ${semantics}`);
       return Object.freeze({
-        documentFields: Object.freeze({ taxType }),
-        lineFields: Object.freeze({ taxType }),
+        documentFields: Object.freeze({ taxType: semantics }),
+        lineFields: Object.freeze({ taxType: semantics }),
       });
     },
+    // `declaredAccountCode` is the opaque carrier the policy filled with the
+    // caller-declared Xero account code; it resolves against the live
+    // chart-of-accounts binding sealed into this projection.
     accountingCategoryBinding(
       _fact: NativeDocumentFact,
-      accountingCategory: string,
-      taxSemantics: AccountingTaxSemantics,
+      declaredAccountCode: string,
+      _taxSemantics: AccountingTaxSemantics,
     ) {
-      const binding = xeroTenantCoaCategoryBinding(sealedCoaProfile, accountingCategory);
-      const reasonCodes = binding.allowedTaxTypes && !binding.allowedTaxTypes.includes(
-        XERO_TAX_TYPE_BY_SEMANTICS[taxSemantics] ?? "",
-      ) ? ["XERO_COA_CATEGORY_TAX_TYPE_NOT_ALLOWED"] : [];
+      const account = requireXeroDeclaredLedgerAccount(sealedLedgerBinding, declaredAccountCode);
       const bindingProjection = Object.freeze({
-        schemaVersion: "xero-tenant-coa-category-binding:v1",
-        profileId: sealedCoaProfile.profileId,
-        profileRevision: sealedCoaProfile.revision,
-        profileHash: sealedCoaProfile.profileHash,
-        tenantId: sealedCoaProfile.tenantId,
-        jurisdiction: sealedCoaProfile.jurisdiction,
-        accountingCategory: binding.accountingCategory,
-        accountId: binding.accountId,
-        accountCode: binding.accountCode,
-        expectedType: binding.expectedType,
-        expectedClass: binding.expectedClass,
-        ...(binding.expectedName ? { expectedName: binding.expectedName } : {}),
-        ...(binding.allowedTaxTypes ? { allowedTaxTypes: binding.allowedTaxTypes } : {}),
+        schemaVersion: "xero-declared-ledger-account-binding:v1",
+        bindingHash: sealedLedgerBinding.bindingHash,
+        tenantId: sealedLedgerBinding.tenantId,
+        accountId: account.accountId,
+        accountCode: account.accountCode,
+        expectedType: account.accountType,
+        expectedClass: account.accountClass,
+        ...(account.accountName ? { expectedName: account.accountName } : {}),
       });
       return Object.freeze({
         canonicalFields: Object.freeze({
-          accountId: binding.accountId,
-          accountCode: binding.accountCode,
+          accountId: account.accountId,
+          accountCode: account.accountCode,
         }),
         bindingProjection,
-        reasonCodes,
+        reasonCodes: [],
       });
     },
     businessIdentity(
@@ -499,7 +470,7 @@ export function createXeroAccountingCaseProviderContractFromProjection(
   const parsed = xeroProviderProjectionSchema.parse(projection);
   return createXeroAccountingCaseProviderContract(
     bindingsFromProjection(projection),
-    parseXeroTenantCoaProfileBinding(parsed.tenantCoaProfile),
+    parseXeroDeclaredLedgerBinding(parsed.ledgerBinding),
     parsed.capabilityBounds,
     parsed.businessAuthority,
     new Map(Object.entries(parsed.originalTransactionBindings)),
@@ -575,12 +546,16 @@ export function projectXeroAccountingCaseCompilerInput(raw: unknown): Readonly<{
 }
 
 /** Convenience entry point for Xero-only callers and internal fixtures. */
-export function compileXeroAccountingCase(raw: unknown, tenantCoaProfile: XeroTenantCoaProfileBinding) {
+export function compileXeroAccountingCase(raw: unknown, ledgerBinding: XeroDeclaredLedgerBinding) {
   const projected = projectXeroAccountingCaseCompilerInput(raw);
   return compileAccountingCase(
     projected.input,
-    createXeroSingaporeAccountingPolicy({ paysTax: projected.paysTax }),
-    createXeroAccountingCaseProviderContract(projected.contactBindings, tenantCoaProfile),
+    createXeroDeclaredLedgerPolicy({
+      jurisdiction: projected.input.target.taxJurisdiction,
+      paysTax: projected.paysTax,
+      ledgerBinding,
+    }),
+    createXeroAccountingCaseProviderContract(projected.contactBindings, ledgerBinding),
   );
 }
 
@@ -589,7 +564,7 @@ export function validateXeroCompiledOperationAgainstSource(
   operation: AccountingCaseOperation,
   rawSourceFact: NativeDocumentFact,
   policyProjection: Readonly<Record<string, unknown>>,
-  tenantCoaProfile: XeroTenantCoaProfileBinding,
+  ledgerBinding: XeroDeclaredLedgerBinding,
 ) {
   const raw = structuredClone(rawSourceFact) as unknown as Record<string, unknown>;
   const binding = legacyBindingFromRecord(raw) ?? legacyBindingFromRecord(operation.canonicalPayload);
@@ -601,7 +576,7 @@ export function validateXeroCompiledOperationAgainstSource(
   return validateCompiledOperationAgainstSource(
     operation,
     parsed,
-    createXeroSingaporeAccountingPolicyFromProjection(policyProjection),
-    createXeroAccountingCaseProviderContract(bindings, tenantCoaProfile),
+    createXeroDeclaredLedgerPolicyFromProjection(policyProjection),
+    createXeroAccountingCaseProviderContract(bindings, ledgerBinding),
   );
 }

@@ -1,6 +1,6 @@
 import type { AccountingCaseVersionRecord } from "../domain/accountingCasePersistence.js";
 import { XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION } from "../policy/xeroAccountingCaseProviderContract.js";
-import { XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION } from "../policy/xeroSingaporeAccountingPolicy.js";
+import { XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION } from "../policy/xeroDeclaredLedgerPolicy.js";
 
 export type ActiveAccountingCaseRecoveryProjectionStatus =
   | "COMPATIBLE"
@@ -30,7 +30,11 @@ const UNCERTAIN_OPERATION_STATES = new Set([
   "WRITE_UNCERTAIN",
   "READBACK_MISMATCH",
 ]);
-const POLICY_PROJECTION_VERSION = /^xero-sg-accounting-policy-projection:v[1-9][0-9]*$/u;
+// Both the retired jurisdiction policy and the released declared-ledger policy
+// are recognised: a legacy stored projection must still be *identified* so the
+// compatibility gate can refuse to reinterpret it.
+const POLICY_PROJECTION_VERSION =
+  /^xero-(?:sg-accounting-policy|declared-ledger-policy)-projection:v[1-9][0-9]*$/u;
 const PROVIDER_PROJECTION_VERSION = /^xero-accounting-case-provider-projection:v[1-9][0-9]*$/u;
 
 function requiredEvidence(
@@ -39,7 +43,7 @@ function requiredEvidence(
 ): ActiveAccountingCaseRecoveryProjectionEvidence {
   return {
     ...value,
-    requiredPolicyProjectionVersion: XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION,
+    requiredPolicyProjectionVersion: XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION,
     requiredProviderProjectionVersion: XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION,
   };
 }
@@ -60,7 +64,7 @@ export function isActiveAccountingCaseRecoveryProjectionEvidence(
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const evidence = value as Partial<ActiveAccountingCaseRecoveryProjectionEvidence>;
   if (
-    evidence.requiredPolicyProjectionVersion !== XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION ||
+    evidence.requiredPolicyProjectionVersion !== XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION ||
     evidence.requiredProviderProjectionVersion !== XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION ||
     !Array.isArray(evidence.storedPolicyProjectionVersions) ||
     evidence.storedPolicyProjectionVersions.some((entry) =>
@@ -80,7 +84,7 @@ export function isActiveAccountingCaseRecoveryProjectionEvidence(
     return (count === 0 && evidence.storedPolicyProjectionVersions.length === 0 &&
         evidence.storedProviderProjectionVersions.length === 0) ||
       (count > 0 && evidence.storedPolicyProjectionVersions.length === 1 &&
-        evidence.storedPolicyProjectionVersions[0] === XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION &&
+        evidence.storedPolicyProjectionVersions[0] === XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION &&
         evidence.storedProviderProjectionVersions.length === 1 &&
         evidence.storedProviderProjectionVersions[0] === XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION);
   }
@@ -122,7 +126,7 @@ export function evaluateActiveAccountingCaseRecoveryProjections(
     policyVersions.add(policyVersion);
     providerVersions.add(providerVersion);
     if (
-      policyVersion !== XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION ||
+      policyVersion !== XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION ||
       providerVersion !== XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION
     ) compatible = false;
   }
@@ -173,7 +177,7 @@ export function activeAccountingCaseRecoveryProjectionEvidenceFromPostgres(
       )) ||
       (activeCaseCount > 0 && (
         storedPolicyProjectionVersions.length !== 1 ||
-        storedPolicyProjectionVersions[0] !== XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION ||
+        storedPolicyProjectionVersions[0] !== XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION ||
         storedProviderProjectionVersions.length !== 1 ||
         storedProviderProjectionVersions[0] !== XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION
       ))

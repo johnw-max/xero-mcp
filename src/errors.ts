@@ -53,9 +53,31 @@ export class AppError extends Error {
   }
 }
 
+/**
+ * A schema failure is deterministic: the same input fails the same way forever.
+ * Reporting it as an upstream provider fault names the wrong layer and, worse,
+ * marks it retryable — which invites a caller to retry an input that can never
+ * succeed, and hides the real cause behind a transient-looking error. Classify
+ * it as the deterministic validation failure it is.
+ */
+function isSchemaValidationError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { name?: unknown; issues?: unknown };
+  return candidate.name === "ZodError" && Array.isArray(candidate.issues);
+}
+
 export function toSafeError(error: unknown): AppError {
   if (error instanceof AppError) {
     return error;
+  }
+
+  if (isSchemaValidationError(error)) {
+    return new AppError("VALIDATION_FAILED", "The accounting request failed deterministic validation.", {
+      httpStatus: 422,
+      retryable: false,
+      details: { reasonCodes: ["REQUEST_SCHEMA_INVALID"], providerMutationPossible: false },
+      cause: error,
+    });
   }
 
   return new AppError("PROVIDER_ERROR", "The upstream accounting request failed.", {

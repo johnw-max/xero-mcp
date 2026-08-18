@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import {
+  ACCOUNTING_CASE_SOURCE_SYSTEMS,
   ACCOUNTING_DOCUMENT_REFERENCE_KINDS,
   ACCOUNTING_FACT_KINDS,
   originalTransactionEvidenceHash,
@@ -112,38 +113,21 @@ const contact = z.object({
   }
 });
 
+// Provider-native ledger coordinates declared by the caller. The kernel only
+// bounds their shape; existence, status and applicability are proven against
+// the target tenant's live data by the injected accounting policy.
+const accountCode = z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,9}$/u);
+const taxType = z.string().trim().regex(/^[A-Za-z0-9_]{1,50}$/u);
+
 const nativeDocumentLine = z.object({
   lineId: id,
   description: z.string().trim().min(1).max(1_000),
   quantity: positiveDecimal4,
   unitAmount: nonNegativeDecimal4,
   sourceTax: money,
-  accountingCategory: id.optional(),
-  taxClass: id.optional(),
-  exemptClassification: id.optional(),
-  effectiveTaxRateBps: z.number().int().min(0).max(10_000).optional(),
-}).strict().superRefine((line, context) => {
-  const accountingOverrideFields = [
-    line.accountingCategory,
-    line.taxClass,
-    line.effectiveTaxRateBps,
-  ];
-  const supplied = accountingOverrideFields.filter((value) => value !== undefined).length;
-  if (supplied !== 0 && supplied !== accountingOverrideFields.length) {
-    context.addIssue({
-      code: "custom",
-      path: ["accountingCategory"],
-      message: "line accounting override must provide category, tax class and effective tax rate together",
-    });
-  }
-  if (line.exemptClassification !== undefined && supplied === 0) {
-    context.addIssue({
-      code: "custom",
-      path: ["exemptClassification"],
-      message: "line exempt classification requires a complete line accounting override",
-    });
-  }
-});
+  accountCode,
+  taxType,
+}).strict();
 
 const nativeDocument = z.object({
   ...factBase,
@@ -157,12 +141,13 @@ const nativeDocument = z.object({
   currency,
   contactName: z.string().trim().min(1).max(255),
   contactDurableIdentity: contactDurableIdentity.optional(),
-  accountingCategory: id,
-  taxClass: id,
-  exemptClassification: id.optional(),
-  taxPolicyBasis: id,
-  effectiveTaxRateBps: z.number().int().min(0).max(10_000),
-  lineAccountingMode: z.enum(["DOCUMENT_DEFAULT_FOR_ALL_LINES", "PER_LINE"]).optional(),
+  /**
+   * Informational source-review record; no decision reads it. It carries the
+   * public `review_note` free text verbatim, so it must accept ordinary prose
+   * rather than the identifier charset — an accountant's note legitimately
+   * contains spaces and punctuation.
+   */
+  taxPolicyBasis: z.string().trim().min(1).max(256).optional(),
   originalDocumentEventKey: id.optional(),
   originalDocumentReference: z.string().trim().min(1).max(255).optional(),
   originalDocumentReferenceKind: z.enum(ACCOUNTING_DOCUMENT_REFERENCE_KINDS).optional(),
@@ -204,31 +189,6 @@ const nativeDocument = z.object({
         value.originalDocumentReferenceKind !== undefined || value.originalDocumentDate !== undefined ||
         value.originalTransactionEvidenceHash !== undefined) {
       context.addIssue({ code: "custom", path: ["originalDocumentReference"], message: "original document evidence is only valid for credit notes" });
-    }
-  }
-  for (const [index, line] of value.lines.entries()) {
-    const hasOverride = line.accountingCategory !== undefined;
-    if (value.lineAccountingMode === "PER_LINE" && !hasOverride) {
-      context.addIssue({
-        code: "custom",
-        path: ["lines", index, "accountingCategory"],
-        message: "PER_LINE accounting mode requires a complete accounting override on every line",
-      });
-    }
-    if (
-      (value.lineAccountingMode ?? "DOCUMENT_DEFAULT_FOR_ALL_LINES") === "DOCUMENT_DEFAULT_FOR_ALL_LINES" && hasOverride &&
-      (
-        line.accountingCategory !== value.accountingCategory ||
-        line.taxClass !== value.taxClass ||
-        line.effectiveTaxRateBps !== value.effectiveTaxRateBps ||
-        line.exemptClassification !== value.exemptClassification
-      )
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["lines", index, "accountingCategory"],
-        message: "document-default accounting mode forbids a differing line override",
-      });
     }
   }
 });
@@ -369,11 +329,10 @@ const originalTransactionEvidenceLine = z.object({
   unitAmount: nonNegativeDecimal4,
   net: nonNegativeDecimal4,
   tax: nonNegativeDecimal4,
-  accountingCategory: id,
-  taxClass: id,
+  accountCode,
+  taxType,
   effectiveTaxRateBps: z.number().int().min(0).max(10_000),
   taxSemantics: id,
-  taxPolicyPeriodId: id.optional(),
 }).strict();
 
 const originalTransactionEvidence = z.object({
@@ -465,10 +424,24 @@ export const publicAccountingFactSchema = accountingFactSchema.refine(
   "server-resolved provider evidence cannot be supplied through the public contract",
 );
 
+/**
+ * Optional citation of the upstream (cross-MCP) material this submitted
+ * batch was read from, for example a Google Drive case. Absent whenever
+ * material arrives some other way (a chat upload has no upstream case);
+ * that is an ordinary, unprotected-by-this-guard Case, not a degraded one.
+ * The raw case_ref never leaves this schema boundary in the clear -- the
+ * server hashes it immediately and persists only the digest.
+ */
+export const sourceCaseSchema = z.object({
+  system: z.enum(ACCOUNTING_CASE_SOURCE_SYSTEMS),
+  case_ref: z.string().trim().min(1).max(256).regex(/^[A-Za-z0-9._:/-]+$/u),
+}).strict();
+
 export const prepareAccountingCasePublicSchema = z.object({
   case_id: id,
   expected_version: z.number().int().min(0),
   continuation_token: z.string().regex(/^(?:acc|acr)_[0-9a-f]{64}$/u).optional(),
+  source_case: sourceCaseSchema.optional(),
   sources: z.array(sourceArtifactSchema).min(1).max(1_000),
   facts: z.array(publicAccountingFactSchema).min(1).max(10_000),
 }).strict();

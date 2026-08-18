@@ -31,6 +31,15 @@ export const ACCOUNTING_DOCUMENT_REFERENCE_KINDS = [
 export type AccountingDocumentReferenceKind =
   typeof ACCOUNTING_DOCUMENT_REFERENCE_KINDS[number];
 
+/**
+ * Closed, extensible enum of upstream systems that may cite a source case
+ * against this Case. Starting with exactly one member keeps the trust-on-
+ * first-use binding conservative; a new system is added here deliberately.
+ */
+export const ACCOUNTING_CASE_SOURCE_SYSTEMS = ["GOOGLE_DRIVE"] as const;
+
+export type AccountingCaseSourceSystem = typeof ACCOUNTING_CASE_SOURCE_SYSTEMS[number];
+
 export const ACCOUNTING_FACT_KINDS = [
   "CONTACT_CANDIDATE",
   "NATIVE_DOCUMENT",
@@ -125,19 +134,26 @@ export type NativeDocumentRoute =
   | "CUSTOMER_CREDIT"
   | "SUPPLIER_CREDIT";
 
-/** Opaque policy category; the shared compiler never maps it to a ledger account. */
+/**
+ * Opaque provider-native ledger coordinate carried through the shared kernel.
+ * Under the released ledger-gateway policy this is the caller-declared Xero
+ * account code; the compiler never interprets or maps it.
+ */
 export type AccountingCategory = string;
 
-/** Opaque jurisdiction-policy keys interpreted only by the accounting policy. */
+/**
+ * Opaque provider-native tax coordinate.  Under the released ledger-gateway
+ * policy this is the caller-declared Xero TaxType, verified against the target
+ * tenant's live tax-rate table by the injected policy adapter.
+ */
 export type AccountingTaxClass = string;
 
 export type AccountingExemptClassification = string;
 
 /**
- * Evidence basis used to select a versioned tax-policy period.  A credit note
- * is governed by the original transaction, not by the date on which the
- * credit is issued.  Transitional supplies remain an explicit blocking state
- * until the facts needed by the transition rules have been reviewed.
+ * Informational source-review record carried with a document.  Nothing in the
+ * compiler, policy, provider adapter or execution path branches on it; it
+ * exists so the submitted review conclusion stays auditable in the plan.
  */
 export type AccountingTaxPolicyBasis = string;
 
@@ -149,15 +165,10 @@ export interface NativeDocumentLine {
   quantity: string;
   unitAmount: string;
   sourceTax: string;
-  /**
-   * A complete line override.  Omission of the whole group means the line
-   * deliberately uses the document's explicit accounting default; a partial
-   * group is never valid.
-   */
-  accountingCategory?: AccountingCategory;
-  taxClass?: AccountingTaxClass;
-  exemptClassification?: AccountingExemptClassification;
-  effectiveTaxRateBps?: number;
+  /** Explicit provider-native account code declared for this exact line. */
+  accountCode: string;
+  /** Explicit provider-native TaxType declared for this exact line. */
+  taxType: string;
 }
 
 export interface NativeDocumentFact extends AccountingFactBase {
@@ -172,17 +183,8 @@ export interface NativeDocumentFact extends AccountingFactBase {
   contactName: string;
   /** Source-supported namespace for resolving the existing counterparty. */
   contactDurableIdentity?: ContactDurableIdentity;
-  /** Explicit default used only by lines without a complete line override. */
-  accountingCategory: AccountingCategory;
-  /** Explicit default used only by lines without a complete line override. */
-  taxClass: AccountingTaxClass;
-  /** Optional jurisdiction-policy default classification. */
-  exemptClassification?: AccountingExemptClassification;
-  taxPolicyBasis: AccountingTaxPolicyBasis;
-  /** Explicit default effective rate, expressed in basis points. */
-  effectiveTaxRateBps: number;
-  /** Public intake makes the default-vs-per-line choice explicit. */
-  lineAccountingMode?: "DOCUMENT_DEFAULT_FOR_ALL_LINES" | "PER_LINE";
+  /** Informational source-review record; no decision reads it. */
+  taxPolicyBasis?: AccountingTaxPolicyBasis;
   /** Required for every credit note so its tax treatment is tied to the original transaction. */
   originalDocumentEventKey?: string;
   originalDocumentReference?: string;
@@ -200,31 +202,20 @@ export interface NativeDocumentFact extends AccountingFactBase {
   documentValidity: AccountingDocumentValidity;
 }
 
-export interface ResolvedNativeDocumentLineAccounting {
-  accountingCategory: AccountingCategory;
-  taxClass: AccountingTaxClass;
-  exemptClassification?: AccountingExemptClassification;
-  effectiveTaxRateBps: number;
+export interface DeclaredNativeDocumentLineCoordinate {
+  accountCode: string;
+  taxType: string;
 }
 
 /**
- * Resolve one complete accounting group. Public PER_LINE intake always seals
- * all four values onto the line; direct kernel callers may deliberately use
- * the document-level default by omitting the whole override group.
+ * Read the explicit provider-native coordinate a caller declared for one line.
+ * Every line carries its own complete declaration; there is no document-level
+ * default and no server-side inference.
  */
-export function resolveNativeDocumentLineAccounting(
-  fact: NativeDocumentFact,
+export function declaredNativeDocumentLineCoordinate(
   line: NativeDocumentLine,
-): ResolvedNativeDocumentLineAccounting {
-  const hasLineOverride = line.accountingCategory !== undefined;
-  return {
-    accountingCategory: hasLineOverride ? line.accountingCategory! : fact.accountingCategory,
-    taxClass: hasLineOverride ? line.taxClass! : fact.taxClass,
-    ...(hasLineOverride
-      ? line.exemptClassification ? { exemptClassification: line.exemptClassification } : {}
-      : fact.exemptClassification ? { exemptClassification: fact.exemptClassification } : {}),
-    effectiveTaxRateBps: hasLineOverride ? line.effectiveTaxRateBps! : fact.effectiveTaxRateBps,
-  };
+): DeclaredNativeDocumentLineCoordinate {
+  return { accountCode: line.accountCode, taxType: line.taxType };
 }
 
 export interface PaymentFact extends AccountingFactBase {
@@ -347,11 +338,12 @@ export interface OriginalTransactionEvidenceLine {
   unitAmount: string;
   net: string;
   tax: string;
-  accountingCategory: AccountingCategory;
-  taxClass: AccountingTaxClass;
+  /** Provider-native account code read back from the original transaction. */
+  accountCode: string;
+  /** Provider-native TaxType read back from the original transaction. */
+  taxType: string;
   effectiveTaxRateBps: number;
   taxSemantics: AccountingTaxSemantics;
-  taxPolicyPeriodId?: string;
 }
 
 /**

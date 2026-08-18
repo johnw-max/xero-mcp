@@ -206,6 +206,8 @@ function lineCompilation(
   net: bigint;
   tax: bigint;
   gross: bigint;
+  /** True when the policy rejected any line, so compiled tax is not an observation. */
+  anyLineRejected: boolean;
   reasonCodes: string[];
 } {
   let net = 0n;
@@ -224,16 +226,26 @@ function lineCompilation(
     );
   }
   const lineBridges: AccountingAmountBridge["lineBridges"] = [];
+  let anyLineRejected = false;
   const lines = fact.lines.map((line) => {
     const lineDecision = decisionsByLineId.get(line.lineId)!;
     reasonCodes.push(...lineDecision.reasonCodes);
+    // A rejected line's rate is a placeholder, not an observation: the policy
+    // could not bind it to the ledger. Reconciling declared amounts against it
+    // manufactures amount findings that point at figures which are usually
+    // correct, burying the one reason that actually blocked the line. Report
+    // the policy's own reasons and stop deriving from them.
+    const lineRejected = lineDecision.reasonCodes.length > 0;
+    anyLineRejected ||= lineRejected;
     const calculatedNet = quantizeAccountingLineNet(
       decimalMinor(line.quantity), decimalMinor(line.unitAmount), monetaryRule,
     );
     const calculatedTax = quantizeAccountingLineTax(
       calculatedNet, lineDecision.effectiveTaxRateBps, monetaryRule,
     );
-    if (decimalMinor(line.sourceTax) !== calculatedTax) reasonCodes.push("SOURCE_LINE_TAX_MISMATCH");
+    if (!lineRejected && decimalMinor(line.sourceTax) !== calculatedTax) {
+      reasonCodes.push("SOURCE_LINE_TAX_MISMATCH");
+    }
     net += calculatedNet;
     tax += calculatedTax;
     lineBridges.push({
@@ -267,7 +279,7 @@ function lineCompilation(
       ...lineDecision.lineFields,
     };
   });
-  return { lines, lineBridges, net, tax, gross: net + tax, reasonCodes: uniqueSorted(reasonCodes) };
+  return { lines, lineBridges, net, tax, gross: net + tax, anyLineRejected, reasonCodes: uniqueSorted(reasonCodes) };
 }
 
 function amountBridge(
@@ -280,10 +292,17 @@ function amountBridge(
   const declaredGross = decimalMinor(fact.declaredGross);
   const compiled = lineCompilation(fact, policyDecision, monetaryRule);
   const reasonCodes = [...compiled.reasonCodes];
+  // Declared-value arithmetic is the caller's own claim and is always checkable.
   if (declaredNet + declaredTax !== declaredGross) reasonCodes.push("SOURCE_NET_PLUS_TAX_MISMATCH");
+  // Net never depends on a tax rate, so it stays checkable too.
   if (compiled.net !== declaredNet) reasonCodes.push("SOURCE_NET_MISMATCH");
-  if (compiled.tax !== declaredTax) reasonCodes.push("SOURCE_TAX_MISMATCH");
-  if (compiled.gross !== declaredGross) reasonCodes.push("SOURCE_GROSS_MISMATCH");
+  // Compiled tax and gross do depend on the per-line rate. When any line was
+  // rejected its rate is a placeholder, so these two comparisons would report
+  // the caller's correct figures as wrong and hide the real reason.
+  if (!compiled.anyLineRejected) {
+    if (compiled.tax !== declaredTax) reasonCodes.push("SOURCE_TAX_MISMATCH");
+    if (compiled.gross !== declaredGross) reasonCodes.push("SOURCE_GROSS_MISMATCH");
+  }
   return {
     bridge: {
       currency: fact.currency,
@@ -374,11 +393,12 @@ function originalTransactionEvidenceReasons(
     const net = quantizeAccountingLineNet(quantity, unitAmount, resolvedMoney.rule);
     const tax = quantizeAccountingLineTax(net, decision.effectiveTaxRateBps, resolvedMoney.rule);
     const candidate = residual.find((originalLine) =>
-      originalLine.accountingCategory === decision.accountingCategory &&
-      originalLine.taxClass === decision.taxClass &&
+      // The decision carriers hold the declared provider-native coordinates,
+      // so this compares account code and TaxType against the original.
+      originalLine.accountCode === decision.accountingCategory &&
+      originalLine.taxType === decision.taxClass &&
       originalLine.effectiveTaxRateBps === decision.effectiveTaxRateBps &&
       originalLine.taxSemantics === decision.taxSemantics &&
-      originalLine.taxPolicyPeriodId === decision.taxPolicyPeriodId &&
       decimalMinor(originalLine.unitAmount) === unitAmount &&
       originalLine.quantityRemaining >= quantity &&
       originalLine.netRemaining >= net &&
@@ -467,7 +487,7 @@ function operationForNative(
   const businessIdentity = sealedBusinessIdentity(context.provider, fact, context.target);
   const providerCoordinateFields = businessIdentity.businessIdentity.canonicalFields;
   const canonicalPayload: Record<string, unknown> = {
-    schemaVersion: "accounting-case-native-document:v10",
+    schemaVersion: "accounting-case-native-document:v11",
     route,
     documentKind: fact.documentKind,
     counterpartyRole: fact.counterpartyRole,
@@ -492,14 +512,7 @@ function operationForNative(
     contactName: fact.contactName,
     ...(fact.contactDurableIdentity ? { contactDurableIdentity: fact.contactDurableIdentity } : {}),
     ...context.provider.contactBinding(fact).canonicalFields,
-    taxPolicyBasis: fact.taxPolicyBasis,
-    lineAccountingMode: fact.lineAccountingMode ?? "DOCUMENT_DEFAULT_FOR_ALL_LINES",
-    ...(fact.lineAccountingMode === "PER_LINE" ? {} : {
-      accountingCategory: fact.accountingCategory,
-      taxClass: fact.taxClass,
-      ...(fact.exemptClassification ? { exemptClassification: fact.exemptClassification } : {}),
-      effectiveTaxRateBps: fact.effectiveTaxRateBps,
-    }),
+    ...(fact.taxPolicyBasis ? { taxPolicyBasis: fact.taxPolicyBasis } : {}),
     ...(fact.originalDocumentReference ? { originalDocumentReference: fact.originalDocumentReference } : {}),
     ...(fact.originalDocumentReferenceKind
       ? { originalDocumentReferenceKind: fact.originalDocumentReferenceKind }

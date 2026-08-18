@@ -20,7 +20,28 @@ export interface AccountingPolicyNativeDocumentDecision {
   readonly reasonCodes: readonly string[];
 }
 
-/** One policy decision for one immutable source line; order is not identity. */
+/**
+ * One policy decision for one immutable source line; order is not identity.
+ *
+ * ## These field names are historical; they carry no semantics of their own
+ *
+ * The shared kernel treats `accountingCategory`, `taxClass`, `taxSemantics`,
+ * `exemptClassification` and `taxPolicyPeriodId` as **opaque strings** chosen by
+ * the injected policy adapter. They are sealed into the plan, compared for
+ * equality, and hashed — never parsed, mapped, or ranked.
+ *
+ * Under the released ledger-gateway policy
+ * (`src/policy/xeroDeclaredLedgerPolicy.ts`) the carriers are:
+ *
+ * - `accountingCategory` = the caller-declared **Xero account code**;
+ * - `taxClass` = the caller-declared **Xero TaxType**;
+ * - `taxSemantics` = the same TaxType (identity, no mapping table);
+ * - `effectiveTaxRateBps` = the **target tenant's live rate** for that TaxType;
+ * - `exemptClassification` / `taxPolicyPeriodId` = never emitted.
+ *
+ * They are explicitly **not** the retired semantic-category / jurisdiction
+ * tax-class vocabulary, and no consumer may reinterpret them as such.
+ */
 export interface AccountingPolicyNativeDocumentLineDecision {
   readonly lineId: NativeDocumentLine["lineId"];
   readonly accountingCategory: string;

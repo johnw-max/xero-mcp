@@ -713,19 +713,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     );
   }
   if (value.XERO_WRITE_ENABLED) {
-    const configuredTenants = new Set(value.XERO_TENANT_COA_PROFILES_JSON.map((profile) => profile.tenant_id));
-    const requiredTenants = new Set([
-      ...value.XERO_STANDING_DELEGATIONS_JSON
-        .filter((delegation) => delegation.status === "ACTIVE")
-        .flatMap((delegation) => delegation.tenantIds),
-      ...value.XERO_ACCOUNTING_CASE_TEST_TENANT_IDS,
-    ]);
-    const missing = [...requiredTenants].filter((tenantId) => !configuredTenants.has(tenantId));
-    if (missing.length > 0) {
-      throw new Error(
-        `Invalid application configuration: XERO_TENANT_COA_PROFILES_JSON is missing active write tenant profiles: ${missing.join(", ")}`,
-      );
-    }
+    // ADR-002: per-tenant chart-of-accounts profiles are no longer a write-gate
+    // precondition. Account and tax coordinates are declared by the caller and
+    // verified against the target tenant's live chart of accounts and tax rates
+    // at prepare and again at the provider permit edge. The environment
+    // variable itself is retained so existing deployments keep booting.
     const nonUniqueCoordinateActions = new Set([
       "customer_invoice.create_draft",
       "supplier_bill.create_draft",

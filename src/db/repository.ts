@@ -114,6 +114,8 @@ export type XeroNativeRecoveryWriteUnknownInput = MarkXeroMutationWriteUnknownIn
 import type {
   AdoptExpiredExecutingAccountingCaseForRecoveryInput,
   AdoptExpiredExecutingAccountingCaseForRecoveryResult,
+  BindAccountingCaseSourceCaseInput,
+  BindAccountingCaseSourceCaseResult,
   ClaimAccountingCaseExecutionInput,
   ClaimAccountingCaseExecutionResult,
   CompleteExpiredTargetAccountingCaseRecoveryInput,
@@ -424,6 +426,14 @@ export interface AccountingRepository {
   createOrAdvanceAccountingCase(
     input: CreateOrAdvanceAccountingCaseInput,
   ): Promise<CreateOrAdvanceAccountingCaseResult>;
+  /**
+   * Atomic bind-or-conflict of one upstream source case to one Xero tenant,
+   * scoped per workspace. Many source cases may bind to the same tenant;
+   * one source case may never bind to two different tenants.
+   */
+  bindAccountingCaseSourceCase(
+    input: BindAccountingCaseSourceCaseInput,
+  ): Promise<BindAccountingCaseSourceCaseResult>;
   getBoundAccountingCase(input: GetBoundAccountingCaseInput): Promise<AccountingCaseVersionRecord | undefined>;
   getAccessibleAccountingCase(
     input: GetAccessibleAccountingCaseInput,
