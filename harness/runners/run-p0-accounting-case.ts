@@ -308,6 +308,21 @@ function fixedFour(value: number): string {
 }
 
 /**
+ * Xero returns tax rounded to the currency minor unit and aggregates it per
+ * line, so a GST-inclusive source whose net is already cents-rounded yields a
+ * short decimal (1100.92 * 0.09 -> 99.08), not the raw product (99.0828).
+ *
+ * The double previously emitted the raw product, which the exact-readback
+ * validator correctly rejected as a mismatch — a fidelity gap in the fake, not
+ * in the Case logic. Rounding here keeps the double faithful to the provider so
+ * realistic invoices can reach READBACK_VERIFIED. The wrong-economics fault
+ * injection stays detectable: it moves the rate far more than one cent.
+ */
+function minorUnitTax(lineAmount: number, taxRate: number): number {
+  return Math.round(lineAmount * taxRate * 100) / 100;
+}
+
+/**
  * Deterministic Xero test double at the provider-adapter boundary only.
  * Everything above this class is the production Case, Accounting and Mutation
  * service stack. The fake consumes the real one-shot write permit, persists a
@@ -416,14 +431,17 @@ class P0XeroProviderFake implements AccountingProvider {
         quantity: fixedFour(line.quantity),
         unitAmount: fixedFour(line.unit_amount),
         lineAmount: fixedFour(lineAmount),
-        taxAmount: fixedFour(lineAmount * taxRate),
+        taxAmount: fixedFour(minorUnitTax(lineAmount, taxRate)),
         accountId: line.account_id,
         accountCode: line.account_code,
         taxType: line.tax_type,
       };
     });
     const subTotal = input.lines.reduce((sum, line) => sum + line.quantity * line.unit_amount, 0);
-    const totalTax = subTotal * taxRate;
+    const totalTax = input.lines.reduce(
+      (sum, line) => sum + minorUnitTax(line.quantity * line.unit_amount, taxRate),
+      0,
+    );
     this.#invoice = {
       tenantId: TENANT_ID,
       invoiceId: INVOICE_ID,
@@ -525,14 +543,17 @@ class P0XeroProviderFake implements AccountingProvider {
         quantity: fixedFour(line.quantity),
         unitAmount: fixedFour(line.unit_amount),
         lineAmount: fixedFour(lineAmount),
-        taxAmount: fixedFour(lineAmount * taxRate),
+        taxAmount: fixedFour(minorUnitTax(lineAmount, taxRate)),
         accountId: line.account_id,
         accountCode: line.account_code,
         taxType: line.tax_type,
       };
     });
     const subTotal = input.lines.reduce((sum, line) => sum + line.quantity * line.unit_amount, 0);
-    const totalTax = subTotal * taxRate;
+    const totalTax = input.lines.reduce(
+      (sum, line) => sum + minorUnitTax(line.quantity * line.unit_amount, taxRate),
+      0,
+    );
     this.#bill = {
       tenantId: TENANT_ID,
       invoiceId: SUPPLIER_BILL_ID,

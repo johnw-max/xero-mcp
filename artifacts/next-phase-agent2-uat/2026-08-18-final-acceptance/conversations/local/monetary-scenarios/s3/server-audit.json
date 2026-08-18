@@ -1,0 +1,376 @@
+{
+  "schema_version": "1.0",
+  "evidence_boundary": "LOCAL_SYNTHETIC_PROVIDER_SDK_BOUNDARY",
+  "release_version": "0.4.0-rc.1",
+  "server_pid": 19137,
+  "started_at": "2026-08-18T07:07:09.770Z",
+  "mcp_protocol_calls": [
+    {
+      "jsonrpc_id": 4,
+      "method": "tools/call",
+      "tool": "xero_pin_current_organisation",
+      "public_arguments": {},
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T07:07:27.328Z",
+      "finished_at": "2026-08-18T07:07:27.337Z",
+      "status": "PASS",
+      "raw_structured_result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"result\":{\"target_session_ref\":\"<redacted-target-session-ref>\",\"target_ref_safe\":\"xero-target-session:584bd9da4d9292810c4c6888972c8051\",\"binding_revision\":1,\"organisation_name\":\"Synthetic Case Company\",\"expires_at\":\"2026-08-18T09:07:09.764Z\"}}"
+          }
+        ],
+        "structuredContent": {
+          "result": {
+            "target_session_ref": "<redacted-target-session-ref>",
+            "target_ref_safe": "xero-target-session:584bd9da4d9292810c4c6888972c8051",
+            "binding_revision": 1,
+            "organisation_name": "Synthetic Case Company",
+            "expires_at": "2026-08-18T09:07:09.764Z"
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "jsonrpc_id": 5,
+      "method": "tools/call",
+      "tool": "xero_prepare_accounting_case",
+      "public_arguments": {
+        "case_id": "case-s3-cat2398-line-tax-contradicts",
+        "expected_version": 0,
+        "source_label": "Harbour Wok Bistro catering invoice CAT-2398 (line tax contradiction test)",
+        "source_set_complete": true,
+        "target_session_ref": "<redacted-target-session-ref>",
+        "documents": [
+          {
+            "document_type": "CUSTOMER_INVOICE",
+            "reference": "CAT-2398",
+            "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+            "document_date": "2026-06-05",
+            "due_date": "2026-06-30",
+            "currency": "SGD",
+            "contact": {
+              "name": "Exact Customer"
+            },
+            "transition_review_required": false,
+            "declared_net": "1100.92",
+            "declared_tax": "99.08",
+            "declared_gross": "1200.00",
+            "document_validity": "TEST_OR_NOT_VALID",
+            "line_accounting_mode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+            "accounting_category": "CONSULTING_REVENUE",
+            "tax_class": "SG_STANDARD_RATED",
+            "effective_tax_rate_percent": "9",
+            "lines": [
+              {
+                "description": "Launch reception catering (CAT-2398)",
+                "quantity": "1",
+                "unit_amount_excluding_tax": "1100.92",
+                "source_tax_amount": "50.00"
+              }
+            ]
+          }
+        ]
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T07:07:32.252Z",
+      "finished_at": "2026-08-18T07:07:32.266Z",
+      "status": "PASS",
+      "raw_structured_result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"result\":{\"case_id\":\"case-s3-cat2398-line-tax-contradicts\",\"case_version\":1,\"state\":\"BLOCKED_VALIDATION\",\"source_revision_hash\":\"69834f7cd3b3ccdcbdaa84e9fa07eb65b97fafb7b32135e0a6496d862534efa6\",\"compiled_plan_hash\":\"cc0cb706947cb6e488c3096200c0b0d5bca02ab05a47e354b5d531718c88c3f7\",\"compiler_version\":\"0.11.0\",\"policy_version\":\"xero-sg-accounting-policy-v8-2026h2\",\"coverage\":{\"supplied_set\":\"COMPLETE\",\"expected_artifacts\":1,\"expected_source_units\":1,\"expected_fact_requirements\":1,\"satisfied_fact_requirements\":1,\"missing_fact_requirements\":[]},\"events\":[{\"event_id\":\"evt_34ab5054fcff2a188ea08ad4\",\"event_key\":\"event-cbf784fdecc7572c48ce2560af8441bb\",\"disposition\":\"BLOCKED_VALIDATION\",\"route\":\"SALES_INVOICE\",\"reason_codes\":[\"SOURCE_LINE_TAX_MISMATCH\"]}],\"operations\":[],\"residual_event_count\":1,\"source_claim\":{\"trust\":\"UNVERIFIED_SUBMITTED_FACTS\",\"source_truth_claim\":\"NOT_VERIFIED\",\"original_file_verified\":false,\"fact_origins\":[\"MODEL_EXTRACTED\"],\"document_validity_basis\":\"SUBMITTED_ASSERTION\"},\"completion_claim\":{\"supplied_set_coverage\":\"COMPLETE\",\"eligible_write_status\":\"NONE\",\"whole_business_completeness\":\"NOT_ASSERTED\",\"ledger_write_claim\":\"NOT_WRITTEN\"},\"persistence_mode\":\"CREATED\"}}"
+          }
+        ],
+        "structuredContent": {
+          "result": {
+            "case_id": "case-s3-cat2398-line-tax-contradicts",
+            "case_version": 1,
+            "state": "BLOCKED_VALIDATION",
+            "source_revision_hash": "69834f7cd3b3ccdcbdaa84e9fa07eb65b97fafb7b32135e0a6496d862534efa6",
+            "compiled_plan_hash": "cc0cb706947cb6e488c3096200c0b0d5bca02ab05a47e354b5d531718c88c3f7",
+            "compiler_version": "0.11.0",
+            "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+            "coverage": {
+              "supplied_set": "COMPLETE",
+              "expected_artifacts": 1,
+              "expected_source_units": 1,
+              "expected_fact_requirements": 1,
+              "satisfied_fact_requirements": 1,
+              "missing_fact_requirements": []
+            },
+            "events": [
+              {
+                "event_id": "evt_34ab5054fcff2a188ea08ad4",
+                "event_key": "event-cbf784fdecc7572c48ce2560af8441bb",
+                "disposition": "BLOCKED_VALIDATION",
+                "route": "SALES_INVOICE",
+                "reason_codes": [
+                  "SOURCE_LINE_TAX_MISMATCH"
+                ]
+              }
+            ],
+            "operations": [],
+            "residual_event_count": 1,
+            "source_claim": {
+              "trust": "UNVERIFIED_SUBMITTED_FACTS",
+              "source_truth_claim": "NOT_VERIFIED",
+              "original_file_verified": false,
+              "fact_origins": [
+                "MODEL_EXTRACTED"
+              ],
+              "document_validity_basis": "SUBMITTED_ASSERTION"
+            },
+            "completion_claim": {
+              "supplied_set_coverage": "COMPLETE",
+              "eligible_write_status": "NONE",
+              "whole_business_completeness": "NOT_ASSERTED",
+              "ledger_write_claim": "NOT_WRITTEN"
+            },
+            "persistence_mode": "CREATED"
+          }
+        }
+      },
+      "error": null
+    },
+    {
+      "jsonrpc_id": 6,
+      "method": "tools/call",
+      "tool": "xero_execute_accounting_case",
+      "public_arguments": {
+        "case_id": "case-s3-cat2398-line-tax-contradicts",
+        "case_version": 1,
+        "request_id": "req-s3-first",
+        "target_session_ref": "<redacted-target-session-ref>"
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T07:07:48.407Z",
+      "finished_at": "2026-08-18T07:07:48.414Z",
+      "status": "PASS",
+      "raw_structured_result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"code\":\"VALIDATION_FAILED\",\"message\":\"Accounting Case coverage or deterministic validation has not passed.\",\"retryable\":false,\"failure_layer\":\"DETERMINISTIC_VALIDATION\",\"provider_mutation_possible\":false,\"recovery_action\":\"CORRECT_CASE_FACTS\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "code": "VALIDATION_FAILED",
+            "message": "Accounting Case coverage or deterministic validation has not passed.",
+            "retryable": false,
+            "failure_layer": "DETERMINISTIC_VALIDATION",
+            "provider_mutation_possible": false,
+            "recovery_action": "CORRECT_CASE_FACTS"
+          }
+        },
+        "isError": true
+      },
+      "error": null
+    }
+  ],
+  "tool_calls": [
+    {
+      "server_call_id": "local_mcp_d2c3b08ba26c95c63e5d01b4",
+      "tool": "xero_pin_current_organisation",
+      "normalized_input": {},
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T07:07:27.333Z",
+      "finished_at": "2026-08-18T07:07:27.335Z",
+      "status": "PASS",
+      "result": {
+        "target_session_ref": "<redacted-target-session-ref>",
+        "target_ref_safe": "xero-target-session:584bd9da4d9292810c4c6888972c8051",
+        "binding_revision": 1,
+        "organisation_name": "Synthetic Case Company",
+        "expires_at": "2026-08-18T09:07:09.764Z"
+      }
+    },
+    {
+      "server_call_id": "local_mcp_e49f6a7f3c430088efdc0674",
+      "tool": "xero_prepare_accounting_case",
+      "normalized_input": {
+        "case_id": "case-s3-cat2398-line-tax-contradicts",
+        "expected_version": 0,
+        "sources": [
+          {
+            "artifactId": "source-8d070e8223c23b14b832308dad46de4d",
+            "label": "Harbour Wok Bistro catering invoice CAT-2398 (line tax contradiction test)",
+            "units": [
+              {
+                "unitId": "unit-da35507990a3422b4dff0a786ce08a75",
+                "expectedFactKinds": [
+                  "NATIVE_DOCUMENT"
+                ]
+              }
+            ]
+          }
+        ],
+        "facts": [
+          {
+            "factId": "fact-cbf784fdecc7572c48ce2560af8441bb",
+            "lineageKey": "lineage-cbf784fdecc7572c48ce2560af8441bb",
+            "eventKey": "event-cbf784fdecc7572c48ce2560af8441bb",
+            "sourceUnitIds": [
+              "unit-da35507990a3422b4dff0a786ce08a75"
+            ],
+            "origin": "MODEL_EXTRACTED",
+            "revision": 1,
+            "kind": "NATIVE_DOCUMENT",
+            "documentKind": "INVOICE",
+            "counterpartyRole": "CUSTOMER",
+            "reference": "CAT-2398",
+            "referenceKind": "FORMAL_DOCUMENT_NUMBER",
+            "documentDate": "2026-06-05",
+            "dueDate": "2026-06-30",
+            "currency": "SGD",
+            "contactName": "Exact Customer",
+            "accountingCategory": "CONSULTING_REVENUE",
+            "taxClass": "SG_STANDARD_RATED",
+            "taxPolicyBasis": "DOCUMENT_DATE_NON_TRANSITION",
+            "effectiveTaxRateBps": 900,
+            "lineAccountingMode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+            "lineAmountType": "EXCLUSIVE",
+            "lines": [
+              {
+                "lineId": "line-24686bcad7746bc990d4fe908c140f04",
+                "description": "Launch reception catering (CAT-2398)",
+                "quantity": "1",
+                "unitAmount": "1100.92",
+                "sourceTax": "50.00",
+                "accountingCategory": "CONSULTING_REVENUE",
+                "taxClass": "SG_STANDARD_RATED",
+                "effectiveTaxRateBps": 900
+              }
+            ],
+            "declaredNet": "1100.92",
+            "declaredTax": "99.08",
+            "declaredGross": "1200.00",
+            "documentValidity": "TEST_OR_NOT_VALID"
+          }
+        ]
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T07:07:32.258Z",
+      "finished_at": "2026-08-18T07:07:32.266Z",
+      "status": "PASS",
+      "result": {
+        "case_id": "case-s3-cat2398-line-tax-contradicts",
+        "case_version": 1,
+        "state": "BLOCKED_VALIDATION",
+        "source_revision_hash": "69834f7cd3b3ccdcbdaa84e9fa07eb65b97fafb7b32135e0a6496d862534efa6",
+        "compiled_plan_hash": "cc0cb706947cb6e488c3096200c0b0d5bca02ab05a47e354b5d531718c88c3f7",
+        "compiler_version": "0.11.0",
+        "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+        "coverage": {
+          "supplied_set": "COMPLETE",
+          "expected_artifacts": 1,
+          "expected_source_units": 1,
+          "expected_fact_requirements": 1,
+          "satisfied_fact_requirements": 1,
+          "missing_fact_requirements": []
+        },
+        "events": [
+          {
+            "event_id": "evt_34ab5054fcff2a188ea08ad4",
+            "event_key": "event-cbf784fdecc7572c48ce2560af8441bb",
+            "disposition": "BLOCKED_VALIDATION",
+            "route": "SALES_INVOICE",
+            "reason_codes": [
+              "SOURCE_LINE_TAX_MISMATCH"
+            ]
+          }
+        ],
+        "operations": [],
+        "residual_event_count": 1,
+        "source_claim": {
+          "trust": "UNVERIFIED_SUBMITTED_FACTS",
+          "source_truth_claim": "NOT_VERIFIED",
+          "original_file_verified": false,
+          "fact_origins": [
+            "MODEL_EXTRACTED"
+          ],
+          "document_validity_basis": "SUBMITTED_ASSERTION"
+        },
+        "completion_claim": {
+          "supplied_set_coverage": "COMPLETE",
+          "eligible_write_status": "NONE",
+          "whole_business_completeness": "NOT_ASSERTED",
+          "ledger_write_claim": "NOT_WRITTEN"
+        },
+        "persistence_mode": "CREATED"
+      }
+    },
+    {
+      "server_call_id": "local_mcp_f60380294c9d82f8cf2c4285",
+      "tool": "xero_execute_accounting_case",
+      "normalized_input": {
+        "case_id": "case-s3-cat2398-line-tax-contradicts",
+        "case_version": 1,
+        "request_id": "req-s3-first"
+      },
+      "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+      "started_at": "2026-08-18T07:07:48.409Z",
+      "finished_at": "2026-08-18T07:07:48.411Z",
+      "status": "FAIL",
+      "error": {
+        "name": "AppError",
+        "message": "Accounting Case coverage or deterministic validation has not passed."
+      }
+    }
+  ],
+  "target_session_evidence": {
+    "status": "PENDING",
+    "issuance_tool": "xero_pin_current_organisation",
+    "verification_tool": "xero_get_organisation",
+    "base_context_unpinned": true,
+    "required_by_server": true,
+    "raw_capability_persisted_in_server_audit": false,
+    "binding_scope": "OAUTH_INSTALLATION_PRINCIPAL_AND_IMMUTABLE_BINDING_CAPABILITY",
+    "conversation_binding": "NOT_CLAIMED_NO_TRUSTED_SERVER_CONVERSATION_ID",
+    "target_session_ref_hash": "a5e62918c88043b6ce3618a0fdcd3e204b194712d4869a68b884157f2319b327",
+    "target_ref_safe": "xero-target-session:584bd9da4d9292810c4c6888972c8051",
+    "binding_revision": 1
+  },
+  "provider_write_count": 0,
+  "provider_records": [],
+  "standing_delegation_preflights": [],
+  "release_attestation": {
+    "controlKernel": "ledger-control-kernel-v2",
+    "ledgerAuthoritySnapshot": "ledger-authority-snapshot:v2",
+    "accountingCaseCompiler": "0.11.0",
+    "accountingPolicy": "xero-sg-accounting-policy-v8-2026h2",
+    "accountingPolicyProjection": "xero-sg-accounting-policy-projection:v4",
+    "accountingCaseProviderContract": "xero-accounting-case-provider-v13",
+    "accountingCaseProviderProjection": "xero-accounting-case-provider-projection:v8",
+    "accountingCaseBusinessAuthorityProjection": "xero-accounting-case-business-authority:v4",
+    "accountingCaseReadbackValidator": "accounting-case-observed-line-readback-v4",
+    "xeroNativeRouteContract": "xero-native-route-contract-v1",
+    "xeroContactIdentityContract": "xero-contact-identity-v3",
+    "requiredMigration": "040_xero_native_idempotency_recovery_claim.sql",
+    "publicToolProfile": "xero-accounting-case-business-intake-v3",
+    "executionAuthority": "STANDING_DELEGATION",
+    "writeCompletion": "PROVIDER_ID_RECEIPT_EXACT_READBACK"
+  },
+  "release_attestation_hash": "6c10c33273546119debeb79aef2a1b75c6b0d4aeb90085da5e253ea882956822",
+  "runtime_attestation": {
+    "releaseAttestationHash": "6c10c33273546119debeb79aef2a1b75c6b0d4aeb90085da5e253ea882956822",
+    "buildIdentityHash": null,
+    "acceptanceSourceSha256": null,
+    "sourceArchiveSha256": null,
+    "writeMode": "WRITE_ENABLED",
+    "processWriteGateEnabled": true,
+    "authoritySnapshotRevision": 1,
+    "authoritySnapshotHash": "e92183fb99dc06363b59261d687a576df11c2cced9ef791f03d4023f6a659b30",
+    "authorityWriteKillSwitchEnabled": true,
+    "storageMode": "IN_MEMORY",
+    "repositoryReady": true,
+    "requiredMigration": "040_xero_native_idempotency_recovery_claim.sql",
+    "requiredMigrationStatus": "NOT_APPLICABLE",
+    "migrationHead": null
+  },
+  "runtime_attestation_hash": "7e6aead1b9b2315fc3445177e92cb12b6f656fdc061da0cd6fa7c83fed66bafb"
+}

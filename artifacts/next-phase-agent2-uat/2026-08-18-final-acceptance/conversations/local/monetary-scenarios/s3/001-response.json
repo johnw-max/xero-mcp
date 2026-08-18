@@ -1,0 +1,31 @@
+{
+  "started": "2026-08-18T07:07:27.323Z",
+  "spec": {
+    "method": "tools/call",
+    "params": {
+      "name": "xero_pin_current_organisation",
+      "arguments": {}
+    }
+  },
+  "response": {
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"result\":{\"target_session_ref\":\"xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0\",\"target_ref_safe\":\"xero-target-session:584bd9da4d9292810c4c6888972c8051\",\"binding_revision\":1,\"organisation_name\":\"Synthetic Case Company\",\"expires_at\":\"2026-08-18T09:07:09.764Z\"}}"
+        }
+      ],
+      "structuredContent": {
+        "result": {
+          "target_session_ref": "xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0",
+          "target_ref_safe": "xero-target-session:584bd9da4d9292810c4c6888972c8051",
+          "binding_revision": 1,
+          "organisation_name": "Synthetic Case Company",
+          "expires_at": "2026-08-18T09:07:09.764Z"
+        }
+      }
+    },
+    "jsonrpc": "2.0",
+    "id": 4
+  }
+}

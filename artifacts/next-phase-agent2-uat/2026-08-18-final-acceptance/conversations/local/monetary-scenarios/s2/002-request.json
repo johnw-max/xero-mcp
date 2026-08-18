@@ -1,0 +1,25 @@
+{"method":"tools/call","params":{"name":"xero_prepare_accounting_case","arguments":{
+ "case_id":"case-s2-cat2398-gross-mismatch",
+ "expected_version":0,
+ "source_label":"Harbour Wok Bistro catering invoice CAT-2398 (gross mismatch test)",
+ "source_set_complete":true,
+ "target_session_ref":"xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0",
+ "documents":[{
+   "document_type":"CUSTOMER_INVOICE",
+   "reference":"CAT-2398",
+   "reference_kind":"FORMAL_DOCUMENT_NUMBER",
+   "document_date":"2026-06-05",
+   "due_date":"2026-06-30",
+   "currency":"SGD",
+   "contact":{"name":"Exact Customer"},
+   "transition_review_required":false,
+   "declared_net":"1100.92",
+   "declared_tax":"99.08",
+   "declared_gross":"1250.00",
+   "document_validity":"TEST_OR_NOT_VALID",
+   "line_accounting_mode":"DOCUMENT_DEFAULT_FOR_ALL_LINES",
+   "accounting_category":"CONSULTING_REVENUE",
+   "tax_class":"SG_STANDARD_RATED",
+   "effective_tax_rate_percent":"9",
+   "lines":[{"description":"Launch reception catering (CAT-2398)","quantity":"1","unit_amount_excluding_tax":"1100.92","source_tax_amount":"99.08"}]
+ }]}}}

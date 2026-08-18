@@ -12,7 +12,8 @@
 
 本轮只有同时满足以下条件才是 `PASS`：
 
-1. 测试对象固定为一张 Supplier Bill DRAFT；使用已有 Contact、Account 和 Tax Rate，不夹带联系人创建、付款、授权、过账或银行动作。
+1. 测试对象固定为一张 Customer Invoice DRAFT（带正式单据号）；使用已有 Contact、Account 和 Tax Rate，不夹带联系人创建、付款、授权、过账或银行动作。
+   > **2026-08-18 变更（XF-021）**：原定对象为 Supplier Bill DRAFT。实测发现产品按设计拒绝自动创建它：Xero 对 ACCPAY 账单号不强制唯一，因此 `xeroDocumentCoordinateAuthority` 将 SUPPLIER_BILL 归为 `NON_UNIQUE_EXCLUSIVE_WRITER`，`xeroAccountingCaseService` 要求 `VERIFIED_FIRM_GOVERNANCE` 排他写入权威，否则以 `PROVIDER_BUSINESS_COORDINATE_ATOMICITY_UNPROVEN` fail closed。本轮已声明 firm governance 不在范围内，两个环境均未配置该权威，故原定 DoD 无法达成。经用户决定，本轮固定对象改为 provider 强制唯一的 Customer Invoice 路由——这也是此前全部通过的 run 实际测的对象。Supplier Bill 的自主创建移交后续独立工作包。详见 `artifacts/next-phase-agent2-uat/2026-08-18-final-acceptance/LOCAL-CONVERSATION-RESULTS.md` §4。
 2. 本地候选的 source fingerprint、build/image digest、toolset hash、policy/compiler/kernel version 和 migration 状态全部固定。
 3. Typecheck、build、静态检查、目标测试、必需 PostgreSQL 测试、HTTP/OAuth 测试、完整 MCP tool schema 装载和本地 Agent harness 全部通过。
 4. 本地 Agent harness 加载最终计划部署的完整 Agent instructions、Skill bundle、MCP tool schema/allowlist 和运行配置，并使用真实、缺失、矛盾、修正和重复表达的会计材料完成自然多轮对话。
@@ -30,7 +31,7 @@
 
 - 不开放 `AUTHORISE`、`POST`、Payment、Refund、Bank Transaction、Reconciliation、Tax Filing 或 Payroll。
 - 不扩展到生产 tenant、Work 生产环境或企业级多人 IAM。
-- 不同时推进 Sales Invoice、Supplier Bill 和 Credit Note；本轮只做 Supplier Bill。
+- 不同时推进 Sales Invoice、Supplier Bill 和 Credit Note；本轮只做 Customer Invoice（见 §2.1 的 XF-021 变更）。
 - 不把逐笔人工点击设为默认授权机制。当前采用精确 Standing Delegation；preview 用于可读性和异常检查，不自动等于审批门禁。
 - 不自建总账、试算平衡、月结或第二套会计数据库。
 - 不用 Prompt/Skill 掩盖 MCP、OAuth、Provider 或平台层缺陷。

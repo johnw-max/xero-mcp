@@ -1,0 +1,107 @@
+{
+  "started": "2026-08-18T07:06:35.422Z",
+  "spec": {
+    "method": "tools/call",
+    "params": {
+      "name": "xero_prepare_accounting_case",
+      "arguments": {
+        "case_id": "case-s2-cat2398-gross-mismatch",
+        "expected_version": 0,
+        "source_label": "Harbour Wok Bistro catering invoice CAT-2398 (gross mismatch test)",
+        "source_set_complete": true,
+        "target_session_ref": "xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0",
+        "documents": [
+          {
+            "document_type": "CUSTOMER_INVOICE",
+            "reference": "CAT-2398",
+            "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+            "document_date": "2026-06-05",
+            "due_date": "2026-06-30",
+            "currency": "SGD",
+            "contact": {
+              "name": "Exact Customer"
+            },
+            "transition_review_required": false,
+            "declared_net": "1100.92",
+            "declared_tax": "99.08",
+            "declared_gross": "1250.00",
+            "document_validity": "TEST_OR_NOT_VALID",
+            "line_accounting_mode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+            "accounting_category": "CONSULTING_REVENUE",
+            "tax_class": "SG_STANDARD_RATED",
+            "effective_tax_rate_percent": "9",
+            "lines": [
+              {
+                "description": "Launch reception catering (CAT-2398)",
+                "quantity": "1",
+                "unit_amount_excluding_tax": "1100.92",
+                "source_tax_amount": "99.08"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"result\":{\"case_id\":\"case-s2-cat2398-gross-mismatch\",\"case_version\":1,\"state\":\"BLOCKED_VALIDATION\",\"source_revision_hash\":\"def57c6c45da984b3ae314044ae19a8d0576e76a9219742215aff7facbfa8f63\",\"compiled_plan_hash\":\"e340b7bae1c14f08516c205655e9fff38c1a0b4d5211b8d3c542f128198e586e\",\"compiler_version\":\"0.11.0\",\"policy_version\":\"xero-sg-accounting-policy-v8-2026h2\",\"coverage\":{\"supplied_set\":\"COMPLETE\",\"expected_artifacts\":1,\"expected_source_units\":1,\"expected_fact_requirements\":1,\"satisfied_fact_requirements\":1,\"missing_fact_requirements\":[]},\"events\":[{\"event_id\":\"evt_5c6599412f0964427034542a\",\"event_key\":\"event-e09a98a6fbfbf2d2b2c0b9018418ec5f\",\"disposition\":\"BLOCKED_VALIDATION\",\"route\":\"SALES_INVOICE\",\"reason_codes\":[\"SOURCE_GROSS_MISMATCH\",\"SOURCE_NET_PLUS_TAX_MISMATCH\"]}],\"operations\":[],\"residual_event_count\":1,\"source_claim\":{\"trust\":\"UNVERIFIED_SUBMITTED_FACTS\",\"source_truth_claim\":\"NOT_VERIFIED\",\"original_file_verified\":false,\"fact_origins\":[\"MODEL_EXTRACTED\"],\"document_validity_basis\":\"SUBMITTED_ASSERTION\"},\"completion_claim\":{\"supplied_set_coverage\":\"COMPLETE\",\"eligible_write_status\":\"NONE\",\"whole_business_completeness\":\"NOT_ASSERTED\",\"ledger_write_claim\":\"NOT_WRITTEN\"},\"persistence_mode\":\"CREATED\"}}"
+        }
+      ],
+      "structuredContent": {
+        "result": {
+          "case_id": "case-s2-cat2398-gross-mismatch",
+          "case_version": 1,
+          "state": "BLOCKED_VALIDATION",
+          "source_revision_hash": "def57c6c45da984b3ae314044ae19a8d0576e76a9219742215aff7facbfa8f63",
+          "compiled_plan_hash": "e340b7bae1c14f08516c205655e9fff38c1a0b4d5211b8d3c542f128198e586e",
+          "compiler_version": "0.11.0",
+          "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+          "coverage": {
+            "supplied_set": "COMPLETE",
+            "expected_artifacts": 1,
+            "expected_source_units": 1,
+            "expected_fact_requirements": 1,
+            "satisfied_fact_requirements": 1,
+            "missing_fact_requirements": []
+          },
+          "events": [
+            {
+              "event_id": "evt_5c6599412f0964427034542a",
+              "event_key": "event-e09a98a6fbfbf2d2b2c0b9018418ec5f",
+              "disposition": "BLOCKED_VALIDATION",
+              "route": "SALES_INVOICE",
+              "reason_codes": [
+                "SOURCE_GROSS_MISMATCH",
+                "SOURCE_NET_PLUS_TAX_MISMATCH"
+              ]
+            }
+          ],
+          "operations": [],
+          "residual_event_count": 1,
+          "source_claim": {
+            "trust": "UNVERIFIED_SUBMITTED_FACTS",
+            "source_truth_claim": "NOT_VERIFIED",
+            "original_file_verified": false,
+            "fact_origins": [
+              "MODEL_EXTRACTED"
+            ],
+            "document_validity_basis": "SUBMITTED_ASSERTION"
+          },
+          "completion_claim": {
+            "supplied_set_coverage": "COMPLETE",
+            "eligible_write_status": "NONE",
+            "whole_business_completeness": "NOT_ASSERTED",
+            "ledger_write_claim": "NOT_WRITTEN"
+          },
+          "persistence_mode": "CREATED"
+        }
+      }
+    },
+    "jsonrpc": "2.0",
+    "id": 5
+  }
+}

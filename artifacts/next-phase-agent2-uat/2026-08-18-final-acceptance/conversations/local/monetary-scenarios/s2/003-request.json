@@ -1,0 +1,1 @@
+{"method":"tools/call","params":{"name":"xero_execute_accounting_case","arguments":{"case_id":"case-s2-cat2398-gross-mismatch","case_version":1,"request_id":"req-s2-first","target_session_ref":"xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0"}}}

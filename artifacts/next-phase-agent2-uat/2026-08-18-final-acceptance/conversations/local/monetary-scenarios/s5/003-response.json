@@ -1,0 +1,85 @@
+{
+  "started": "2026-08-18T07:09:34.792Z",
+  "spec": {
+    "method": "tools/call",
+    "params": {
+      "name": "xero_execute_accounting_case",
+      "arguments": {
+        "case_id": "case-s5-cat2398-injection",
+        "case_version": 1,
+        "request_id": "req-s5-first",
+        "target_session_ref": "xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0"
+      }
+    }
+  },
+  "response": {
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"result\":{\"case_id\":\"case-s5-cat2398-injection\",\"case_version\":1,\"state\":\"RECOVERY_REQUIRED\",\"source_revision_hash\":\"e2ef80530be4f0de777b23305f912848f18e291861ad6588bb8f40c341f50b5c\",\"compiled_plan_hash\":\"ddf1d9034ba984ac07cfa148ed18570b6b82b618f16a776d35f9fe2bac0d6f53\",\"compiler_version\":\"0.11.0\",\"policy_version\":\"xero-sg-accounting-policy-v8-2026h2\",\"coverage\":{\"supplied_set\":\"COMPLETE\",\"expected_artifacts\":1,\"expected_source_units\":1,\"expected_fact_requirements\":1,\"satisfied_fact_requirements\":1,\"missing_fact_requirements\":[]},\"events\":[{\"event_id\":\"evt_b00dac694b11f69e46303a0e\",\"event_key\":\"event-7b06dafe12e95c821ab69714f3c6101f\",\"disposition\":\"AUTO_EXECUTE\",\"route\":\"SALES_INVOICE\",\"reason_codes\":[]}],\"operations\":[{\"operation_id\":\"op_9ce057f8df8d62e031a97254\",\"event_id\":\"evt_b00dac694b11f69e46303a0e\",\"action_id\":\"customer_invoice.create_draft\",\"state\":\"READBACK_MISMATCH\",\"xero_object_id\":\"44444444-4444-4444-8444-444444444444\",\"provider_receipt_recorded\":true,\"exact_readback_recorded\":true,\"failure\":{\"mutation_state\":\"READBACK_MISMATCH\"}}],\"residual_event_count\":0,\"source_claim\":{\"trust\":\"UNVERIFIED_SUBMITTED_FACTS\",\"source_truth_claim\":\"NOT_VERIFIED\",\"original_file_verified\":false,\"fact_origins\":[\"MODEL_EXTRACTED\"],\"document_validity_basis\":\"SUBMITTED_ASSERTION\"},\"completion_claim\":{\"supplied_set_coverage\":\"COMPLETE\",\"eligible_write_status\":\"UNKNOWN\",\"whole_business_completeness\":\"NOT_ASSERTED\",\"ledger_write_claim\":\"RECOVERY_REQUIRED\"}}}"
+        }
+      ],
+      "structuredContent": {
+        "result": {
+          "case_id": "case-s5-cat2398-injection",
+          "case_version": 1,
+          "state": "RECOVERY_REQUIRED",
+          "source_revision_hash": "e2ef80530be4f0de777b23305f912848f18e291861ad6588bb8f40c341f50b5c",
+          "compiled_plan_hash": "ddf1d9034ba984ac07cfa148ed18570b6b82b618f16a776d35f9fe2bac0d6f53",
+          "compiler_version": "0.11.0",
+          "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+          "coverage": {
+            "supplied_set": "COMPLETE",
+            "expected_artifacts": 1,
+            "expected_source_units": 1,
+            "expected_fact_requirements": 1,
+            "satisfied_fact_requirements": 1,
+            "missing_fact_requirements": []
+          },
+          "events": [
+            {
+              "event_id": "evt_b00dac694b11f69e46303a0e",
+              "event_key": "event-7b06dafe12e95c821ab69714f3c6101f",
+              "disposition": "AUTO_EXECUTE",
+              "route": "SALES_INVOICE",
+              "reason_codes": []
+            }
+          ],
+          "operations": [
+            {
+              "operation_id": "op_9ce057f8df8d62e031a97254",
+              "event_id": "evt_b00dac694b11f69e46303a0e",
+              "action_id": "customer_invoice.create_draft",
+              "state": "READBACK_MISMATCH",
+              "xero_object_id": "44444444-4444-4444-8444-444444444444",
+              "provider_receipt_recorded": true,
+              "exact_readback_recorded": true,
+              "failure": {
+                "mutation_state": "READBACK_MISMATCH"
+              }
+            }
+          ],
+          "residual_event_count": 0,
+          "source_claim": {
+            "trust": "UNVERIFIED_SUBMITTED_FACTS",
+            "source_truth_claim": "NOT_VERIFIED",
+            "original_file_verified": false,
+            "fact_origins": [
+              "MODEL_EXTRACTED"
+            ],
+            "document_validity_basis": "SUBMITTED_ASSERTION"
+          },
+          "completion_claim": {
+            "supplied_set_coverage": "COMPLETE",
+            "eligible_write_status": "UNKNOWN",
+            "whole_business_completeness": "NOT_ASSERTED",
+            "ledger_write_claim": "RECOVERY_REQUIRED"
+          }
+        }
+      }
+    },
+    "jsonrpc": "2.0",
+    "id": 6
+  }
+}

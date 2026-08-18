@@ -1,0 +1,1 @@
+{"method":"tools/call","params":{"name":"xero_get_accounting_case_status","arguments":{"case_id":"case-s1-cat2398-gst-correct","target_session_ref":"xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0"}}}

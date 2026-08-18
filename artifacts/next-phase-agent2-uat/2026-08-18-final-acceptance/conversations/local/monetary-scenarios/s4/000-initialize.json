@@ -1,0 +1,45 @@
+{
+  "init": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {
+      "logging": {},
+      "tools": {
+        "listChanged": true
+      }
+    },
+    "serverInfo": {
+      "name": "zcloak-xero-accounting-mcp-demo",
+      "version": "0.4.0-rc.1"
+    }
+  },
+  "tool_names": [
+    "xero_prepare_accounting_case",
+    "xero_execute_accounting_case",
+    "xero_get_accounting_case_status",
+    "xero_connection_status",
+    "xero_start_organisation_switch",
+    "xero_pin_current_organisation",
+    "xero_get_organisation",
+    "xero_list_accounts",
+    "xero_list_tax_rates",
+    "xero_list_contacts",
+    "xero_get_contact",
+    "xero_search_contacts",
+    "xero_list_invoices",
+    "xero_list_credit_notes",
+    "xero_list_payments",
+    "xero_list_quotes",
+    "xero_get_quote",
+    "xero_list_purchase_orders",
+    "xero_get_purchase_order",
+    "xero_list_manual_journals",
+    "xero_get_manual_journal",
+    "xero_list_items",
+    "xero_get_item",
+    "xero_list_bank_transactions",
+    "xero_get_bank_transaction",
+    "xero_get_invoice",
+    "xero_get_supplier_bill",
+    "xero_get_trial_balance"
+  ]
+}

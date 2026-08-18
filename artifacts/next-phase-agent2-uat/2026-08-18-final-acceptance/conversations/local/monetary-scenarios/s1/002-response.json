@@ -1,0 +1,113 @@
+{
+  "started": "2026-08-18T07:05:23.697Z",
+  "spec": {
+    "method": "tools/call",
+    "params": {
+      "name": "xero_prepare_accounting_case",
+      "arguments": {
+        "case_id": "case-s1-cat2398-gst-correct",
+        "expected_version": 0,
+        "source_label": "Harbour Wok Bistro catering invoice CAT-2398",
+        "source_set_complete": true,
+        "target_session_ref": "xts_DQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0",
+        "documents": [
+          {
+            "document_type": "CUSTOMER_INVOICE",
+            "reference": "CAT-2398",
+            "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+            "document_date": "2026-06-05",
+            "due_date": "2026-06-30",
+            "currency": "SGD",
+            "contact": {
+              "name": "Exact Customer"
+            },
+            "transition_review_required": false,
+            "declared_net": "1100.92",
+            "declared_tax": "99.08",
+            "declared_gross": "1200.00",
+            "document_validity": "TEST_OR_NOT_VALID",
+            "line_accounting_mode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+            "accounting_category": "CONSULTING_REVENUE",
+            "tax_class": "SG_STANDARD_RATED",
+            "effective_tax_rate_percent": "9",
+            "lines": [
+              {
+                "description": "Launch reception catering (CAT-2398)",
+                "quantity": "1",
+                "unit_amount_excluding_tax": "1100.92",
+                "source_tax_amount": "99.08"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"result\":{\"case_id\":\"case-s1-cat2398-gst-correct\",\"case_version\":1,\"state\":\"PLANNED_NEEDS_PREFLIGHT\",\"source_revision_hash\":\"989a8e0b3329917723ba6377c4a086b261adce45b89c4acf7764734894a8058d\",\"compiled_plan_hash\":\"1d30e035eda674cf1843afb2760fbe13054ca8c90fb54d5fc002c15b924f379d\",\"compiler_version\":\"0.11.0\",\"policy_version\":\"xero-sg-accounting-policy-v8-2026h2\",\"coverage\":{\"supplied_set\":\"COMPLETE\",\"expected_artifacts\":1,\"expected_source_units\":1,\"expected_fact_requirements\":1,\"satisfied_fact_requirements\":1,\"missing_fact_requirements\":[]},\"events\":[{\"event_id\":\"evt_f6fac079d687ca7ef4c9c4a1\",\"event_key\":\"event-5e76abc8f373314abd0b1dbcdc0bebf2\",\"disposition\":\"AUTO_EXECUTE\",\"route\":\"SALES_INVOICE\",\"reason_codes\":[]}],\"operations\":[{\"operation_id\":\"op_9e2277fe2d6e2ea6ddda140b\",\"event_id\":\"evt_f6fac079d687ca7ef4c9c4a1\",\"action_id\":\"customer_invoice.create_draft\",\"state\":\"PENDING\",\"provider_receipt_recorded\":false,\"exact_readback_recorded\":false}],\"residual_event_count\":0,\"source_claim\":{\"trust\":\"UNVERIFIED_SUBMITTED_FACTS\",\"source_truth_claim\":\"NOT_VERIFIED\",\"original_file_verified\":false,\"fact_origins\":[\"MODEL_EXTRACTED\"],\"document_validity_basis\":\"SUBMITTED_ASSERTION\"},\"completion_claim\":{\"supplied_set_coverage\":\"COMPLETE\",\"eligible_write_status\":\"NONE\",\"whole_business_completeness\":\"NOT_ASSERTED\",\"ledger_write_claim\":\"NOT_WRITTEN\"},\"persistence_mode\":\"CREATED\"}}"
+        }
+      ],
+      "structuredContent": {
+        "result": {
+          "case_id": "case-s1-cat2398-gst-correct",
+          "case_version": 1,
+          "state": "PLANNED_NEEDS_PREFLIGHT",
+          "source_revision_hash": "989a8e0b3329917723ba6377c4a086b261adce45b89c4acf7764734894a8058d",
+          "compiled_plan_hash": "1d30e035eda674cf1843afb2760fbe13054ca8c90fb54d5fc002c15b924f379d",
+          "compiler_version": "0.11.0",
+          "policy_version": "xero-sg-accounting-policy-v8-2026h2",
+          "coverage": {
+            "supplied_set": "COMPLETE",
+            "expected_artifacts": 1,
+            "expected_source_units": 1,
+            "expected_fact_requirements": 1,
+            "satisfied_fact_requirements": 1,
+            "missing_fact_requirements": []
+          },
+          "events": [
+            {
+              "event_id": "evt_f6fac079d687ca7ef4c9c4a1",
+              "event_key": "event-5e76abc8f373314abd0b1dbcdc0bebf2",
+              "disposition": "AUTO_EXECUTE",
+              "route": "SALES_INVOICE",
+              "reason_codes": []
+            }
+          ],
+          "operations": [
+            {
+              "operation_id": "op_9e2277fe2d6e2ea6ddda140b",
+              "event_id": "evt_f6fac079d687ca7ef4c9c4a1",
+              "action_id": "customer_invoice.create_draft",
+              "state": "PENDING",
+              "provider_receipt_recorded": false,
+              "exact_readback_recorded": false
+            }
+          ],
+          "residual_event_count": 0,
+          "source_claim": {
+            "trust": "UNVERIFIED_SUBMITTED_FACTS",
+            "source_truth_claim": "NOT_VERIFIED",
+            "original_file_verified": false,
+            "fact_origins": [
+              "MODEL_EXTRACTED"
+            ],
+            "document_validity_basis": "SUBMITTED_ASSERTION"
+          },
+          "completion_claim": {
+            "supplied_set_coverage": "COMPLETE",
+            "eligible_write_status": "NONE",
+            "whole_business_completeness": "NOT_ASSERTED",
+            "ledger_write_claim": "NOT_WRITTEN"
+          },
+          "persistence_mode": "CREATED"
+        }
+      }
+    },
+    "jsonrpc": "2.0",
+    "id": 5
+  }
+}
