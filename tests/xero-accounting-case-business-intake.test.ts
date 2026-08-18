@@ -14,12 +14,41 @@ import {
 import {
   createXeroAccountingCaseProviderContract,
 } from "../src/policy/xeroAccountingCaseProviderContract.js";
-import {
-  createXeroSingaporeAccountingPolicy,
-  XERO_SINGAPORE_ACCOUNTING_CATEGORY_KEYS,
-  XERO_SINGAPORE_TAX_CLASS_KEYS,
-} from "../src/policy/xeroSingaporeAccountingPolicy.js";
-import { testXeroTenantCoaBinding } from "./helpers/xeroTenantCoaProfile.js";
+import { createXeroDeclaredLedgerPolicy } from "../src/policy/xeroDeclaredLedgerPolicy.js";
+import { bindXeroDeclaredLedger, type XeroDeclaredLedgerBinding } from "../src/policy/xeroDeclaredLedgerBinding.js";
+import type { AccountSummary, TaxRateSummary } from "../src/providers/types.js";
+
+const TEST_TENANT_ID = "11111111-1111-4111-8111-111111111111";
+
+// ADR-002: the caller declares the exact live Xero account/tax coordinate and
+// the server verifies it against the tenant's own chart of accounts and tax
+// rates. These fixtures stand in for that live tenant data; account codes
+// 200/453/485 and tax types OUTPUTY24/INPUTY24/NONE mirror the synthetic
+// provider used across the harness (see harness/runners/run-p0-accounting-case.ts).
+const TEST_LEDGER_ACCOUNTS: readonly AccountSummary[] = [
+  { accountId: "33333333-3333-4333-8333-333333333333", code: "200", name: "Consulting Revenue", status: "ACTIVE", type: "REVENUE", class: "REVENUE" },
+  { accountId: "33333333-3333-4333-8333-333333333353", code: "453", name: "Office Supplies", status: "ACTIVE", type: "EXPENSE", class: "EXPENSE" },
+  { accountId: "33333333-3333-4333-8333-333333333385", code: "485", name: "Cloud Subscriptions", status: "ACTIVE", type: "EXPENSE", class: "EXPENSE" },
+];
+const TEST_LEDGER_TAX_RATES: readonly TaxRateSummary[] = [
+  { taxType: "OUTPUTY24", name: "GST on Income", status: "ACTIVE", displayTaxRate: "9.0000", effectiveRate: "9.0000", canApplyToRevenue: true },
+  { taxType: "INPUTY24", name: "GST on Expenses", status: "ACTIVE", displayTaxRate: "9.0000", effectiveRate: "9.0000", canApplyToExpenses: true },
+  {
+    taxType: "NONE", name: "No Tax", status: "ACTIVE", displayTaxRate: "0.0000", effectiveRate: "0.0000",
+    canApplyToRevenue: true, canApplyToExpenses: true, canApplyToAssets: true, canApplyToLiabilities: true, canApplyToEquity: true,
+  },
+];
+
+function testLedgerBinding(tenantId = TEST_TENANT_ID): XeroDeclaredLedgerBinding {
+  return bindXeroDeclaredLedger({
+    tenantId,
+    jurisdiction: "SG",
+    accountCodes: TEST_LEDGER_ACCOUNTS.map((account) => account.code!),
+    taxTypes: TEST_LEDGER_TAX_RATES.map((taxRate) => taxRate.taxType),
+    accounts: TEST_LEDGER_ACCOUNTS,
+    taxRates: TEST_LEDGER_TAX_RATES,
+  });
+}
 
 function compileBusinessFixture(relativePath: string) {
   const fixture = JSON.parse(readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), "utf8"));
@@ -33,7 +62,7 @@ function compileBusinessFixture(relativePath: string) {
     caseId: normalized.case_id,
     expectedVersion: normalized.expected_version,
     target: {
-      tenantId: "11111111-1111-4111-8111-111111111111",
+      tenantId: TEST_TENANT_ID,
       environment: "TEST",
       baseCurrency: "SGD",
       taxJurisdiction: "SG",
@@ -41,9 +70,13 @@ function compileBusinessFixture(relativePath: string) {
     },
     sources: normalized.sources,
     facts: normalized.facts,
-  }, createXeroSingaporeAccountingPolicy({ paysTax: true }), createXeroAccountingCaseProviderContract(
+  }, createXeroDeclaredLedgerPolicy({
+    jurisdiction: "SG",
+    paysTax: true,
+    ledgerBinding: testLedgerBinding(),
+  }), createXeroAccountingCaseProviderContract(
     bindings,
-    testXeroTenantCoaBinding(),
+    testLedgerBinding(),
   ));
   return { normalized, compiled };
 }
@@ -81,7 +114,7 @@ describe("Xero Accounting Case business intake", () => {
       caseId: normalized.case_id,
       expectedVersion: normalized.expected_version,
       target: {
-        tenantId: "11111111-1111-4111-8111-111111111111",
+        tenantId: TEST_TENANT_ID,
         environment: "TEST",
         baseCurrency: "SGD",
         taxJurisdiction: "SG",
@@ -89,9 +122,13 @@ describe("Xero Accounting Case business intake", () => {
       },
       sources: normalized.sources,
       facts: normalized.facts,
-    }, createXeroSingaporeAccountingPolicy({ paysTax: true }), createXeroAccountingCaseProviderContract(
+    }, createXeroDeclaredLedgerPolicy({
+      jurisdiction: "SG",
+      paysTax: true,
+      ledgerBinding: testLedgerBinding(),
+    }), createXeroAccountingCaseProviderContract(
       new Map(),
-      testXeroTenantCoaBinding(),
+      testLedgerBinding(),
     ));
     expect(compiled.operations).toEqual([
       expect.objectContaining({ actionId: "contact.create_basic" }),
@@ -169,7 +206,7 @@ describe("Xero Accounting Case business intake", () => {
     ]);
   });
 
-  it("uses a real mode-discriminated contract and round-trips PER_LINE continuation without document placeholders", () => {
+  it("uses a real per-line ledger declaration and round-trips through public continuation without document-level defaults", () => {
     const perLine = {
       case_id: "case-per-line-contract",
       expected_version: 0,
@@ -183,24 +220,20 @@ describe("Xero Accounting Case business intake", () => {
         due_date: "2026-08-20",
         currency: "SGD",
         contact: { name: "Exact Supplier" },
-        line_accounting_mode: "PER_LINE" as const,
-        transition_review_required: false,
         lines: [{
           description: "Office supplies",
           quantity: "1",
           unit_amount_excluding_tax: "100.00",
           source_tax_amount: "9.00",
-          accounting_category: "OFFICE_SUPPLIES" as const,
-          tax_class: "SG_STANDARD_RATED" as const,
-          effective_tax_rate_percent: "9.00",
+          account_code: "453",
+          tax_type: "INPUTY24",
         }, {
           description: "Cloud subscription",
           quantity: "1",
           unit_amount_excluding_tax: "50.00",
           source_tax_amount: "0.00",
-          accounting_category: "CLOUD_SUBSCRIPTIONS" as const,
-          tax_class: "NO_TAX" as const,
-          effective_tax_rate_percent: "0",
+          account_code: "485",
+          tax_type: "NONE",
         }],
         declared_net: "150.00",
         declared_tax: "9.00",
@@ -212,10 +245,10 @@ describe("Xero Accounting Case business intake", () => {
     const normalized = normalizeXeroAccountingCaseBusinessIntake(parsed);
     const fact = normalized.facts.find((candidate) => candidate.kind === "NATIVE_DOCUMENT");
     expect(fact).toMatchObject({
-      lineAccountingMode: "PER_LINE",
+      lineAmountType: "EXCLUSIVE",
       lines: [
-        { accountingCategory: "OFFICE_SUPPLIES", taxClass: "SG_STANDARD_RATED", effectiveTaxRateBps: 900 },
-        { accountingCategory: "CLOUD_SUBSCRIPTIONS", taxClass: "NO_TAX", effectiveTaxRateBps: 0 },
+        { accountCode: "453", taxType: "INPUTY24" },
+        { accountCode: "485", taxType: "NONE" },
       ],
     });
     const continuation = accountingCaseBusinessContinuationTemplate({
@@ -225,106 +258,100 @@ describe("Xero Accounting Case business intake", () => {
       facts: normalized.facts,
     });
     expect(continuation.documents[0]).toMatchObject({
-      line_accounting_mode: "PER_LINE",
       lines: [
-        expect.objectContaining({ accounting_category: "OFFICE_SUPPLIES" }),
-        expect.objectContaining({ accounting_category: "CLOUD_SUBSCRIPTIONS" }),
+        expect.objectContaining({ account_code: "453", tax_type: "INPUTY24" }),
+        expect.objectContaining({ account_code: "485", tax_type: "NONE" }),
       ],
     });
+    expect(continuation.documents[0]).not.toHaveProperty("line_accounting_mode");
     expect(continuation.documents[0]).not.toHaveProperty("accounting_category");
     expect(() => xeroAccountingCaseBusinessIntakeSchema.parse(continuation)).not.toThrow();
 
     expect(xeroAccountingCaseBusinessIntakeSchema.safeParse({
       ...perLine,
-      documents: [{ ...perLine.documents[0], accounting_category: "OFFICE_SUPPLIES" }],
+      documents: [{ ...perLine.documents[0], line_accounting_mode: "PER_LINE" }],
     }).success).toBe(false);
-    const missingLineCategory = structuredClone(perLine);
-    delete (missingLineCategory.documents[0]!.lines[0] as Partial<{
-      accounting_category: string;
-    }>).accounting_category;
-    expect(xeroAccountingCaseBusinessIntakeSchema.safeParse(missingLineCategory).success).toBe(false);
+    const missingLineAccountCode = structuredClone(perLine);
+    delete (missingLineAccountCode.documents[0]!.lines[0] as Partial<{
+      account_code: string;
+    }>).account_code;
+    expect(xeroAccountingCaseBusinessIntakeSchema.safeParse(missingLineAccountCode).success).toBe(false);
   });
 
-  it("normalizes every published document/category/tax enum combination into the shared public Case schema", () => {
+  it("normalizes every published document type into the shared public Case schema", () => {
     let checked = 0;
     for (const documentType of XERO_ACCOUNTING_CASE_BUSINESS_DOCUMENT_TYPES) {
-      for (const category of XERO_SINGAPORE_ACCOUNTING_CATEGORY_KEYS) {
-        for (const taxClass of XERO_SINGAPORE_TAX_CLASS_KEYS) {
-          const credit = documentType.endsWith("CREDIT_NOTE");
-          const customer = documentType.startsWith("CUSTOMER_");
-          const standard = taxClass === "SG_STANDARD_RATED";
-          const originalReference = `ORIGINAL-${checked + 1}`;
-          const common = {
-            reference_kind: "FORMAL_DOCUMENT_NUMBER" as const,
-            currency: "SGD",
-            contact: { name: customer ? "Exact Customer" : "Exact Supplier" },
-            line_accounting_mode: "DOCUMENT_DEFAULT_FOR_ALL_LINES" as const,
-            accounting_category: category,
-            tax_class: taxClass,
-            effective_tax_rate_percent: standard ? "9.00" : "0.00",
-            ...(taxClass === "EXEMPT" && customer ? { exempt_classification: "REGULATION_33" } : {}),
-            transition_review_required: false,
-            lines: [{
-              description: "Source line",
-              quantity: "1",
-              unit_amount_excluding_tax: "100.00",
-              source_tax_amount: standard ? "9.00" : "0.00",
-            }],
-            declared_net: "100.00",
-            declared_tax: standard ? "9.00" : "0.00",
-            declared_gross: standard ? "109.00" : "100.00",
-            document_validity: "TEST_OR_NOT_VALID" as const,
-          };
-          const original = {
-            ...common,
-            document_type: customer ? "CUSTOMER_INVOICE" as const : "SUPPLIER_BILL" as const,
+      const credit = documentType.endsWith("CREDIT_NOTE");
+      const customer = documentType.startsWith("CUSTOMER_");
+      const originalReference = `ORIGINAL-${checked + 1}`;
+      // ADR-002: account_code/tax_type are open, provider-native strings the
+      // server verifies against the tenant's live data; there is no longer a
+      // small closed category/tax-class vocabulary to exhaustively cross with
+      // document type, so one representative declared coordinate per
+      // direction is what this normalizer-level test can meaningfully cover.
+      const line = customer
+        ? { account_code: "200", tax_type: "OUTPUTY24" }
+        : { account_code: "453", tax_type: "INPUTY24" };
+      const common = {
+        reference_kind: "FORMAL_DOCUMENT_NUMBER" as const,
+        currency: "SGD",
+        contact: { name: customer ? "Exact Customer" : "Exact Supplier" },
+        lines: [{
+          description: "Source line",
+          quantity: "1",
+          unit_amount_excluding_tax: "100.00",
+          source_tax_amount: "9.00",
+          ...line,
+        }],
+        declared_net: "100.00",
+        declared_tax: "9.00",
+        declared_gross: "109.00",
+        document_validity: "TEST_OR_NOT_VALID" as const,
+      };
+      const original = {
+        ...common,
+        document_type: customer ? "CUSTOMER_INVOICE" as const : "SUPPLIER_BILL" as const,
+        reference: originalReference,
+        document_date: "2026-07-01",
+        due_date: "2026-07-15",
+      };
+      const subject = {
+        ...common,
+        document_type: documentType,
+        reference: `REF-${checked + 1}`,
+        document_date: "2026-07-20",
+        ...(credit ? {
+          original_document: {
             reference: originalReference,
+            reference_kind: "FORMAL_DOCUMENT_NUMBER",
             document_date: "2026-07-01",
-            due_date: "2026-07-15",
-          };
-          const subject = {
-            ...common,
-            document_type: documentType,
-            reference: `REF-${checked + 1}`,
-            document_date: "2026-07-20",
-            ...(credit ? {
-              original_document: {
-                reference: originalReference,
-                reference_kind: "FORMAL_DOCUMENT_NUMBER",
-                document_date: "2026-07-01",
-              },
-            } : { due_date: "2026-08-20" }),
-          };
-          const parsed = xeroAccountingCaseBusinessIntakeSchema.parse({
-            case_id: `case-${documentType}-${category}-${taxClass}`.toLowerCase(),
-            expected_version: 0,
-            source_label: "Bounded submitted source set",
-            source_set_complete: true,
-            documents: credit ? [original, subject] : [subject],
-          });
-          const normalized = normalizeXeroAccountingCaseBusinessIntake(parsed);
-          expect(() => prepareAccountingCasePublicSchema.parse(normalized)).not.toThrow();
-          if (credit) {
-            const originalFact = normalized.facts.find((fact) =>
-              fact.kind === "EVIDENCE" && fact.evidenceRole === "SUBMITTED_ORIGINAL_TRANSACTION_SUPPORT");
-            const creditFact = normalized.facts.find((fact) =>
-              fact.kind === "NATIVE_DOCUMENT" && fact.reference === subject.reference);
-            expect(originalFact?.kind).toBe("EVIDENCE");
-            expect(creditFact?.kind).toBe("NATIVE_DOCUMENT");
-            if (originalFact?.kind === "EVIDENCE" && creditFact?.kind === "NATIVE_DOCUMENT") {
-              expect(creditFact.originalDocumentEventKey).toBe(originalFact.eventKey);
-              expect(originalFact).not.toHaveProperty("amount");
-            }
-          }
-          checked += 1;
+          },
+        } : { due_date: "2026-08-20" }),
+      };
+      const parsed = xeroAccountingCaseBusinessIntakeSchema.parse({
+        case_id: `case-${documentType}`.toLowerCase(),
+        expected_version: 0,
+        source_label: "Bounded submitted source set",
+        source_set_complete: true,
+        documents: credit ? [original, subject] : [subject],
+      });
+      const normalized = normalizeXeroAccountingCaseBusinessIntake(parsed);
+      expect(() => prepareAccountingCasePublicSchema.parse(normalized)).not.toThrow();
+      if (credit) {
+        const originalFact = normalized.facts.find((fact) =>
+          fact.kind === "EVIDENCE" && fact.evidenceRole === "SUBMITTED_ORIGINAL_TRANSACTION_SUPPORT");
+        const creditFact = normalized.facts.find((fact) =>
+          fact.kind === "NATIVE_DOCUMENT" && fact.reference === subject.reference);
+        expect(originalFact?.kind).toBe("EVIDENCE");
+        expect(creditFact?.kind).toBe("NATIVE_DOCUMENT");
+        if (originalFact?.kind === "EVIDENCE" && creditFact?.kind === "NATIVE_DOCUMENT") {
+          expect(creditFact.originalDocumentEventKey).toBe(originalFact.eventKey);
+          expect(originalFact).not.toHaveProperty("amount");
         }
       }
+      checked += 1;
     }
-    expect(checked).toBe(
-      XERO_ACCOUNTING_CASE_BUSINESS_DOCUMENT_TYPES.length *
-      XERO_SINGAPORE_ACCOUNTING_CATEGORY_KEYS.length *
-      XERO_SINGAPORE_TAX_CLASS_KEYS.length,
-    );
+    expect(checked).toBe(XERO_ACCOUNTING_CASE_BUSINESS_DOCUMENT_TYPES.length);
   });
 
   it("derives stable internal identities and rejects zero declared net or gross at intake", () => {
@@ -341,16 +368,13 @@ describe("Xero Accounting Case business intake", () => {
         due_date: "2026-08-20",
         currency: "SGD",
         contact: { name: "Exact Customer" },
-        line_accounting_mode: "DOCUMENT_DEFAULT_FOR_ALL_LINES" as const,
-        accounting_category: "CONSULTING_REVENUE" as const,
-        tax_class: "SG_STANDARD_RATED" as const,
-        effective_tax_rate_percent: "9.00",
-        transition_review_required: false,
         lines: [{
           description: "Consulting service",
           quantity: "1",
           unit_amount_excluding_tax: "100.00",
           source_tax_amount: "9.00",
+          account_code: "200",
+          tax_type: "OUTPUTY24",
         }],
         declared_net: "100.00",
         declared_tax: "9.00",
@@ -387,11 +411,11 @@ describe("Xero Accounting Case business intake", () => {
       ...input,
       documents: [{ ...input.documents[0], invoice_exchange_rate: "0" }],
     }).success).toBe(false);
-    const { transition_review_required: _transition, ...withoutTransitionReview } = input.documents[0];
-    expect(xeroAccountingCaseBusinessIntakeSchema.safeParse({
-      ...input,
-      documents: [withoutTransitionReview],
-    }).success).toBe(false);
+    // A mandatory per-line ledger declaration cannot be omitted (the released
+    // equivalent of the retired transition_review_required omission check).
+    const missingTaxType = structuredClone(input);
+    delete (missingTaxType.documents[0]!.lines[0] as Partial<{ tax_type: string }>).tax_type;
+    expect(xeroAccountingCaseBusinessIntakeSchema.safeParse(missingTaxType).success).toBe(false);
     const { reference_kind: _referenceKind, ...withoutReferenceKind } = input.documents[0];
     expect(xeroAccountingCaseBusinessIntakeSchema.safeParse({
       ...input,
@@ -422,16 +446,13 @@ describe("Xero Accounting Case business intake", () => {
             number: "123",
           },
         },
-        line_accounting_mode: "DOCUMENT_DEFAULT_FOR_ALL_LINES" as const,
-        accounting_category: "OFFICE_SUPPLIES" as const,
-        tax_class: "NO_TAX" as const,
-        effective_tax_rate_percent: "0",
-        transition_review_required: false,
         lines: [{
           description: "Source line",
           quantity: "1",
           unit_amount_excluding_tax: "10.00",
           source_tax_amount: "0.00",
+          account_code: "453",
+          tax_type: "NONE",
         }],
         declared_net: "10.00",
         declared_tax: "0.00",
@@ -493,16 +514,13 @@ describe("Xero Accounting Case business intake", () => {
       due_date: "2026-07-15",
       currency: "SGD",
       contact: { name: "Exact Customer" },
-      line_accounting_mode: "DOCUMENT_DEFAULT_FOR_ALL_LINES" as const,
-      accounting_category: "CONSULTING_REVENUE" as const,
-      tax_class: "SG_STANDARD_RATED" as const,
-      effective_tax_rate_percent: "9.00",
-      transition_review_required: false,
       lines: [{
         description: "Original service",
         quantity: "1",
         unit_amount_excluding_tax: "100.00",
         source_tax_amount: "9.00",
+        account_code: "200",
+        tax_type: "OUTPUTY24",
       }],
       declared_net: "100.00",
       declared_tax: "9.00",
@@ -552,16 +570,13 @@ describe("Xero Accounting Case business intake", () => {
       due_date: "2026-08-20",
       currency: "SGD",
       contact: { name: `Existing Customer ${index + 1}` },
-      line_accounting_mode: "DOCUMENT_DEFAULT_FOR_ALL_LINES" as const,
-      accounting_category: "CONSULTING_REVENUE" as const,
-      tax_class: "NO_TAX" as const,
-      effective_tax_rate_percent: "0",
-      transition_review_required: false,
       lines: [{
         description: "Source line",
         quantity: "1",
         unit_amount_excluding_tax: "1.00",
         source_tax_amount: "0.00",
+        account_code: "200",
+        tax_type: "NONE",
       }],
       declared_net: "1.00",
       declared_tax: "0.00",
@@ -603,6 +618,19 @@ describe("Xero Accounting Case business intake", () => {
     expect(compiled.events.filter((event) => event.disposition === "BLOCKED_VALIDATION")).toHaveLength(2);
   });
 
+  // ADR-002: the MCP holds no jurisdiction rate-period table any more, so
+  // transition-review.json is no longer a rejection fixture -- it is now an
+  // ordinary, eligible document carrying only a decision-inert review_note.
+  it("compiles the historic transition-review fixture as an ordinary eligible document", () => {
+    const { compiled } = compileBusinessFixture(
+      "../harness/remote-agents/fixtures/v040rc-negative/transition-review.json",
+    );
+    expect(compiled.status).toBe("PLANNED_NEEDS_PREFLIGHT");
+    expect(compiled.operations.map((operation) => operation.actionId)).toEqual(["customer_invoice.create_draft"]);
+    expect(compiled.events.flatMap((event) => event.reasonCodes))
+      .not.toContain("SG_GST_TRANSITION_REVIEW_REQUIRED");
+  });
+
   it("pins current public negative fixtures through the production normalizer and compiler", () => {
     const cases = [
       {
@@ -610,14 +638,6 @@ describe("Xero Accounting Case business intake", () => {
         events: [{
           disposition: "BLOCKED_VALIDATION",
           reasonCodes: ["SOURCE_GROSS_MISMATCH", "SOURCE_NET_PLUS_TAX_MISMATCH"],
-        }],
-        actions: [],
-      },
-      {
-        fixture: "transition-review.json",
-        events: [{
-          disposition: "BLOCKED_VALIDATION",
-          reasonCodes: ["SG_GST_TRANSITION_REVIEW_REQUIRED"],
         }],
         actions: [],
       },

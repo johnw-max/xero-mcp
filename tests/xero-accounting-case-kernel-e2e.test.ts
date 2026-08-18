@@ -22,7 +22,6 @@ import { XeroMutationService } from "../src/services/xeroMutationService.js";
 import {
   testXeroAccounts,
   testXeroBusinessAuthorityProfile,
-  testXeroTenantCoaProfile,
 } from "./helpers/xeroTenantCoaProfile.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
@@ -44,16 +43,13 @@ function singleExistingContactSalesInvoiceCase() {
       due_date: "2026-08-01",
       currency: "SGD",
       contact: { name: "Lion City Digital Pte. Ltd." },
-      line_accounting_mode: "DOCUMENT_DEFAULT_FOR_ALL_LINES" as const,
-      accounting_category: "CONSULTING_REVENUE",
-      tax_class: "SG_STANDARD_RATED",
-      effective_tax_rate_percent: "9.00",
-      transition_review_required: false,
       lines: [{
         description: "Consulting services - July 2026",
         quantity: "20",
         unit_amount_excluding_tax: "200.00",
         source_tax_amount: "360.00",
+        account_code: "200",
+        tax_type: "OUTPUTY24",
       }],
       declared_net: "4000.00",
       declared_tax: "360.00",
@@ -331,7 +327,6 @@ describe("public Accounting Case kernel E2E", () => {
       {
         continuationSecret: Buffer.alloc(32, 7),
         testTenantIds: [tenantId],
-        tenantCoaProfiles: [testXeroTenantCoaProfile(tenantId)],
         businessAuthorityProfiles: [testXeroBusinessAuthorityProfile(tenantId)],
         clock: () => new Date(fixedNow),
       },
@@ -343,12 +338,18 @@ describe("public Accounting Case kernel E2E", () => {
     await server.connect(serverTransport as unknown as Transport);
     await client.connect(clientTransport);
 
+    // ADR-002: the MCP holds no jurisdiction rate-period table any more, so a
+    // historic document is no longer blocked purely for needing "transition
+    // review" -- SG_GST_TRANSITION_REVIEW_REQUIRED no longer exists. The
+    // optional review_note is retained as a decision-inert audit record: it
+    // must not change compilation eligibility.
     const transitionalCase = singleExistingContactSalesInvoiceCase();
     transitionalCase.case_id = "case-kernel-e2e-transition-review";
     transitionalCase.documents[0]!.reference = "INV-2024-TRANSITION-001";
     transitionalCase.documents[0]!.document_date = "2024-01-01";
     transitionalCase.documents[0]!.due_date = "2024-01-31";
-    transitionalCase.documents[0]!.transition_review_required = true;
+    (transitionalCase.documents[0] as Record<string, unknown>).review_note =
+      "2024 GST rate transition period: source-review confirmed 9% applies to this document date.";
     const transitionalResponse = await client.callTool({
       name: "xero_prepare_accounting_case",
       arguments: transitionalCase,
@@ -358,23 +359,15 @@ describe("public Accounting Case kernel E2E", () => {
       case_id: string;
       case_version: number;
       state: string;
-      operations: unknown[];
+      operations: Array<{ action_id: string }>;
       events: Array<{ reason_codes: string[] }>;
     }>(transitionalResponse);
     expect(transitional).toMatchObject({
-      state: "BLOCKED_VALIDATION",
-      operations: [],
-      events: [{ reason_codes: expect.arrayContaining(["SG_GST_TRANSITION_REVIEW_REQUIRED"]) }],
+      state: "PLANNED_NEEDS_PREFLIGHT",
+      operations: [expect.objectContaining({ action_id: "customer_invoice.create_draft" })],
     });
-    const blockedExecution = await client.callTool({
-      name: "xero_execute_accounting_case",
-      arguments: {
-        case_id: transitional.case_id,
-        case_version: transitional.case_version,
-        request_id: "case-kernel-e2e-transition-execute",
-      },
-    });
-    expect(blockedExecution.isError).toBe(true);
+    expect(transitional.events.flatMap((event) => event.reason_codes))
+      .not.toContain("SG_GST_TRANSITION_REVIEW_REQUIRED");
     expect(autonomousPreflight).not.toHaveBeenCalled();
     expect(providerCreateCount).toBe(0);
 

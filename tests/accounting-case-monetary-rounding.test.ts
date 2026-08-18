@@ -6,9 +6,9 @@ import {
   projectXeroAccountingCaseCompilerInput,
 } from "../src/policy/xeroAccountingCaseProviderContract.js";
 import {
-  createXeroSingaporeAccountingPolicy,
-  createXeroSingaporeAccountingPolicyFromProjection,
-} from "../src/policy/xeroSingaporeAccountingPolicy.js";
+  createXeroDeclaredLedgerPolicy,
+  createXeroDeclaredLedgerPolicyFromProjection,
+} from "../src/policy/xeroDeclaredLedgerPolicy.js";
 import {
   TEST_XERO_TENANT_ID,
   testXeroTenantCoaBinding,
@@ -22,8 +22,8 @@ type DocumentAmounts = Readonly<{
   declaredNet: string;
   declaredTax: string;
   declaredGross: string;
-  taxClass?: "SG_STANDARD_RATED" | "NO_TAX";
-  rateBps?: number;
+  /** Declared Xero TaxType. `OUTPUTY24` is the tenant's live 9% revenue rate; `NONE` is its live 0% rate. */
+  taxType?: "OUTPUTY24" | "NONE";
 }>;
 
 function caseInput(amounts: DocumentAmounts, lines?: ReadonlyArray<Readonly<{
@@ -31,7 +31,7 @@ function caseInput(amounts: DocumentAmounts, lines?: ReadonlyArray<Readonly<{
   unitAmount: string;
   sourceTax: string;
 }>>) {
-  const taxClass = amounts.taxClass ?? "NO_TAX";
+  const taxType = amounts.taxType ?? "NONE";
   return {
     caseId: `rounding-${amounts.currency.toLocaleLowerCase("en")}`,
     expectedVersion: 0,
@@ -65,17 +65,16 @@ function caseInput(amounts: DocumentAmounts, lines?: ReadonlyArray<Readonly<{
       currency: amounts.currency,
       contactName: "Exact Rounding Customer",
       xeroContactId: "22222222-2222-4222-8222-222222222222",
-      accountingCategory: "CONSULTING_REVENUE",
-      taxClass,
       taxPolicyBasis: "DOCUMENT_DATE_NON_TRANSITION",
-      effectiveTaxRateBps: amounts.rateBps ?? 0,
-      lineAmountType: taxClass === "NO_TAX" ? "NO_TAX" : "EXCLUSIVE",
+      lineAmountType: taxType === "NONE" ? "NO_TAX" : "EXCLUSIVE",
       lines: (lines ?? [amounts]).map((line, index) => ({
         lineId: `line-${index + 1}`,
         description: `Deterministic line ${index + 1}`,
         quantity: line.quantity,
         unitAmount: line.unitAmount,
         sourceTax: line.sourceTax,
+        accountCode: "200",
+        taxType,
       })),
       declaredNet: amounts.declaredNet,
       declaredTax: amounts.declaredTax,
@@ -105,8 +104,7 @@ describe("Accounting Case policy-owned currency rounding", () => {
       declaredNet: "0.99",
       declaredTax: "0.09",
       declaredGross: "1.08",
-      taxClass: "SG_STANDARD_RATED",
-      rateBps: 900,
+      taxType: "OUTPUTY24",
     })));
 
     expect(operation.reasonCodes).toEqual([]);
@@ -181,8 +179,7 @@ describe("Accounting Case policy-owned currency rounding", () => {
       declaredNet: "0.10",
       declaredTax: "0",
       declaredGross: "0.10",
-      taxClass: "SG_STANDARD_RATED",
-      rateBps: 900,
+      taxType: "OUTPUTY24",
     }, [
       { quantity: "1", unitAmount: "0.05", sourceTax: "0" },
       { quantity: "1", unitAmount: "0.05", sourceTax: "0" },
@@ -192,9 +189,12 @@ describe("Accounting Case policy-owned currency rounding", () => {
       .map((line) => line.tax)).toEqual(["0.0000", "0.0000"]);
   });
 
-  it("accepts bounded three-decimal source strings but fails closed when policy has no KWD rule", () => {
+  it("accepts a bounded three-decimal source string but fails closed for a currency outside the gateway's table", () => {
+    // XTS is ISO 4217's own "reserved for testing" code, so it is guaranteed
+    // to stay absent from LEDGER_CURRENCY_MINOR_UNITS regardless of which real
+    // currencies that table is extended to cover in the future.
     const compiled = compileXero(caseInput({
-      currency: "KWD",
+      currency: "XTS",
       quantity: "1",
       unitAmount: "1.001",
       sourceTax: "0",
@@ -216,15 +216,18 @@ describe("Accounting Case policy-owned currency rounding", () => {
       declaredNet: "0.99",
       declaredTax: "0.09",
       declaredGross: "1.08",
-      taxClass: "SG_STANDARD_RATED",
-      rateBps: 900,
+      taxType: "OUTPUTY24",
     });
     const projected = projectXeroAccountingCaseCompilerInput(raw);
     const provider = createXeroAccountingCaseProviderContract(
       projected.contactBindings,
       testXeroTenantCoaBinding(),
     );
-    const policy = createXeroSingaporeAccountingPolicy({ paysTax: true });
+    const policy = createXeroDeclaredLedgerPolicy({
+      jurisdiction: "SG",
+      paysTax: true,
+      ledgerBinding: testXeroTenantCoaBinding(),
+    });
     const baseline = compileAccountingCase(projected.input, policy, provider);
     expect(baseline.policyProjection).toMatchObject({
       monetaryRules: {
@@ -239,7 +242,7 @@ describe("Accounting Case policy-owned currency rounding", () => {
     rules.taxAggregation = "DOCUMENT_TOTAL";
     const changed = compileAccountingCase(
       projected.input,
-      createXeroSingaporeAccountingPolicyFromProjection(changedProjection),
+      createXeroDeclaredLedgerPolicyFromProjection(changedProjection),
       provider,
     );
     expect(changed.sourceRevisionHash).not.toBe(baseline.sourceRevisionHash);

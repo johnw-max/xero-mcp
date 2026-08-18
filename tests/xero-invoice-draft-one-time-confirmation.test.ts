@@ -10,8 +10,11 @@ import { AccountingService } from "../src/services/accountingService.js";
 import type { ConnectionTicketService } from "../src/services/connectionTicketService.js";
 import { XeroMutationService } from "../src/services/xeroMutationService.js";
 import { XERO_AUTONOMOUS_WRITE_ACTIONS } from "../src/policy/xeroAutonomousActions.js";
-import { createXeroTenantCoaExecutionConstraints } from "../src/policy/xeroTenantCoaProfile.js";
-import { testXeroTenantCoaBinding } from "./helpers/xeroTenantCoaProfile.js";
+import {
+  bindXeroDeclaredLedger,
+  createXeroDeclaredLedgerExecutionConstraints,
+  type XeroDeclaredLedgerBinding,
+} from "../src/policy/xeroDeclaredLedgerBinding.js";
 import { RepositoryLedgerAuthoritySnapshotResolver } from "../src/domain/ledgerAuthority.js";
 import {
   verifyXeroExternalGovernanceAuthority,
@@ -33,6 +36,34 @@ const supplierFormalGovernanceExpectation = Object.freeze({
   referenceKind: "FORMAL_DOCUMENT_NUMBER" as const,
   authoritativeProviderField: "INVOICE_NUMBER" as const,
 });
+
+// ADR-002: server-owned execution constraints now bind the caller-declared
+// account code + TaxType against the tenant's live chart of accounts, not a
+// semantic category profile.
+function testLedgerBinding(forTenantId: string): XeroDeclaredLedgerBinding {
+  const accounts = [
+    { accountId: expenseAccountId, code: "485", name: "Subscriptions", type: "EXPENSE", class: "EXPENSE", status: "ACTIVE" as const },
+    { accountId: revenueAccountId, code: "200", name: "Advisory Revenue", type: "REVENUE", class: "REVENUE", status: "ACTIVE" as const },
+  ];
+  const taxRates = [{
+    taxType: "NONE",
+    name: "No Tax",
+    status: "ACTIVE" as const,
+    displayTaxRate: "0.0000",
+    effectiveRate: "0.0000",
+    canApplyToExpenses: true,
+    canApplyToRevenue: true,
+    canApplyToAssets: true,
+  }];
+  return bindXeroDeclaredLedger({
+    tenantId: forTenantId,
+    jurisdiction: "SG",
+    accountCodes: accounts.map((account) => account.code),
+    taxTypes: taxRates.map((taxRate) => taxRate.taxType),
+    accounts,
+    taxRates,
+  });
+}
 
 function harness(initialNow = fixedNow) {
   let currentNow = initialNow;
@@ -1172,9 +1203,9 @@ describe("Sales Invoice standing autonomous execution", () => {
     } = harness();
     const confirmMutation = vi.spyOn(repository, "confirmXeroMutationPreparation");
     const authorisePermit = vi.spyOn(mutations, "authoriseAutonomous");
-    const constraints = createXeroTenantCoaExecutionConstraints(
-      testXeroTenantCoaBinding(tenantId),
-      ["CONSULTING_REVENUE"],
+    const constraints = createXeroDeclaredLedgerExecutionConstraints(
+      testLedgerBinding(tenantId),
+      [{ accountCode: "200", taxType: "NONE" }],
     );
     const prepared = await service.prepareSalesInvoiceDraft(context, {
       source_ref: "work-material:ar-coa-permit-edge-drift",
@@ -1219,7 +1250,7 @@ describe("Sales Invoice standing autonomous execution", () => {
     }, constraints)).rejects.toMatchObject({
       code: "STALE_PREFLIGHT",
       details: {
-        reasonCodes: ["XERO_COA_EXECUTION_ACCOUNT_SEMANTICS_DRIFT"],
+        reasonCodes: ["XERO_DECLARED_EXECUTION_ACCOUNT_SEMANTICS_DRIFT"],
         providerMutationPossible: false,
       },
     });

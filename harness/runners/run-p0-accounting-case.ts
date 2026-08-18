@@ -42,7 +42,6 @@ import { XeroAccountingCaseService } from "../../src/services/xeroAccountingCase
 import { LedgerTargetSessionService } from "../../src/services/ledgerTargetSessionService.js";
 import { OrganisationSwitchService } from "../../src/services/organisationSwitchService.js";
 import { XeroMutationService } from "../../src/services/xeroMutationService.js";
-import { parseXeroTenantCoaProfiles } from "../../src/policy/xeroTenantCoaProfile.js";
 import { parseXeroAccountingCaseBusinessAuthorityProfiles } from "../../src/policy/xeroBusinessCoordinateAuthority.js";
 import {
   createXeroRuntimeAttestation,
@@ -251,36 +250,6 @@ const ACCOUNTS: readonly AccountSummary[] = Object.freeze([
     type: "EXPENSE",
   }),
 ]);
-
-const TENANT_COA_PROFILES = parseXeroTenantCoaProfiles([{
-  profile_id: "p0-sg-tenant-coa-v1",
-  revision: 1,
-  tenant_id: TENANT_ID,
-  jurisdiction: "SG",
-  categories: {
-    CONSULTING_REVENUE: {
-      account_id: ACCOUNT_ID,
-      account_code: "200",
-      expected_type: "REVENUE",
-      expected_class: "REVENUE",
-      allowed_tax_types: ["OUTPUTY24", "NONE"],
-    },
-    OFFICE_SUPPLIES: {
-      account_id: "33333333-3333-4333-8333-333333333353",
-      account_code: "453",
-      expected_type: "EXPENSE",
-      expected_class: "EXPENSE",
-      allowed_tax_types: ["INPUTY24", "NONE"],
-    },
-    CLOUD_SUBSCRIPTIONS: {
-      account_id: "33333333-3333-4333-8333-333333333385",
-      account_code: "485",
-      expected_type: "EXPENSE",
-      expected_class: "EXPENSE",
-      allowed_tax_types: ["INPUTY24", "NONE"],
-    },
-  },
-}]);
 
 const BUSINESS_AUTHORITY_PROFILES = parseXeroAccountingCaseBusinessAuthorityProfiles([{
   tenant_id: TENANT_ID,
@@ -1013,7 +982,6 @@ export async function executeP0AccountingCaseSuite(
   const caseService = new XeroAccountingCaseService(repository, provider, accounting, mutations, {
     continuationSecret: CONTROLLED_WRITE_CONTINUATION_SECRET,
     testTenantIds: [TENANT_ID],
-    tenantCoaProfiles: TENANT_COA_PROFILES,
     businessAuthorityProfiles: BUSINESS_AUTHORITY_PROFILES,
     clock: () => new Date(RUN_CLOCK_ANCHOR),
   });
@@ -1474,7 +1442,6 @@ export async function startLocalAgentAccountingCaseMcp(
   const caseService = new XeroAccountingCaseService(repository, provider, accounting, mutations, {
     continuationSecret: LOCAL_AGENT_CONTINUATION_SECRET,
     testTenantIds: [TENANT_ID],
-    tenantCoaProfiles: TENANT_COA_PROFILES,
     businessAuthorityProfiles: BUSINESS_AUTHORITY_PROFILES,
     clock: () => new Date(RUN_CLOCK_ANCHOR),
   });

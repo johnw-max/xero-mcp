@@ -99,13 +99,17 @@ describe("golden-14 Accounting Case", () => {
 
     const cloudBill = compiled.activeFacts.find((fact) => fact.factId === "fact-cloudhost-bill-v1");
     const settlement = compiled.activeFacts.find((fact) => fact.factId === "fact-cloudhost-settlement-v1");
-    expect(cloudBill).toMatchObject({ kind: "NATIVE_DOCUMENT", taxClass: "NO_TAX", invoiceRate: "1.3500" });
+    expect(cloudBill).toMatchObject({
+      kind: "NATIVE_DOCUMENT",
+      invoiceRate: "1.3500",
+      lines: [expect.objectContaining({ accountCode: "485", taxType: "NONE" })],
+    });
     const cloudOperation = compiled.operations.find((operation) => operation.eventId ===
       compiled.events.find((event) => event.eventKey === "ap-cloudhost-bill")?.eventId);
     expect(cloudOperation?.canonicalPayload).toMatchObject({
-      taxClass: "NO_TAX",
-      taxSemantics: "NO_TAX",
+      taxSemantics: "NONE",
       taxType: "NONE",
+      lines: [expect.objectContaining({ accountingCategory: "485", taxClass: "NONE" })],
     });
     expect(settlement).toMatchObject({
       kind: "FX_SETTLEMENT",

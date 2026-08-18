@@ -122,17 +122,14 @@
             "contact": {
               "name": "Synthetic Supplier Limited"
             },
-            "line_accounting_mode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
-            "accounting_category": "OFFICE_SUPPLIES",
-            "tax_class": "NO_TAX",
-            "effective_tax_rate_percent": "0",
-            "transition_review_required": false,
             "lines": [
               {
                 "description": "Synthetic office supplies",
                 "quantity": "1",
                 "unit_amount_excluding_tax": "100.00",
-                "source_tax_amount": "0.00"
+                "source_tax_amount": "0.00",
+                "account_code": "453",
+                "tax_type": "NONE"
               }
             ],
             "declared_net": "100.00",

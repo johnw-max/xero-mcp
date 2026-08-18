@@ -1,306 +1,249 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { projectXeroAccountingCaseCompilerInput } from "../src/policy/xeroAccountingCaseProviderContract.js";
-import { compileTestXeroAccountingCase as compileAccountingCase } from "./helpers/xeroTenantCoaProfile.js";
-import type { NativeDocumentFact } from "../src/domain/accountingCase.js";
 import {
-  prepareAccountingCaseSchema,
-  type PrepareAccountingCaseInput,
-} from "../src/domain/accountingCaseSchemas.js";
+  compileTestXeroAccountingCase as compileAccountingCase,
+  TEST_XERO_TENANT_ID,
+} from "./helpers/xeroTenantCoaProfile.js";
+import { projectXeroAccountingCaseCompilerInput } from "../src/policy/xeroAccountingCaseProviderContract.js";
+import type { NativeDocumentFact } from "../src/domain/accountingCase.js";
+import { prepareAccountingCaseSchema } from "../src/domain/accountingCaseSchemas.js";
 
-const input = JSON.parse(readFileSync(
-  fileURLToPath(new URL("../harness/fixtures/xero/golden-14-case.v1.json", import.meta.url)),
-  "utf8",
-)) as PrepareAccountingCaseInput;
-const providerNeutralInput = projectXeroAccountingCaseCompilerInput(input).input;
+// Historical note: this file used to exercise the retired Singapore
+// jurisdiction policy -- a server-owned table mapping three semantic
+// categories (CONSULTING_REVENUE/OFFICE_SUPPLIES/CLOUD_SUBSCRIPTIONS) and
+// five semantic tax classes (SG_STANDARD_RATED/NO_TAX/ZERO_RATED/
+// OUT_OF_SCOPE/EXEMPT) onto Xero account codes and TaxTypes, with a
+// jurisdiction tax-period/rate table and organisation-GST-registration gate.
+//
+// ADR-002 deleted that whole engine: the MCP no longer holds any jurisdiction
+// rule set, category vocabulary or tax-semantics mapping. The caller now
+// declares the exact live Xero `account_code` + `tax_type` for every line and
+// the server only *verifies* the declaration against the target tenant's live
+// chart of accounts / tax-rate table (`xeroDeclaredLedgerPolicy.ts`,
+// `xeroDeclaredLedgerBinding.ts`). This file is repointed at that new
+// declared-value verification subject instead of being deleted, because the
+// underlying invariant it protects -- "the compiler will not silently accept
+// or fabricate a tax treatment" -- still matters, just against a different
+// authority (live tenant data instead of a jurisdiction table).
+//
+// Two sub-tests survive unmodified in spirit because the kernel-level
+// invariants they cover were never part of the retired jurisdiction policy:
+// period-lock dates are a target-level (not jurisdiction) rule, and credit
+// notes requiring original-transaction evidence is a public-schema rule.
+//
+// Removed entirely, with no replacement, because ADR-002 deleted the
+// behaviour itself (there is nothing left in the MCP to test):
+// organisation-not-GST-registered, SG tax-policy period/transition review,
+// and exempt-classification requirements.
 
-function cloudBill(): NativeDocumentFact {
-  const fact = input.facts.find((candidate): candidate is NativeDocumentFact =>
-    candidate.factId === "fact-cloudhost-bill-v1" && candidate.kind === "NATIVE_DOCUMENT");
-  if (!fact) throw new Error("CloudHost bill is missing");
-  return fact;
-}
+const CUSTOMER_CONTACT_ID = "22222222-2222-4222-8222-222222222222";
+const SUPPLIER_CONTACT_ID = "33333333-3333-4333-8333-333333333333";
 
-function standardInvoice(): NativeDocumentFact {
-  const fact = input.facts.find((candidate): candidate is NativeDocumentFact =>
-    candidate.factId === "fact-sales-invoice-v1" && candidate.kind === "NATIVE_DOCUMENT");
-  if (!fact) throw new Error("Sales invoice is missing");
-  return fact;
-}
-
-function compileStandardVariant(patch: Partial<NativeDocumentFact>) {
-  const original = standardInvoice();
-  const fact: NativeDocumentFact = { ...original, ...patch };
-  const compiled = compileAccountingCase({
-    ...input,
-    // The receipt is a separate economic event whose dates/amounts intentionally
-    // remain fixed in the golden pack; omit it while mutating the invoice tax
-    // period so this test isolates the compiler's tax decision.
-    facts: input.facts
-      .filter((candidate) => candidate.factId !== "fact-lion-city-receipt-v1")
-      .map((candidate) => candidate.factId === original.factId ? fact : candidate),
-  });
+function invoiceFact(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    fact,
-    compiled,
-    event: compiled.events.find((candidate) => candidate.eventKey === fact.eventKey),
-    operation: compiled.operations.find((candidate) => candidate.eventId ===
-      compiled.events.find((event) => event.eventKey === fact.eventKey)?.eventId),
+    factId: "fact-doc",
+    lineageKey: "lineage-doc",
+    eventKey: "event-doc",
+    sourceUnitIds: ["unit-doc"],
+    origin: "MODEL_EXTRACTED",
+    revision: 1,
+    kind: "NATIVE_DOCUMENT",
+    documentKind: "INVOICE",
+    counterpartyRole: "CUSTOMER",
+    reference: "INV-DECLARED-VALUE",
+    referenceKind: "FORMAL_DOCUMENT_NUMBER",
+    documentDate: "2026-07-20",
+    dueDate: "2026-08-20",
+    currency: "SGD",
+    contactName: "Declared Value Customer",
+    xeroContactId: CUSTOMER_CONTACT_ID,
+    lineAmountType: "EXCLUSIVE",
+    lines: [{
+      lineId: "line-1",
+      description: "Declared-value line",
+      quantity: "1",
+      unitAmount: "1000",
+      sourceTax: "90",
+      accountCode: "200",
+      taxType: "OUTPUTY24",
+    }],
+    declaredNet: "1000",
+    declaredTax: "90",
+    declaredGross: "1090",
+    documentValidity: "TEST_OR_NOT_VALID",
+    ...overrides,
   };
 }
 
-function compileTaxVariant(patch: Partial<NativeDocumentFact>) {
-  const original = cloudBill();
-  const fact: NativeDocumentFact = {
-    ...original,
-    ...patch,
-    declaredTax: "0.00",
-    declaredGross: original.declaredNet,
-    lines: original.lines.map((line) => ({ ...line, sourceTax: "0.00" })),
+function caseWithFact(fact: Record<string, unknown>, targetOverrides: Record<string, unknown> = {}) {
+  return {
+    caseId: "declared-ledger-verification",
+    expectedVersion: 0,
+    target: {
+      tenantId: TEST_XERO_TENANT_ID,
+      environment: "TEST",
+      baseCurrency: "SGD",
+      taxJurisdiction: "SG",
+      paysTax: true,
+      organisationStatus: "ACTIVE",
+      ...targetOverrides,
+    },
+    sources: [{
+      artifactId: "source-doc",
+      label: "Declared-ledger verification source",
+      units: [{ unitId: "unit-doc", expectedFactKinds: ["NATIVE_DOCUMENT"] }],
+    }],
+    facts: [fact],
   };
-  const compiled = compileAccountingCase({
-    ...input,
-    facts: input.facts
-      .filter((candidate) => patch.counterpartyRole !== "CUSTOMER" || candidate.factId !== "fact-cloudhost-settlement-v1")
-      .map((candidate) => candidate.factId === original.factId ? fact : candidate),
-    sources: patch.counterpartyRole !== "CUSTOMER"
-      ? input.sources
-      : input.sources.filter((source) => source.artifactId !== "doc-14"),
-  });
-  const event = compiled.events.find((candidate) => candidate.eventKey === fact.eventKey);
-  const operation = compiled.operations.find((candidate) => candidate.eventId === event?.eventId);
-  if (!operation) throw new Error(`No operation for ${String(patch.taxClass)}`);
-  return operation;
 }
 
-describe("Accounting Case Singapore tax semantics", () => {
-  it.each([
-    ["NO_TAX", "NONE", "NO_TAX", "NO_TAX"],
-    ["ZERO_RATED", "ZERORATEDINPUT", "ZERO_RATED_INPUT", "EXCLUSIVE"],
-    ["EXEMPT", "EPINPUT", "EXEMPT_INPUT", "EXCLUSIVE"],
-    ["OUT_OF_SCOPE", "OPINPUT", "OUT_OF_SCOPE_INPUT", "EXCLUSIVE"],
-  ] as const)("keeps supplier %s distinct as Xero %s", (taxClass, taxType, taxSemantics, lineAmountType) => {
-    const operation = compileTaxVariant({ taxClass, lineAmountType });
-    expect(operation.canonicalPayload).toMatchObject({ taxClass, taxType, taxSemantics, lineAmountType });
+describe("Accounting Case Xero declared-ledger verification", () => {
+  it("rejects a declared account code absent from the tenant's live chart of accounts", () => {
+    const compiled = compileAccountingCase(caseWithFact(invoiceFact({
+      lines: [{
+        lineId: "line-1",
+        description: "Unknown account",
+        quantity: "1",
+        unitAmount: "1000",
+        sourceTax: "90",
+        accountCode: "999",
+        taxType: "OUTPUTY24",
+      }],
+    })));
+    expect(compiled.operations).toEqual([]);
+    expect(compiled.events[0]).toMatchObject({
+      disposition: "BLOCKED_VALIDATION",
+      reasonCodes: expect.arrayContaining(["DECLARED_ACCOUNT_NOT_FOUND"]),
+    });
   });
 
-  it.each([
-    ["REGULATION_33", "ES33OUTPUT", "EXEMPT_OUTPUT_REGULATION_33"],
-    ["NON_REGULATION_33", "ESN33OUTPUT", "EXEMPT_OUTPUT_NON_REGULATION_33"],
-  ] as const)("requires and preserves customer exemption class %s", (exemptClassification, taxType, taxSemantics) => {
-    const original = cloudBill();
-    const operation = compileTaxVariant({
-      counterpartyRole: "CUSTOMER",
-      accountingCategory: "CONSULTING_REVENUE",
-      taxClass: "EXEMPT",
-      exemptClassification,
-      lineAmountType: "EXCLUSIVE",
-      contactName: "Exempt Customer Pte. Ltd.",
+  it("rejects a declared tax type absent from the tenant's live tax rates", () => {
+    const compiled = compileAccountingCase(caseWithFact(invoiceFact({
+      lines: [{
+        lineId: "line-1",
+        description: "Unknown tax type",
+        quantity: "1",
+        unitAmount: "1000",
+        sourceTax: "90",
+        accountCode: "200",
+        taxType: "MADEUPTAX",
+      }],
+    })));
+    expect(compiled.operations).toEqual([]);
+    expect(compiled.events[0]).toMatchObject({
+      disposition: "BLOCKED_VALIDATION",
+      reasonCodes: expect.arrayContaining(["DECLARED_TAX_TYPE_NOT_FOUND"]),
+    });
+  });
+
+  it("rejects a real tenant tax type that does not apply to the declared account's class", () => {
+    // OUTPUTY24 is the tenant's live 9% rate, but it only applies to REVENUE
+    // accounts. Declaring it against the EXPENSE account 453 is a real,
+    // resolvable pair that is still not a legal combination on this tenant.
+    const compiled = compileAccountingCase(caseWithFact(invoiceFact({
       documentKind: "INVOICE",
+      counterpartyRole: "SUPPLIER",
+      reference: "BILL-DECLARED-VALUE",
+      contactName: "Declared Value Supplier",
+      xeroContactId: SUPPLIER_CONTACT_ID,
+      lines: [{
+        lineId: "line-1",
+        description: "Office supplies mistakenly taxed as output",
+        quantity: "1",
+        unitAmount: "800",
+        sourceTax: "72",
+        accountCode: "453",
+        taxType: "OUTPUTY24",
+      }],
+      declaredNet: "800",
+      declaredTax: "72",
+      declaredGross: "872",
+    })));
+    expect(compiled.operations).toEqual([]);
+    expect(compiled.events[0]).toMatchObject({
+      disposition: "BLOCKED_VALIDATION",
+      reasonCodes: expect.arrayContaining(["DECLARED_TAX_TYPE_NOT_APPLICABLE_TO_ACCOUNT_CLASS"]),
     });
-    expect(operation.canonicalPayload).toMatchObject({ exemptClassification, taxType, taxSemantics });
-    expect(operation.canonicalPayloadHash).not.toBe(compileTaxVariant({
-      ...original,
-      taxClass: "NO_TAX",
+  });
+
+  it("substitutes the tenant's live tax rate for the caller's claim and rejects a tax amount that does not match it", () => {
+    // The declared net/tax are internally self-consistent (1000 + 100 = 1100)
+    // and would have passed the old "is this arithmetic self-consistent"
+    // check on its own. The server now recomputes tax from the tenant's real
+    // OUTPUTY24 rate (9%, i.e. 90.00) rather than trusting the caller's 10%,
+    // so this is still rejected -- just for a live-rate mismatch, not a
+    // jurisdiction-period mismatch.
+    const compiled = compileAccountingCase(caseWithFact(invoiceFact({
+      lines: [{
+        lineId: "line-1",
+        description: "Wrong tax rate claimed",
+        quantity: "1",
+        unitAmount: "1000",
+        sourceTax: "100",
+        accountCode: "200",
+        taxType: "OUTPUTY24",
+      }],
+      declaredNet: "1000",
+      declaredTax: "100",
+      declaredGross: "1100",
+    })));
+    expect(compiled.operations).toEqual([]);
+    expect(compiled.events[0]).toMatchObject({
+      disposition: "BLOCKED_VALIDATION",
+      reasonCodes: expect.arrayContaining(["SOURCE_LINE_TAX_MISMATCH"]),
+    });
+  });
+
+  it("blocks a No-Tax line-amount type when the declared tax type carries a live nonzero rate", () => {
+    const compiled = compileAccountingCase(caseWithFact(invoiceFact({
       lineAmountType: "NO_TAX",
-    }).canonicalPayloadHash);
-  });
-
-  it("lets the injected Singapore policy block an ambiguous customer EXEMPT fact", () => {
-    const original = providerNeutralInput.facts.find((candidate): candidate is NativeDocumentFact =>
-      candidate.factId === "fact-cloudhost-bill-v1" && candidate.kind === "NATIVE_DOCUMENT");
-    if (!original) throw new Error("provider-neutral CloudHost bill is missing");
-    const ambiguous: NativeDocumentFact = {
-      ...original,
-      counterpartyRole: "CUSTOMER",
-      accountingCategory: "CONSULTING_REVENUE",
-      taxClass: "EXEMPT",
-      lineAmountType: "EXCLUSIVE",
-      contactName: "Exempt Customer Pte. Ltd.",
-    };
-    const compiled = compileAccountingCase({
-      ...input,
-      facts: input.facts
-        .filter((candidate) => candidate.factId !== "fact-cloudhost-settlement-v1")
-        .map((candidate) => candidate.factId === original.factId ? ambiguous : candidate),
-      sources: input.sources.filter((source) => source.artifactId !== "doc-14"),
-    });
-    expect(compiled.events.find((event) => event.eventKey === ambiguous.eventKey)).toMatchObject({
+      lines: [{
+        lineId: "line-1",
+        description: "No-tax claimed over a taxable rate",
+        quantity: "1",
+        unitAmount: "1000",
+        sourceTax: "0",
+        accountCode: "200",
+        taxType: "OUTPUTY24",
+      }],
+      declaredNet: "1000",
+      declaredTax: "0",
+      declaredGross: "1000",
+    })));
+    expect(compiled.operations).toEqual([]);
+    expect(compiled.events[0]).toMatchObject({
       disposition: "BLOCKED_VALIDATION",
-      reasonCodes: expect.arrayContaining(["ACCOUNTING_TAX_EXEMPT_CLASSIFICATION_REQUIRED"]),
+      reasonCodes: expect.arrayContaining(["DOCUMENT_LINE_AMOUNT_TYPE_MISMATCH"]),
     });
   });
 
-  it("lets the injected Singapore policy block numeric tax on a zero-tax treatment", () => {
-    const original = providerNeutralInput.facts.find((candidate): candidate is NativeDocumentFact =>
-      candidate.factId === "fact-cloudhost-bill-v1" && candidate.kind === "NATIVE_DOCUMENT");
-    if (!original) throw new Error("provider-neutral CloudHost bill is missing");
-    const compiled = compileAccountingCase({
-      ...input,
-      facts: input.facts.map((candidate) => candidate.factId === original.factId
-        ? {
-            ...original,
-            taxClass: "ZERO_RATED",
-            lineAmountType: "EXCLUSIVE",
-            declaredTax: "90.00",
-            declaredGross: "1090.00",
-            lines: original.lines.map((line) => ({ ...line, sourceTax: "90.00" })),
-          }
-        : candidate),
-    });
-    expect(compiled.events.find((event) => event.eventKey === original.eventKey)).toMatchObject({
-      disposition: "BLOCKED_VALIDATION",
-      reasonCodes: expect.arrayContaining(["ZERO_RATED_REQUIRES_ZERO_TAX"]),
-    });
-  });
-
-  it("produces different canonical hashes for No Tax, zero-rated, exempt and out-of-scope treatments", () => {
-    const variants = [
-      compileTaxVariant({ taxClass: "NO_TAX", lineAmountType: "NO_TAX" }),
-      compileTaxVariant({ taxClass: "ZERO_RATED", lineAmountType: "EXCLUSIVE" }),
-      compileTaxVariant({ taxClass: "EXEMPT", lineAmountType: "EXCLUSIVE" }),
-      compileTaxVariant({ taxClass: "OUT_OF_SCOPE", lineAmountType: "EXCLUSIVE" }),
-    ];
-    expect(new Set(variants.map((operation) => operation.canonicalPayloadHash)).size).toBe(variants.length);
-  });
-
-  it.each([
-    ["2022-06-30", 700, "280.00", "4280.00"],
-    ["2023-06-30", 800, "320.00", "4320.00"],
-    ["2027-01-01", 900, "360.00", "4360.00"],
-  ] as const)("blocks unsupported Singapore tax-policy period %s before an operation exists", (
-    documentDate,
-    effectiveTaxRateBps,
-    sourceTax,
-    declaredGross,
-  ) => {
-    const result = compileStandardVariant({
-      documentDate,
-      dueDate: documentDate,
-      effectiveTaxRateBps,
-      lines: standardInvoice().lines.map((line) => ({ ...line, sourceTax })),
-      declaredTax: sourceTax,
-      declaredGross,
-    });
-    expect(result.event).toMatchObject({
-      disposition: "BLOCKED_VALIDATION",
-      reasonCodes: expect.arrayContaining(["SG_TAX_POLICY_PERIOD_UNSUPPORTED"]),
-    });
-    expect(result.operation).toBeUndefined();
-  });
-
-  it("blocks a transitional supply instead of deciding GST from invoice date alone", () => {
-    const result = compileStandardVariant({ taxPolicyBasis: "TRANSITION_REVIEW_REQUIRED" });
-    expect(result.event).toMatchObject({
-      disposition: "BLOCKED_VALIDATION",
-      reasonCodes: expect.arrayContaining(["SG_GST_TRANSITION_REVIEW_REQUIRED"]),
-    });
-    expect(result.operation).toBeUndefined();
-  });
-
-  it("allows an explicitly non-transitional 2024 document only at the released 9% rate", () => {
-    const allowed = compileStandardVariant({ documentDate: "2024-02-01", dueDate: "2024-02-01" });
-    expect(allowed.event?.disposition).toBe("AUTO_EXECUTE");
-    expect(allowed.operation?.canonicalPayload).toMatchObject({
-      effectiveTaxRateBps: 900,
-      taxPolicyPeriodId: "SG_GST_9_2024_TO_2026H2",
+  it("carries distinct declared account/tax coordinates through as opaque values with distinct canonical hashes", () => {
+    const taxed = compileAccountingCase(caseWithFact(invoiceFact()));
+    const zeroRated = compileAccountingCase(caseWithFact(invoiceFact({
+      lines: [{
+        lineId: "line-1",
+        description: "Declared-value line",
+        quantity: "1",
+        unitAmount: "1000",
+        sourceTax: "0",
+        accountCode: "200",
+        taxType: "NONE",
+      }],
+      declaredTax: "0",
+      declaredGross: "1000",
+    })));
+    expect(taxed.operations).toHaveLength(1);
+    expect(zeroRated.operations).toHaveLength(1);
+    expect(taxed.operations[0]?.canonicalPayload).toMatchObject({
+      taxSemantics: "OUTPUTY24",
       taxType: "OUTPUTY24",
+      lines: [expect.objectContaining({ accountingCategory: "200", taxClass: "OUTPUTY24" })],
     });
-
-    const wrongRate = compileStandardVariant({
-      documentDate: "2024-02-01",
-      dueDate: "2024-02-01",
-      effectiveTaxRateBps: 800,
-      lines: standardInvoice().lines.map((line) => ({ ...line, sourceTax: "320.00" })),
-      declaredTax: "320.00",
-      declaredGross: "4320.00",
+    expect(zeroRated.operations[0]?.canonicalPayload).toMatchObject({
+      taxSemantics: "NONE",
+      taxType: "NONE",
+      lines: [expect.objectContaining({ accountingCategory: "200", taxClass: "NONE" })],
     });
-    expect(wrongRate.event).toMatchObject({
-      disposition: "BLOCKED_VALIDATION",
-      reasonCodes: expect.arrayContaining(["SG_EFFECTIVE_TAX_RATE_MISMATCH"]),
-    });
-    expect(wrongRate.operation).toBeUndefined();
-  });
-
-  it("uses the original transaction period for a credit note and blocks unsupported 8% history", () => {
-    const original = input.facts.find((candidate): candidate is NativeDocumentFact =>
-      candidate.factId === "fact-customer-credit-v1" && candidate.kind === "NATIVE_DOCUMENT");
-    if (!original) throw new Error("Customer credit is missing");
-    const historical: NativeDocumentFact = {
-      ...original,
-      originalDocumentDate: "2023-07-02",
-      effectiveTaxRateBps: 800,
-      lines: original.lines.map((line) => ({ ...line, sourceTax: "32.00" })),
-      declaredTax: "32.00",
-      declaredGross: "432.00",
-    };
-    const compiled = compileAccountingCase({
-      ...input,
-      facts: input.facts.map((candidate) => candidate.factId === original.factId ? historical : candidate),
-    });
-    const event = compiled.events.find((candidate) => candidate.eventKey === historical.eventKey);
-    expect(event).toMatchObject({
-      disposition: "BLOCKED_VALIDATION",
-      reasonCodes: expect.arrayContaining(["SG_TAX_POLICY_PERIOD_UNSUPPORTED"]),
-    });
-    expect(compiled.operations.some((operation) => operation.eventId === event?.eventId)).toBe(false);
-  });
-
-  it("requires credit-note original transaction evidence at the public schema", () => {
-    const credit = providerNeutralInput.facts.find((candidate): candidate is NativeDocumentFact =>
-      candidate.factId === "fact-customer-credit-v1" && candidate.kind === "NATIVE_DOCUMENT");
-    if (!credit) throw new Error("Customer credit is missing");
-    const {
-      originalDocumentEventKey: _event,
-      originalDocumentReference: _reference,
-      originalDocumentDate: _date,
-      ...missingEvidence
-    } = credit;
-    expect(() => prepareAccountingCaseSchema.parse({
-      ...providerNeutralInput,
-      facts: providerNeutralInput.facts.map((candidate) => candidate.factId === credit.factId ? missingEvidence : candidate),
-    })).toThrow(/original document/u);
-  });
-
-  it("blocks a credit note whose claimed tax basis does not match the linked original transaction", () => {
-    const credit = input.facts.find((candidate): candidate is NativeDocumentFact =>
-      candidate.factId === "fact-customer-credit-v1" && candidate.kind === "NATIVE_DOCUMENT");
-    if (!credit) throw new Error("Customer credit is missing");
-    const mismatched: NativeDocumentFact = { ...credit, originalDocumentReference: "INV-NOT-THE-ORIGINAL" };
-    const compiled = compileAccountingCase({
-      ...input,
-      facts: input.facts.map((candidate) => candidate.factId === credit.factId ? mismatched : candidate),
-    });
-    const event = compiled.events.find((candidate) => candidate.eventKey === credit.eventKey);
-    expect(event).toMatchObject({
-      disposition: "BLOCKED_VALIDATION",
-      reasonCodes: expect.arrayContaining(["CREDIT_ORIGINAL_TRANSACTION_NOT_FOUND"]),
-    });
-    expect(compiled.operations.some((operation) => operation.eventId === event?.eventId)).toBe(false);
-  });
-
-  it("binds the supported tax-policy period and rate into the canonical operation hash", () => {
-    const baseline = compileStandardVariant({});
-    expect(baseline.operation?.canonicalPayload).toMatchObject({
-      taxPolicyBasis: "DOCUMENT_DATE_NON_TRANSITION",
-      effectiveTaxRateBps: 900,
-      taxPolicyPeriodId: "SG_GST_9_2024_TO_2026H2",
-      taxType: "OUTPUTY24",
-    });
-    expect(baseline.operation?.canonicalPayloadHash).toMatch(/^[a-f0-9]{64}$/u);
-  });
-
-  it("blocks standard GST when the Xero organisation is not GST registered", () => {
-    const compiled = compileAccountingCase({
-      ...input,
-      target: { ...input.target, paysTax: false },
-    });
-    expect(compiled.events.find((event) => event.eventKey === "ar-sales-invoice")).toMatchObject({
-      disposition: "BLOCKED_VALIDATION",
-      reasonCodes: expect.arrayContaining(["ORGANISATION_NOT_GST_REGISTERED"]),
-    });
-    expect(compiled.operations.some((operation) => operation.nativeRoute === "SALES_INVOICE")).toBe(false);
+    expect(taxed.operations[0]?.canonicalPayloadHash).not.toBe(zeroRated.operations[0]?.canonicalPayloadHash);
   });
 
   it("blocks document dates in either Xero lock period", () => {
@@ -308,17 +251,117 @@ describe("Accounting Case Singapore tax semantics", () => {
       { periodLockDate: "2026-07-31" },
       { endOfYearLockDate: "2026-07-31" },
     ]) {
-      const compiled = compileAccountingCase({
-        ...input,
-        target: { ...input.target, ...lock },
-      });
-      expect(compiled.events.find((event) => event.eventKey === "ar-sales-invoice")).toMatchObject({
+      const compiled = compileAccountingCase(caseWithFact(invoiceFact(), lock));
+      expect(compiled.events[0]).toMatchObject({
         disposition: "BLOCKED_VALIDATION",
         reasonCodes: expect.arrayContaining([
           "periodLockDate" in lock ? "DOCUMENT_DATE_IN_PERIOD_LOCK" : "DOCUMENT_DATE_IN_END_OF_YEAR_LOCK",
         ]),
       });
-      expect(compiled.operations.some((operation) => operation.nativeRoute === "SALES_INVOICE")).toBe(false);
+      expect(compiled.operations).toEqual([]);
     }
+  });
+
+  it("requires credit-note original transaction evidence at the public schema", () => {
+    const raw = caseWithFact(invoiceFact({
+      documentKind: "CREDIT_NOTE",
+      dueDate: undefined,
+      counterpartyRole: "SUPPLIER",
+      reference: "OH-260701-CREDIT",
+      contactName: "OfficeHub Singapore Pte. Ltd.",
+      xeroContactId: SUPPLIER_CONTACT_ID,
+      allocationStatus: "UNALLOCATED",
+      originalDocumentReference: "OH-260701",
+      originalDocumentReferenceKind: "FORMAL_DOCUMENT_NUMBER",
+      originalDocumentDate: "2026-07-03",
+      lines: [{
+        lineId: "line-1",
+        description: "Undelivered carton",
+        quantity: "1",
+        unitAmount: "80",
+        sourceTax: "7.20",
+        accountCode: "453",
+        taxType: "INPUTY24",
+      }],
+      declaredNet: "80",
+      declaredTax: "7.20",
+      declaredGross: "87.20",
+    }));
+    const projected = projectXeroAccountingCaseCompilerInput(raw).input;
+    const credit = projected.facts[0] as NativeDocumentFact;
+    const {
+      originalDocumentReference: _reference,
+      originalDocumentReferenceKind: _kind,
+      originalDocumentDate: _date,
+      ...missingEvidence
+    } = credit;
+    expect(() => prepareAccountingCaseSchema.parse({
+      ...projected,
+      facts: [missingEvidence],
+    })).toThrow(/original document/u);
+  });
+
+  it("blocks a credit note whose claimed original reference matches no live original transaction", () => {
+    const compiled = compileAccountingCase(caseWithFact(invoiceFact({
+      documentKind: "CREDIT_NOTE",
+      dueDate: undefined,
+      counterpartyRole: "SUPPLIER",
+      reference: "OH-260701-CREDIT",
+      contactName: "OfficeHub Singapore Pte. Ltd.",
+      xeroContactId: SUPPLIER_CONTACT_ID,
+      allocationStatus: "UNALLOCATED",
+      originalDocumentReference: "INV-NOT-THE-ORIGINAL",
+      originalDocumentReferenceKind: "FORMAL_DOCUMENT_NUMBER",
+      originalDocumentDate: "2026-07-03",
+      lines: [{
+        lineId: "line-1",
+        description: "Undelivered carton",
+        quantity: "1",
+        unitAmount: "80",
+        sourceTax: "7.20",
+        accountCode: "453",
+        taxType: "INPUTY24",
+      }],
+      declaredNet: "80",
+      declaredTax: "7.20",
+      declaredGross: "87.20",
+    })));
+    expect(compiled.operations).toEqual([]);
+    expect(compiled.events[0]).toMatchObject({
+      disposition: "BLOCKED_VALIDATION",
+      reasonCodes: expect.arrayContaining(["CREDIT_ORIGINAL_TRANSACTION_NOT_FOUND"]),
+    });
+  });
+
+  it("accepts a credit note whose claimed original reference matches the live original transaction", () => {
+    const compiled = compileAccountingCase(caseWithFact(invoiceFact({
+      documentKind: "CREDIT_NOTE",
+      dueDate: undefined,
+      counterpartyRole: "SUPPLIER",
+      reference: "OH-260701-CREDIT",
+      contactName: "OfficeHub Singapore Pte. Ltd.",
+      xeroContactId: SUPPLIER_CONTACT_ID,
+      allocationStatus: "UNALLOCATED",
+      originalDocumentReference: "OH-260701",
+      originalDocumentReferenceKind: "FORMAL_DOCUMENT_NUMBER",
+      originalDocumentDate: "2026-07-03",
+      lines: [{
+        lineId: "line-1",
+        description: "Undelivered carton",
+        quantity: "1",
+        unitAmount: "80",
+        sourceTax: "7.20",
+        accountCode: "453",
+        taxType: "INPUTY24",
+      }],
+      declaredNet: "80",
+      declaredTax: "7.20",
+      declaredGross: "87.20",
+    })));
+    expect(compiled.events.find((event) => event.eventKey === "event-doc")).toMatchObject({
+      disposition: "AUTO_EXECUTE",
+    });
+    expect(compiled.operations.filter((operation) => operation.eventId ===
+      compiled.events.find((event) => event.eventKey === "event-doc")?.eventId)).toHaveLength(1);
   });
 });

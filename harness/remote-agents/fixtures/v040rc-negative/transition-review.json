@@ -1,7 +1,7 @@
 {
   "case_id": "negative-transition-review-001",
   "expected_version": 0,
-  "source_label": "Synthetic 2024 GST transition-review invoice",
+  "source_label": "Synthetic 2024 GST transition-period invoice",
   "source_set_complete": true,
   "documents": [
     {
@@ -12,17 +12,15 @@
       "due_date": "2024-01-31",
       "currency": "SGD",
       "contact": { "name": "Lion City Digital Pte. Ltd." },
-      "line_accounting_mode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
-      "accounting_category": "CONSULTING_REVENUE",
-      "tax_class": "SG_STANDARD_RATED",
-      "effective_tax_rate_percent": "9.00",
-      "transition_review_required": true,
+      "review_note": "2024 GST rate transition period: source-review confirmed 9% applies to this document date.",
       "lines": [
         {
           "description": "Transition-period service requiring review",
           "quantity": "1",
           "unit_amount_excluding_tax": "100.00",
-          "source_tax_amount": "9.00"
+          "source_tax_amount": "9.00",
+          "account_code": "200",
+          "tax_type": "OUTPUTY24"
         }
       ],
       "declared_net": "100.00",

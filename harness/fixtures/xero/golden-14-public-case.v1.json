@@ -287,10 +287,7 @@
       "dueDate": "2026-08-01",
       "currency": "SGD",
       "contactName": "Lion City Digital Pte. Ltd.",
-      "accountingCategory": "CONSULTING_REVENUE",
-      "taxClass": "SG_STANDARD_RATED",
       "taxPolicyBasis": "DOCUMENT_DATE_NON_TRANSITION",
-      "effectiveTaxRateBps": 900,
       "lineAmountType": "EXCLUSIVE",
       "lines": [
         {
@@ -298,7 +295,9 @@
           "description": "Consulting services - July 2026",
           "quantity": "20",
           "unitAmount": "200.00",
-          "sourceTax": "360.00"
+          "sourceTax": "360.00",
+          "accountCode": "200",
+          "taxType": "OUTPUTY24"
         }
       ],
       "declaredNet": "4000.00",
@@ -324,10 +323,7 @@
       "dueDate": "2026-07-17",
       "currency": "SGD",
       "contactName": "OfficeHub Singapore Pte. Ltd.",
-      "accountingCategory": "OFFICE_SUPPLIES",
-      "taxClass": "SG_STANDARD_RATED",
       "taxPolicyBasis": "DOCUMENT_DATE_NON_TRANSITION",
-      "effectiveTaxRateBps": 900,
       "lineAmountType": "EXCLUSIVE",
       "lines": [
         {
@@ -335,7 +331,9 @@
           "description": "Premium copier paper",
           "quantity": "10",
           "unitAmount": "80.00",
-          "sourceTax": "72.00"
+          "sourceTax": "72.00",
+          "accountCode": "453",
+          "taxType": "INPUTY24"
         }
       ],
       "declaredNet": "800.00",
@@ -516,10 +514,7 @@
       "documentDate": "2026-07-22",
       "currency": "SGD",
       "contactName": "Lion City Digital Pte. Ltd.",
-      "accountingCategory": "CONSULTING_REVENUE",
-      "taxClass": "SG_STANDARD_RATED",
       "taxPolicyBasis": "ORIGINAL_TRANSACTION",
-      "effectiveTaxRateBps": 900,
       "originalDocumentEventKey": "ar-sales-invoice",
       "originalDocumentReference": "INV-2026-0702",
       "originalDocumentReferenceKind": "FORMAL_DOCUMENT_NUMBER",
@@ -531,7 +526,9 @@
           "description": "Two disputed consulting hours",
           "quantity": "2",
           "unitAmount": "200.00",
-          "sourceTax": "36.00"
+          "sourceTax": "36.00",
+          "accountCode": "200",
+          "taxType": "OUTPUTY24"
         }
       ],
       "declaredNet": "400.00",
@@ -557,10 +554,7 @@
       "documentDate": "2026-07-22",
       "currency": "SGD",
       "contactName": "OfficeHub Singapore Pte. Ltd.",
-      "accountingCategory": "OFFICE_SUPPLIES",
-      "taxClass": "SG_STANDARD_RATED",
       "taxPolicyBasis": "ORIGINAL_TRANSACTION",
-      "effectiveTaxRateBps": 900,
       "originalDocumentEventKey": "ap-officehub-bill",
       "originalDocumentReference": "OH-260701",
       "originalDocumentReferenceKind": "FORMAL_DOCUMENT_NUMBER",
@@ -572,7 +566,9 @@
           "description": "One undelivered carton",
           "quantity": "1",
           "unitAmount": "80.00",
-          "sourceTax": "7.20"
+          "sourceTax": "7.20",
+          "accountCode": "453",
+          "taxType": "INPUTY24"
         }
       ],
       "declaredNet": "80.00",
@@ -683,10 +679,7 @@
       "dueDate": "2026-08-09",
       "currency": "USD",
       "contactName": "CloudHost Inc.",
-      "accountingCategory": "CLOUD_SUBSCRIPTIONS",
-      "taxClass": "NO_TAX",
       "taxPolicyBasis": "DOCUMENT_DATE_NON_TRANSITION",
-      "effectiveTaxRateBps": 0,
       "lineAmountType": "NO_TAX",
       "lines": [
         {
@@ -694,7 +687,9 @@
           "description": "Cloud infrastructure subscription",
           "quantity": "1",
           "unitAmount": "1000.00",
-          "sourceTax": "0.00"
+          "sourceTax": "0.00",
+          "accountCode": "485",
+          "taxType": "NONE"
         }
       ],
       "declaredNet": "1000.00",

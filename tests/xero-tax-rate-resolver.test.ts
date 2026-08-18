@@ -24,7 +24,6 @@ describe("deterministic Xero stable TaxType resolution", () => {
     expect(resolveStableXeroTaxRate({
       taxRates: [output9],
       taxType: "OUTPUTY24",
-      direction: "OUTPUT",
       account: revenue,
     })).toEqual({
       ok: true,
@@ -37,8 +36,8 @@ describe("deterministic Xero stable TaxType resolution", () => {
   it.each([
     ["missing DisplayTaxRate", { ...output9, displayTaxRate: undefined }, "MISSING_TAX_RATE_EVIDENCE"],
     ["missing EffectiveRate", { ...output9, effectiveRate: undefined }, "MISSING_TAX_RATE_EVIDENCE"],
-    ["wrong DisplayTaxRate", { ...output9, displayTaxRate: "8.0000" }, "TAX_RATE_MISMATCH"],
-    ["wrong EffectiveRate", { ...output9, effectiveRate: "8.0000" }, "TAX_RATE_MISMATCH"],
+    ["wrong DisplayTaxRate", { ...output9, displayTaxRate: "8.0000" }, "TAX_RATE_EVIDENCE_INCONSISTENT"],
+    ["wrong EffectiveRate", { ...output9, effectiveRate: "8.0000" }, "TAX_RATE_EVIDENCE_INCONSISTENT"],
     ["missing active status", { ...output9, status: undefined }, "NO_UNIQUE_ACTIVE_TAX_RATE"],
     ["inactive TaxRate", { ...output9, status: "DELETED" }, "NO_UNIQUE_ACTIVE_TAX_RATE"],
     ["missing applicability", { ...output9, canApplyToRevenue: undefined }, "TAX_NOT_APPLICABLE_TO_ACCOUNT_CLASS"],
@@ -46,7 +45,6 @@ describe("deterministic Xero stable TaxType resolution", () => {
     expect(resolveStableXeroTaxRate({
       taxRates: [taxRate],
       taxType: "OUTPUTY24",
-      direction: "OUTPUT",
       account: revenue,
     })).toMatchObject({ ok: false, code });
   });
@@ -55,12 +53,11 @@ describe("deterministic Xero stable TaxType resolution", () => {
     expect(resolveStableXeroTaxRate({
       taxRates: [output9, { ...output9, name: "Tenant duplicate" }],
       taxType: "OUTPUTY24",
-      direction: "OUTPUT",
       account: revenue,
     })).toMatchObject({ ok: false, code: "NO_UNIQUE_ACTIVE_TAX_RATE" });
   });
 
-  it("rejects an input TaxType on an output document before Provider mutation", () => {
+  it("rejects a TaxType whose live CanApplyTo flags do not cover the account's class before Provider mutation", () => {
     expect(resolveStableXeroTaxRate({
       taxRates: [{
         ...output9,
@@ -69,16 +66,14 @@ describe("deterministic Xero stable TaxType resolution", () => {
         canApplyToExpenses: true,
       }],
       taxType: "INPUTY24",
-      direction: "OUTPUT",
       account: revenue,
-    })).toMatchObject({ ok: false, code: "TAX_DIRECTION_MISMATCH" });
+    })).toMatchObject({ ok: false, code: "TAX_NOT_APPLICABLE_TO_ACCOUNT_CLASS" });
   });
 
   it("rejects accounts whose Xero class is absent or unknown", () => {
     expect(resolveStableXeroTaxRate({
       taxRates: [output9],
       taxType: "OUTPUTY24",
-      direction: "OUTPUT",
       account: { ...revenue, class: undefined },
     })).toMatchObject({ ok: false, code: "UNKNOWN_ACCOUNT_CLASS" });
   });
@@ -95,7 +90,6 @@ describe("deterministic Xero stable TaxType resolution", () => {
     expect(resolveStableXeroTaxRate({
       taxRates: [none],
       taxType: "NONE",
-      direction: "OUTPUT",
       account: revenue,
     })).toMatchObject({ ok: true, expectedRate: "0.0000", taxRate: none });
   });

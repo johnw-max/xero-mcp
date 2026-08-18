@@ -21,12 +21,34 @@ import {
   parseXeroAccountingCaseBusinessAuthorityProfiles,
   xeroDocumentCoordinateAuthority,
 } from "../src/policy/xeroBusinessCoordinateAuthority.js";
-import { testXeroTenantCoaBinding } from "./helpers/xeroTenantCoaProfile.js";
+import { bindXeroDeclaredLedger, type XeroDeclaredLedgerBinding } from "../src/policy/xeroDeclaredLedgerBinding.js";
+import type { AccountSummary, TaxRateSummary } from "../src/providers/types.js";
 import { hashObject } from "../src/security/hash.js";
 
 const contactId = "22222222-2222-4222-8222-222222222222";
 const objectId = "33333333-3333-4333-8333-333333333333";
 const context = Object.freeze({ actorId: "history-test" }) as RequestContext;
+
+// ADR-002: the caller declares the exact live Xero account/tax coordinate and
+// the server verifies it against the tenant's own chart of accounts and tax
+// rates, so a "contract" here just needs one small, internally consistent
+// live ledger binding rather than a semantic category profile.
+const TEST_LEDGER_ACCOUNTS: readonly AccountSummary[] = [
+  { accountId: "44444444-4444-4444-8444-444444444444", code: "400", name: "Consulting Revenue", status: "ACTIVE", type: "REVENUE", class: "REVENUE" },
+];
+const TEST_LEDGER_TAX_RATES: readonly TaxRateSummary[] = [
+  { taxType: "OUTPUTY24", name: "GST on Income", status: "ACTIVE", displayTaxRate: "9.0000", effectiveRate: "9.0000", canApplyToRevenue: true },
+];
+function testLedgerBinding(tenantId: string): XeroDeclaredLedgerBinding {
+  return bindXeroDeclaredLedger({
+    tenantId,
+    jurisdiction: "SG",
+    accountCodes: TEST_LEDGER_ACCOUNTS.map((account) => account.code!),
+    taxTypes: TEST_LEDGER_TAX_RATES.map((taxRate) => taxRate.taxType),
+    accounts: TEST_LEDGER_ACCOUNTS,
+    taxRates: TEST_LEDGER_TAX_RATES,
+  });
+}
 
 function operation(route: NativeDocumentRoute): AccountingCaseOperation {
   const credit = route === "CUSTOMER_CREDIT" || route === "SUPPLIER_CREDIT";
@@ -392,7 +414,7 @@ describe("Xero reference-scope authority projection", () => {
   ]);
 
   it("keeps model-extracted generic references ALL_OCCURRENCES without server recurring authority", () => {
-    const contract = createXeroAccountingCaseProviderContract(bindings, testXeroTenantCoaBinding());
+    const contract = createXeroAccountingCaseProviderContract(bindings, testLedgerBinding(target.tenantId));
     expect(contract.businessIdentity(recurringFact("2026-07-20"), target).reservation.scope)
       .toBe("ALL_OCCURRENCES");
     expect(contract.businessIdentity(recurringFact("2026-08-20"), target).reservation.scope)
@@ -423,7 +445,7 @@ describe("Xero reference-scope authority projection", () => {
     }])[0]!;
     const contract = createXeroAccountingCaseProviderContract(
       bindings,
-      testXeroTenantCoaBinding(),
+      testLedgerBinding(target.tenantId),
       undefined,
       authority,
     );

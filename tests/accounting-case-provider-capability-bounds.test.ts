@@ -5,8 +5,8 @@ import {
   createXeroAccountingCaseProviderContractFromProjection,
   projectXeroAccountingCaseCompilerInput,
 } from "../src/policy/xeroAccountingCaseProviderContract.js";
-import { createXeroSingaporeAccountingPolicy } from "../src/policy/xeroSingaporeAccountingPolicy.js";
-import { compileTestXeroAccountingCase } from "./helpers/xeroTenantCoaProfile.js";
+import { createXeroDeclaredLedgerPolicy } from "../src/policy/xeroDeclaredLedgerPolicy.js";
+import { compileTestXeroAccountingCase, testXeroTenantCoaBinding } from "./helpers/xeroTenantCoaProfile.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const contactId = "22222222-2222-4222-8222-222222222222";
@@ -47,10 +47,7 @@ function invoiceCase(lines: Array<{ quantity: string; unitAmount: string }>) {
       currency: "SGD",
       contactName: "Exact Customer",
       xeroContactId: contactId,
-      accountingCategory: "CONSULTING_REVENUE",
-      taxClass: "NO_TAX",
       taxPolicyBasis: "DOCUMENT_DATE_NON_TRANSITION",
-      effectiveTaxRateBps: 0,
       lineAmountType: "NO_TAX",
       lines: lines.map((line, index) => ({
         lineId: `line-${index + 1}`,
@@ -58,6 +55,8 @@ function invoiceCase(lines: Array<{ quantity: string; unitAmount: string }>) {
         quantity: line.quantity,
         unitAmount: line.unitAmount,
         sourceTax: "0",
+        accountCode: "200",
+        taxType: "NONE",
       })),
       declaredNet: decimal,
       declaredTax: "0",
@@ -203,7 +202,11 @@ describe("provider-neutral capability bounds sealed by the Xero adapter", () => 
     expect(replayedProvider.planProjection).toEqual(original.providerProjection);
     expect(compileAccountingCase(
       projected.input,
-      createXeroSingaporeAccountingPolicy({ paysTax: projected.paysTax }),
+      createXeroDeclaredLedgerPolicy({
+        jurisdiction: projected.input.target.taxJurisdiction,
+        paysTax: projected.paysTax,
+        ledgerBinding: testXeroTenantCoaBinding(),
+      }),
       replayedProvider,
     )).toEqual(original);
   });

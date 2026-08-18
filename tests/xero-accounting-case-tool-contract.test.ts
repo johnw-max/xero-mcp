@@ -62,16 +62,13 @@ describe("Agent-facing Xero Accounting Case MCP contract", () => {
         due_date: "2026-08-20",
         currency: "SGD",
         contact: { name: "Exact Customer" },
-        line_accounting_mode: "DOCUMENT_DEFAULT_FOR_ALL_LINES" as const,
-        accounting_category: "CONSULTING_REVENUE",
-        tax_class: "SG_STANDARD_RATED",
-        effective_tax_rate_percent: "9.00",
-        transition_review_required: false,
         lines: [{
           description: "咨询服务",
           quantity: "1",
           unit_amount_excluding_tax: "100.00",
           source_tax_amount: "9.00",
+          account_code: "200",
+          tax_type: "OUTPUTY24",
         }],
         declared_net: "100.00",
         declared_tax: "9.00",
@@ -108,20 +105,30 @@ describe("Agent-facing Xero Accounting Case MCP contract", () => {
     expect(prepareSchema).toContain("FORMAL_DOCUMENT_NUMBER");
     expect(prepareSchema).toContain("GENERIC_RECURRING_REFERENCE");
     expect(prepareSchema).toContain("CUSTOMER_INVOICE");
-    expect(prepareSchema).toContain("CONSULTING_REVENUE");
-    expect(prepareSchema).toContain("SG_STANDARD_RATED");
+    // ADR-002 verification criterion #1: the public write contract must never
+    // carry a jurisdiction or semantic-category vocabulary again. The caller
+    // now declares the exact live ledger coordinate per line instead.
+    expect(prepareSchema).toContain("account_code");
+    expect(prepareSchema).toContain("tax_type");
     for (const forbidden of [
       "tenantId",
       "tenant_id",
       "provider_object_id",
       "xeroContactId",
       "account_id",
-      "account_code",
       "accountId",
       "accountCode",
       "canonicalPayload",
       "receipt",
       "mutationRequestId",
+      "accounting_category",
+      "tax_class",
+      "line_accounting_mode",
+      "effective_tax_rate_percent",
+      "transition_review_required",
+      "exempt_classification",
+      "CONSULTING_REVENUE",
+      "SG_STANDARD_RATED",
     ]) expect(prepareSchema).not.toContain(forbidden);
   });
 
@@ -141,9 +148,8 @@ describe("Agent-facing Xero Accounting Case MCP contract", () => {
         documentKind: "INVOICE",
         counterpartyRole: "CUSTOMER",
         referenceKind: "FORMAL_DOCUMENT_NUMBER",
-        accountingCategory: "CONSULTING_REVENUE",
-        taxClass: "SG_STANDARD_RATED",
-        effectiveTaxRateBps: 900,
+        lineAmountType: "EXCLUSIVE",
+        lines: [{ accountCode: "200", taxType: "OUTPUTY24" }],
       }],
     });
 

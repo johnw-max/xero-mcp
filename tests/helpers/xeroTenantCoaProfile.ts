@@ -1,9 +1,8 @@
 import {
-  bindXeroTenantCoaProfile,
-  parseXeroTenantCoaProfiles,
-  type XeroTenantCoaProfile,
-} from "../../src/policy/xeroTenantCoaProfile.js";
-import type { AccountSummary } from "../../src/providers/types.js";
+  bindXeroDeclaredLedger,
+  type XeroDeclaredLedgerBinding,
+} from "../../src/policy/xeroDeclaredLedgerBinding.js";
+import type { AccountSummary, TaxRateSummary } from "../../src/providers/types.js";
 import {
   createXeroAccountingCaseProviderContract,
   projectXeroAccountingCaseCompilerInput,
@@ -12,7 +11,7 @@ import {
 import type { AccountingCaseOperation, AccountingFact, NativeDocumentFact } from "../../src/domain/accountingCase.js";
 import type { XeroAccountingCaseBusinessAuthorityProfile } from "../../src/policy/xeroBusinessCoordinateAuthority.js";
 import { compileAccountingCase } from "../../src/control-kernel/accountingCaseCompiler.js";
-import { createXeroSingaporeAccountingPolicy } from "../../src/policy/xeroSingaporeAccountingPolicy.js";
+import { createXeroDeclaredLedgerPolicy } from "../../src/policy/xeroDeclaredLedgerPolicy.js";
 import { resolveSupportedAccountingMonetaryRule } from "../../src/control-kernel/accountingMonetary.js";
 import {
   createXeroOriginalTransactionEvidence,
@@ -33,58 +32,101 @@ export function testXeroBusinessAuthorityProfile(
   return structuredClone(created);
 }
 
-export function testXeroTenantCoaProfile(
-  tenantId = TEST_XERO_TENANT_ID,
-  revision = 1,
-): XeroTenantCoaProfile {
-  return parseXeroTenantCoaProfiles([{
-    profile_id: `test-sg-coa-${tenantId}`,
-    revision,
-    tenant_id: tenantId,
-    jurisdiction: "SG",
-    categories: {
-      CONSULTING_REVENUE: {
-        account_id: "33333333-3333-4333-8333-333333333333",
-        account_code: "200",
-        expected_type: "REVENUE",
-        expected_class: "REVENUE",
-      },
-      OFFICE_SUPPLIES: {
-        account_id: "33333333-3333-4333-8333-333333333353",
-        account_code: "453",
-        expected_type: "EXPENSE",
-        expected_class: "EXPENSE",
-      },
-      CLOUD_SUBSCRIPTIONS: {
-        account_id: "33333333-3333-4333-8333-333333333385",
-        account_code: "485",
-        expected_type: "EXPENSE",
-        expected_class: "EXPENSE",
-      },
+/**
+ * Synthetic tenant chart of accounts under the ledger-gateway contract
+ * (ADR-002). There is no server-owned semantic category mapping any more:
+ * these are simply the real, live accounts a caller may declare
+ * `account_code` against, verified by `bindXeroDeclaredLedger`.
+ */
+export function testXeroAccounts(): AccountSummary[] {
+  return [
+    {
+      accountId: "33333333-3333-4333-8333-333333333333",
+      code: "200",
+      name: "Consulting Revenue",
+      status: "ACTIVE",
+      type: "REVENUE",
+      class: "REVENUE",
     },
-  }])[0]!;
+    {
+      accountId: "33333333-3333-4333-8333-333333333353",
+      code: "453",
+      name: "Office Supplies",
+      status: "ACTIVE",
+      type: "EXPENSE",
+      class: "EXPENSE",
+    },
+    {
+      accountId: "33333333-3333-4333-8333-333333333385",
+      code: "485",
+      name: "Cloud Subscriptions",
+      status: "ACTIVE",
+      type: "EXPENSE",
+      class: "EXPENSE",
+    },
+  ];
 }
 
-export function testXeroAccounts(profile = testXeroTenantCoaProfile()): AccountSummary[] {
-  return Object.values(profile.categories).map((category) => ({
-    accountId: category.account_id,
-    code: category.account_code,
-    status: "ACTIVE",
-    type: category.expected_type,
-    class: category.expected_class,
-  }));
+/**
+ * The synthetic tenant's live tax rates. `OUTPUTY24` (9%, revenue-only) and
+ * `INPUTY24` (9%, expense-only) mirror the real Xero SG output/input GST
+ * rates already baked into `TEST_HISTORICAL_ORIGINALS` below. `NONE` (0%,
+ * every account class) supports the No-Tax document fixtures the old
+ * semantic `NO_TAX` class used to cover.
+ */
+export function testXeroTaxRates(): TaxRateSummary[] {
+  return [
+    {
+      taxType: "OUTPUTY24",
+      status: "ACTIVE",
+      displayTaxRate: "9.0000",
+      effectiveRate: "9.0000",
+      canApplyToRevenue: true,
+      canApplyToExpenses: false,
+      canApplyToAssets: false,
+      canApplyToLiabilities: false,
+      canApplyToEquity: false,
+    },
+    {
+      taxType: "INPUTY24",
+      status: "ACTIVE",
+      displayTaxRate: "9.0000",
+      effectiveRate: "9.0000",
+      canApplyToRevenue: false,
+      canApplyToExpenses: true,
+      canApplyToAssets: false,
+      canApplyToLiabilities: false,
+      canApplyToEquity: false,
+    },
+    {
+      taxType: "NONE",
+      status: "ACTIVE",
+      displayTaxRate: "0.0000",
+      effectiveRate: "0.0000",
+      canApplyToRevenue: true,
+      canApplyToExpenses: true,
+      canApplyToAssets: true,
+      canApplyToLiabilities: true,
+      canApplyToEquity: true,
+    },
+  ];
 }
 
-export function testXeroTenantCoaBinding(
-  tenantId = TEST_XERO_TENANT_ID,
-  revision = 1,
-) {
-  const profile = testXeroTenantCoaProfile(tenantId, revision);
-  return bindXeroTenantCoaProfile(profile, testXeroAccounts(profile));
+export function testXeroTenantCoaBinding(tenantId = TEST_XERO_TENANT_ID): XeroDeclaredLedgerBinding {
+  const accounts = testXeroAccounts();
+  const taxRates = testXeroTaxRates();
+  return bindXeroDeclaredLedger({
+    tenantId,
+    jurisdiction: "SG",
+    accountCodes: accounts.map((account) => account.code!),
+    taxTypes: taxRates.map((taxRate) => taxRate.taxType!),
+    accounts,
+    taxRates,
+  });
 }
 
 /** Internal fixture helper for legacy compiler tests whose tenant IDs predate UUID-bound public targets. */
-export function testXeroTenantCoaBindingForTarget(tenantId: string) {
+export function testXeroTenantCoaBindingForTarget(tenantId: string): XeroDeclaredLedgerBinding {
   return testXeroTenantCoaBinding(tenantId);
 }
 
@@ -182,8 +224,7 @@ function injectTestOriginalTransactionEvidence(
   facts: readonly AccountingFact[],
   tenantId: string,
   contactBindings: ReturnType<typeof projectXeroAccountingCaseCompilerInput>["contactBindings"],
-  tenantCoaBinding: ReturnType<typeof testXeroTenantCoaBindingForTarget>,
-  accountingPolicy: ReturnType<typeof createXeroSingaporeAccountingPolicy>,
+  accountingPolicy: ReturnType<typeof createXeroDeclaredLedgerPolicy>,
 ) {
   const sealedFacts = structuredClone([...facts]) as AccountingFact[];
   const evidenceFacts: AccountingFact[] = [];
@@ -206,9 +247,9 @@ function injectTestOriginalTransactionEvidence(
       expectedTenantId: tenantId,
       expectedContactId: contactId,
       checkedObjectCount: 1,
-      tenantCoaProfile: tenantCoaBinding,
+      accounts: testXeroAccounts(),
+      taxRates: testXeroTaxRates(),
       monetaryRule: monetary.rule,
-      accountingPolicy,
     });
     sealedFacts[index] = { ...fact, originalTransactionEvidenceHash: resolved.evidence.evidenceHash };
     evidenceFacts.push(resolved.evidence);
@@ -225,14 +266,17 @@ export function compileTestXeroAccountingCase(
   const tenantId = typeof candidate?.target?.tenantId === "string"
     ? candidate.target.tenantId
     : TEST_XERO_TENANT_ID;
-  const tenantCoaBinding = testXeroTenantCoaBindingForTarget(tenantId);
+  const ledgerBinding = testXeroTenantCoaBindingForTarget(tenantId);
   const projected = projectXeroAccountingCaseCompilerInput(raw);
-  const accountingPolicy = createXeroSingaporeAccountingPolicy({ paysTax: projected.paysTax });
+  const accountingPolicy = createXeroDeclaredLedgerPolicy({
+    jurisdiction: projected.input.target.taxJurisdiction,
+    paysTax: projected.paysTax,
+    ledgerBinding,
+  });
   const injected = injectTestOriginalTransactionEvidence(
     projected.input.facts,
     tenantId,
     projected.contactBindings,
-    tenantCoaBinding,
     accountingPolicy,
   );
   return compileAccountingCase(
@@ -240,7 +284,7 @@ export function compileTestXeroAccountingCase(
     accountingPolicy,
     createXeroAccountingCaseProviderContract(
       projected.contactBindings,
-      tenantCoaBinding,
+      ledgerBinding,
       undefined,
       businessAuthority,
       injected.evidenceBindings,

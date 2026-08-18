@@ -43,9 +43,8 @@ import {
 import {
   testXeroAccounts,
   testXeroBusinessAuthorityProfile,
-  testXeroTenantCoaProfile,
 } from "./helpers/xeroTenantCoaProfile.js";
-import type { XeroTenantCoaExecutionConstraints } from "../src/policy/xeroTenantCoaProfile.js";
+import type { XeroDeclaredLedgerExecutionConstraints } from "../src/policy/xeroDeclaredLedgerBinding.js";
 import {
   parseXeroAccountingCaseBusinessAuthorityProfiles,
   type XeroAccountingCaseBusinessAuthorityProfile,
@@ -123,12 +122,17 @@ function source(
       dueDate: "2026-08-20",
       currency: "SGD",
       contactName: "Exact Customer",
-      accountingCategory: "CONSULTING_REVENUE" as const,
-      taxClass: "SG_STANDARD_RATED" as const,
       taxPolicyBasis: "DOCUMENT_DATE_NON_TRANSITION" as const,
-      effectiveTaxRateBps: 900,
       lineAmountType: "EXCLUSIVE" as const,
-      lines: [{ lineId: "line-1", description: "Consulting", quantity: "1", unitAmount: lineUnitAmount, sourceTax: declaredTax }],
+      lines: [{
+        lineId: "line-1",
+        description: "Consulting",
+        quantity: "1",
+        unitAmount: lineUnitAmount,
+        sourceTax: declaredTax,
+        accountCode: "200",
+        taxType: "OUTPUTY24",
+      }],
       declaredNet,
       declaredTax,
       declaredGross,
@@ -152,7 +156,6 @@ function supplierBillSource(): PrepareAccountingCasePublicInput {
       counterpartyRole: "SUPPLIER",
       reference: "BILL-CASE-001",
       contactName: "Exact Supplier",
-      accountingCategory: "OFFICE_SUPPLIES",
     }],
   };
 }
@@ -213,9 +216,8 @@ function noTaxSource(): PrepareAccountingCasePublicInput {
   const input = source("VALID_FOR_LIVE_BOOKS", "100.00", "100", "0.00", "100.00");
   const document = input.facts[0];
   if (!document || document.kind !== "NATIVE_DOCUMENT") throw new Error("test native document missing");
-  document.taxClass = "NO_TAX";
-  document.effectiveTaxRateBps = 0;
   document.lineAmountType = "NO_TAX";
+  document.lines[0]!.taxType = "NONE";
   return input;
 }
 
@@ -342,16 +344,13 @@ function publicContactDependentBusinessIntake() {
           number: "202699999Z",
         },
       },
-      line_accounting_mode: "DOCUMENT_DEFAULT_FOR_ALL_LINES" as const,
-      accounting_category: "CONSULTING_REVENUE",
-      tax_class: "SG_STANDARD_RATED",
-      effective_tax_rate_percent: "9.00",
-      transition_review_required: false,
       lines: [{
         description: "Consulting",
         quantity: "1",
         unit_amount_excluding_tax: "100.00",
         source_tax_amount: "9.00",
+        account_code: "200",
+        tax_type: "OUTPUTY24",
       }],
       declared_net: "100.00",
       declared_tax: "9.00",
@@ -427,7 +426,14 @@ function dualRoleContactDependentBusinessIntake() {
         document_type: "SUPPLIER_BILL" as const,
         reference: "BILL-DUAL-ROLE-001",
         contact: structuredClone(contact),
-        accounting_category: "OFFICE_SUPPLIES" as const,
+        lines: [{
+          description: "Consulting",
+          quantity: "1",
+          unit_amount_excluding_tax: "100.00",
+          source_tax_amount: "9.00",
+          account_code: "453",
+          tax_type: "INPUTY24",
+        }],
       },
     ],
     new_contacts: [{ contact: structuredClone(contact) }],
@@ -448,24 +454,20 @@ function mixedSupplierBillBusinessIntake(sourceTaxForOffice = "9.00") {
       due_date: "2026-08-20",
       currency: "SGD",
       contact: { name: "Exact Supplier" },
-      line_accounting_mode: "PER_LINE" as const,
-      transition_review_required: false,
       lines: [{
         description: "Office supplies",
         quantity: "1",
         unit_amount_excluding_tax: "100.00",
         source_tax_amount: sourceTaxForOffice,
-        accounting_category: "OFFICE_SUPPLIES" as const,
-        tax_class: "SG_STANDARD_RATED" as const,
-        effective_tax_rate_percent: "9.00",
+        account_code: "453",
+        tax_type: "INPUTY24",
       }, {
         description: "Cloud subscription",
         quantity: "1",
         unit_amount_excluding_tax: "50.00",
         source_tax_amount: "0.00",
-        accounting_category: "CLOUD_SUBSCRIPTIONS" as const,
-        tax_class: "NO_TAX" as const,
-        effective_tax_rate_percent: "0",
+        account_code: "485",
+        tax_type: "NONE",
       }],
       declared_net: "150.00",
       declared_tax: sourceTaxForOffice,
@@ -489,16 +491,13 @@ function historicalCreditBusinessIntake(role: "CUSTOMER" | "SUPPLIER") {
       document_date: "2026-08-01",
       currency: "SGD",
       contact: { name: customer ? "Historical Customer" : "Historical Supplier" },
-      line_accounting_mode: "DOCUMENT_DEFAULT_FOR_ALL_LINES" as const,
-      accounting_category: customer ? "CONSULTING_REVENUE" as const : "OFFICE_SUPPLIES" as const,
-      tax_class: "SG_STANDARD_RATED" as const,
-      effective_tax_rate_percent: "9.00",
-      transition_review_required: false,
       lines: [{
         description: "Partial historical credit",
         quantity: "1",
         unit_amount_excluding_tax: "100.00",
         source_tax_amount: "9.00",
+        account_code: customer ? "200" : "453",
+        tax_type: customer ? "OUTPUTY24" : "INPUTY24",
       }],
       declared_net: "100.00",
       declared_tax: "9.00",
@@ -527,11 +526,6 @@ function historicalSameCaseCreditBusinessIntake() {
         due_date: "2026-07-31",
         currency: "SGD",
         contact: { name: "Historical Customer" },
-        line_accounting_mode: "DOCUMENT_DEFAULT_FOR_ALL_LINES" as const,
-        accounting_category: "CONSULTING_REVENUE" as const,
-        tax_class: "SG_STANDARD_RATED" as const,
-        effective_tax_rate_percent: "9.00",
-        transition_review_required: false,
         // Deliberately false economics: this submitted support must never be
         // used as original authority or produce an invoice write operation.
         lines: [{
@@ -539,6 +533,8 @@ function historicalSameCaseCreditBusinessIntake() {
           quantity: "1",
           unit_amount_excluding_tax: "999.00",
           source_tax_amount: "89.91",
+          account_code: "200",
+          tax_type: "OUTPUTY24",
         }],
         declared_net: "999.00",
         declared_tax: "89.91",
@@ -846,7 +842,7 @@ function runtime(options?: {
   const providerWritePermit = vi.fn();
   const exactProviderGet = vi.fn();
   const preparedOperationIds = new Map<string, number>();
-  const coaConstraintsByPreparation = new Map<string, XeroTenantCoaExecutionConstraints>();
+  const coaConstraintsByPreparation = new Map<string, XeroDeclaredLedgerExecutionConstraints>();
   const operationRequestIds: string[] = [];
   let nextPreparationOrdinal = 0;
   const contacts = structuredClone(options?.initialContacts ?? [{
@@ -966,7 +962,7 @@ function runtime(options?: {
   const persistPreparedSalesInvoiceDraft = async (
     requestContext: RequestContext,
     input: Record<string, unknown>,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
   ) => {
     const serverAccountIds = serverCoaConstraints?.lines.map((line) => line.accountId);
     const requestedTaxTypes = Array.isArray(input.lines)
@@ -1056,7 +1052,7 @@ function runtime(options?: {
   const persistPreparedCreditNoteDraft = async (
     requestContext: RequestContext,
     input: Record<string, unknown>,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
   ) => {
     const prepared = buildCreditNoteDraftPrimitive(input);
     const canonicalPayloadBeforeMutation = prepared.canonicalPayload as unknown as Record<string, unknown>;
@@ -1166,7 +1162,7 @@ function runtime(options?: {
   const completeReadback = async (
     requestContext: RequestContext,
     request: XeroMutationRequest,
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
   ) => {
     const ordinal = preparedOperationIds.get(request.preparationId) ?? 0;
     const xeroObjectId = [
@@ -1253,7 +1249,7 @@ function runtime(options?: {
   const executePreparedSalesInvoiceDraft = vi.fn(async (
     requestContext: RequestContext,
     input: { preparation_id: string; request_id: string },
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
     beforeProviderWriteClaim?: () => Promise<void>,
   ) => {
     operationRequestIds.push(input.request_id);
@@ -1389,7 +1385,7 @@ function runtime(options?: {
   const createCreditNoteDraft = vi.fn(async (
     requestContext: RequestContext,
     input: { preparation_id: string; request_id: string },
-    serverCoaConstraints?: XeroTenantCoaExecutionConstraints,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
     beforeProviderWriteClaim?: () => Promise<void>,
   ) => {
     const preparation = await repository.getXeroMutationPreparation(input.preparation_id);
@@ -1679,7 +1675,6 @@ function runtime(options?: {
   const service = new XeroAccountingCaseService(repository, provider, accounting, mutations, {
     continuationSecret,
     testTenantIds: options?.testTenant ? [tenantId] : [],
-    tenantCoaProfiles: [testXeroTenantCoaProfile(tenantId)],
     businessAuthorityProfiles: options?.businessAuthorityProfiles ??
       [testXeroBusinessAuthorityProfile(tenantId)],
     clock: () => new Date(options?.clock?.value ?? "2026-08-13T04:00:00.000Z"),
@@ -2278,13 +2273,13 @@ describe("XeroAccountingCaseService", () => {
       reference: "INV-CASE-001",
     }), expect.objectContaining({
       tenantId,
-      profileRevision: 1,
-      profileHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      bindingHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
       lines: [expect.objectContaining({
-        accountingCategory: "CONSULTING_REVENUE",
+        accountCode: "200",
         accountId: "33333333-3333-4333-8333-333333333333",
         expectedType: "REVENUE",
         expectedClass: "REVENUE",
+        expectedTaxType: "OUTPUTY24",
       })],
     }));
     expect(executed).toMatchObject({
@@ -2379,17 +2374,19 @@ describe("XeroAccountingCaseService", () => {
     });
     const operation = record?.operations[0]?.operation;
     expect(operation?.nativeRoute).toBe("SUPPLIER_BILL");
+    // ADR-002: accountingCategory/taxClass are opaque carriers of the caller's
+    // own declared account code / TaxType now, not a semantic vocabulary.
     expect(operation?.amountBridge?.lineBridges).toEqual([
       expect.objectContaining({
-        accountingCategory: "OFFICE_SUPPLIES",
-        taxClass: "SG_STANDARD_RATED",
+        accountingCategory: "453",
+        taxClass: "INPUTY24",
         effectiveTaxRateBps: 900,
         canonicalNet: "100.0000",
         canonicalTax: "9.0000",
       }),
       expect.objectContaining({
-        accountingCategory: "CLOUD_SUBSCRIPTIONS",
-        taxClass: "NO_TAX",
+        accountingCategory: "485",
+        taxClass: "NONE",
         effectiveTaxRateBps: 0,
         canonicalNet: "50.0000",
         canonicalTax: "0.0000",
@@ -2418,16 +2415,18 @@ describe("XeroAccountingCaseService", () => {
     }), expect.objectContaining({
       lines: [
         expect.objectContaining({
-          accountingCategory: "OFFICE_SUPPLIES",
+          accountCode: "453",
           accountId: "33333333-3333-4333-8333-333333333353",
           expectedType: "EXPENSE",
           expectedClass: "EXPENSE",
+          expectedTaxType: "INPUTY24",
         }),
         expect.objectContaining({
-          accountingCategory: "CLOUD_SUBSCRIPTIONS",
+          accountCode: "485",
           accountId: "33333333-3333-4333-8333-333333333385",
           expectedType: "EXPENSE",
           expectedClass: "EXPENSE",
+          expectedTaxType: "NONE",
         }),
       ],
     }));
@@ -2459,16 +2458,15 @@ describe("XeroAccountingCaseService", () => {
       operations: [expect.objectContaining({
         serverCoaExecutionConstraints: expect.objectContaining({
           tenantId,
-          profileRevision: 1,
-          profileHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          bindingHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
           constraintsHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
           lines: [
             expect.objectContaining({
-              accountingCategory: "OFFICE_SUPPLIES",
+              accountCode: "453",
               accountId: "33333333-3333-4333-8333-333333333353",
             }),
             expect.objectContaining({
-              accountingCategory: "CLOUD_SUBSCRIPTIONS",
+              accountCode: "485",
               accountId: "33333333-3333-4333-8333-333333333385",
             }),
           ],
@@ -2480,8 +2478,7 @@ describe("XeroAccountingCaseService", () => {
       readbackSnapshot: {
         serverCoaExecutionConstraints: expect.objectContaining({
           tenantId,
-          profileRevision: 1,
-          profileHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          bindingHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
           constraintsHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
           lines: [
             expect.objectContaining({ accountId: "33333333-3333-4333-8333-333333333353" }),
@@ -2498,14 +2495,42 @@ describe("XeroAccountingCaseService", () => {
   });
 
   it.each([
-    ["unknown accounting category", (normalized: PrepareAccountingCasePublicInput) => {
+    ["unknown declared account code", (normalized: PrepareAccountingCasePublicInput) => {
       const fact = normalized.facts.find((candidate) => candidate.kind === "NATIVE_DOCUMENT");
       if (!fact || fact.kind !== "NATIVE_DOCUMENT") throw new Error("mixed fixture has no native document");
-      fact.lines[1]!.accountingCategory = "UNKNOWN_EXPENSE_CATEGORY";
-    }, "ACCOUNTING_CATEGORY_POLICY_UNKNOWN"],
+      fact.lines[1]!.accountCode = "999";
+    }, "DECLARED_ACCOUNT_NOT_FOUND"],
     ["self-consistent but wrong mixed-line source tax", (_normalized: PrepareAccountingCasePublicInput) => {}, "SOURCE_LINE_TAX_MISMATCH"],
   ] as const)("blocks %s for the whole document with zero provider write", async (_label, mutate, reasonCode) => {
-    const { service, accounting, mutations, providerWrite, providerWritePermit } = runtime({ testTenant: true });
+    const { service, accounting, mutations, providerWrite, providerWritePermit } = runtime({
+      testTenant: true,
+      accounts: [{
+        accountId: "33333333-3333-4333-8333-333333333353",
+        code: "453",
+        status: "ACTIVE",
+        class: "EXPENSE",
+        type: "EXPENSE",
+      }, {
+        accountId: "33333333-3333-4333-8333-333333333385",
+        code: "485",
+        status: "ACTIVE",
+        class: "EXPENSE",
+        type: "EXPENSE",
+      }],
+      taxRates: [{
+        taxType: "INPUTY24",
+        status: "ACTIVE",
+        displayTaxRate: "9.0000",
+        effectiveRate: "9.0000",
+        canApplyToExpenses: true,
+      }, {
+        taxType: "NONE",
+        status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
+        canApplyToExpenses: true,
+      }],
+    });
     const normalized = normalizeXeroAccountingCaseBusinessIntake(
       mixedSupplierBillBusinessIntake(reasonCode === "SOURCE_LINE_TAX_MISMATCH" ? "8.00" : "9.00"),
     );
@@ -2743,39 +2768,44 @@ describe("XeroAccountingCaseService", () => {
   });
 
   it.each([
-    ["missing AccountID", (rows: ReturnType<typeof testXeroAccounts>) => rows.slice(1), "XERO_COA_ACCOUNT_ID_MISSING"],
+    ["missing AccountID", (rows: ReturnType<typeof testXeroAccounts>) => rows.slice(1)],
     ["same code on another AccountID", (rows: ReturnType<typeof testXeroAccounts>) => [...rows, {
       ...rows[0]!, accountId: "99999999-9999-4999-8999-999999999999",
-    }], "XERO_COA_ACCOUNT_CODE_AMBIGUOUS"],
+    }]],
     ["same AccountID under another code", (rows: ReturnType<typeof testXeroAccounts>) => [{
       ...rows[0]!, code: "CHANGED",
-    }, ...rows.slice(1)], "XERO_COA_ACCOUNT_BINDING_MISMATCH"],
+    }, ...rows.slice(1)]],
     ["wrong account type", (rows: ReturnType<typeof testXeroAccounts>) => [{
       ...rows[0]!, type: "EXPENSE",
-    }, ...rows.slice(1)], "XERO_COA_ACCOUNT_TYPE_MISMATCH"],
+    }, ...rows.slice(1)]],
     ["wrong account class", (rows: ReturnType<typeof testXeroAccounts>) => [{
       ...rows[0]!, class: "EXPENSE",
-    }, ...rows.slice(1)], "XERO_COA_ACCOUNT_CLASS_MISMATCH"],
+    }, ...rows.slice(1)]],
   ] as const)("rejects live COA drift (%s) before preparation, authority preflight, permit, or write", async (
     _label,
     mutate,
-    reasonCode,
   ) => {
     const { service, accounting, mutations, providerWritePermit, providerWrite } = runtime({ testTenant: true });
     const prepared = await service.prepare(context(), source("VALID_FOR_LIVE_BOOKS"));
     vi.mocked(accounting.listAccounts).mockClear();
     vi.mocked(accounting.listAccounts).mockResolvedValue(mutate(testXeroAccounts()));
 
+    // ADR-002: execute-time drift is now proven by re-deriving the whole live
+    // declared-ledger binding and comparing its hash against the one sealed
+    // at prepare time. Every kind of live drift -- a removed account, an
+    // ambiguous code, or a changed type/class -- fails the same hash
+    // comparison and reports one uniform reason code rather than a per-cause
+    // one; the caller is always told to prepare a fresh Case version.
     await expect(service.execute(context(), {
       case_id: prepared.case_id,
       case_version: prepared.case_version,
-      request_id: `execute-coa-drift-${reasonCode.toLocaleLowerCase("en")}`,
+      request_id: `execute-coa-drift-${_label.toLocaleLowerCase("en").replace(/[^a-z0-9]+/gu, "-")}`,
     })).rejects.toMatchObject({
-      code: "VALIDATION_FAILED",
+      code: "STALE_PREFLIGHT",
       retryable: false,
       details: expect.objectContaining({
-        failureLayer: "XERO_TENANT_COA_PROFILE",
-        reasonCodes: [reasonCode],
+        failureLayer: "XERO_DECLARED_LEDGER_BINDING",
+        reasonCodes: ["XERO_DECLARED_LEDGER_BINDING_DRIFT"],
         providerMutationPossible: false,
       }),
     });
@@ -2787,7 +2817,13 @@ describe("XeroAccountingCaseService", () => {
     expect(providerWrite).not.toHaveBeenCalled();
   });
 
-  it("rejects a server-owned COA profile revision change after restart before preflight or write", async () => {
+  // ADR-002: per-tenant COA profiles are no longer read by the runtime at
+  // all -- the tenant's live chart of accounts (re-read every execute) is
+  // the sole authority. A restart with a different (now inert) legacy
+  // tenantCoaProfiles config must not invalidate an already-prepared Case;
+  // this inverts the retired "profile revision drift" rejection into proof
+  // that the removed gate stays removed.
+  it("does not invalidate a prepared Case when the server restarts with a different (now inert) tenantCoaProfiles config", async () => {
     const harness = runtime({ testTenant: true });
     const prepared = await harness.service.prepare(context(), source("VALID_FOR_LIVE_BOOKS"));
     const restarted = new XeroAccountingCaseService(
@@ -2798,7 +2834,7 @@ describe("XeroAccountingCaseService", () => {
       {
         continuationSecret,
         testTenantIds: [tenantId],
-        tenantCoaProfiles: [testXeroTenantCoaProfile(tenantId, 2)],
+        businessAuthorityProfiles: [testXeroBusinessAuthorityProfile(tenantId)],
         clock: () => new Date("2026-08-13T04:00:00.000Z"),
       },
     );
@@ -2806,20 +2842,9 @@ describe("XeroAccountingCaseService", () => {
     await expect(restarted.execute(context(), {
       case_id: prepared.case_id,
       case_version: prepared.case_version,
-      request_id: "execute-coa-profile-revision-drift",
-    })).rejects.toMatchObject({
-      code: "STALE_PREFLIGHT",
-      retryable: false,
-      details: expect.objectContaining({
-        reasonCodes: ["XERO_TENANT_COA_PROFILE_DRIFT"],
-        providerMutationPossible: false,
-      }),
-    });
-    expect(harness.mutations.preflightAutonomousActions).not.toHaveBeenCalled();
-    expect(harness.accounting.prepareSalesInvoiceDraft).not.toHaveBeenCalled();
-    expect(harness.accounting.executePreparedSalesInvoiceDraft).not.toHaveBeenCalled();
-    expect(harness.providerWritePermit).not.toHaveBeenCalled();
-    expect(harness.providerWrite).not.toHaveBeenCalled();
+      request_id: "execute-after-restart-inert-coa-profile",
+    })).resolves.toMatchObject({ state: "TERMINAL" });
+    expect(harness.providerWrite).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -3954,6 +3979,25 @@ describe("XeroAccountingCaseService", () => {
       testTenant: true,
       initialContacts,
       providerHistorySequence: [goldenOriginalHistory(), goldenOriginalHistory()],
+      taxRates: [{
+        taxType: "OUTPUTY24",
+        status: "ACTIVE",
+        displayTaxRate: "9.0000",
+        effectiveRate: "9.0000",
+        canApplyToRevenue: true,
+      }, {
+        taxType: "INPUTY24",
+        status: "ACTIVE",
+        displayTaxRate: "9.0000",
+        effectiveRate: "9.0000",
+        canApplyToExpenses: true,
+      }, {
+        taxType: "NONE",
+        status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
+        canApplyToExpenses: true,
+      }],
     });
     const prepared = await service.prepare(context(), publicGolden);
 
@@ -4000,6 +4044,25 @@ describe("XeroAccountingCaseService", () => {
       testTenant: true,
       initialContacts: [...required, ...noise],
       providerHistorySequence: [goldenOriginalHistory(), goldenOriginalHistory()],
+      taxRates: [{
+        taxType: "OUTPUTY24",
+        status: "ACTIVE",
+        displayTaxRate: "9.0000",
+        effectiveRate: "9.0000",
+        canApplyToRevenue: true,
+      }, {
+        taxType: "INPUTY24",
+        status: "ACTIVE",
+        displayTaxRate: "9.0000",
+        effectiveRate: "9.0000",
+        canApplyToExpenses: true,
+      }, {
+        taxType: "NONE",
+        status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
+        canApplyToExpenses: true,
+      }],
     });
     const prepared = await service.prepare(context(), publicGolden);
     expect(prepared.operations).toHaveLength(5);
@@ -4415,7 +4478,6 @@ describe("XeroAccountingCaseService", () => {
     const restarted = new XeroAccountingCaseService(repository, provider, accounting, mutations, {
       continuationSecret,
       testTenantIds: [tenantId],
-      tenantCoaProfiles: [testXeroTenantCoaProfile(tenantId)],
       businessAuthorityProfiles: parseXeroAccountingCaseBusinessAuthorityProfiles([{
         tenant_id: tenantId,
         writer_authority: {

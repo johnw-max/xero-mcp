@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compileAccountingCase } from "../src/control-kernel/accountingCaseCompiler.js";
 import { createXeroAccountingCaseProviderContract } from "../src/policy/xeroAccountingCaseProviderContract.js";
-import { createXeroSingaporeAccountingPolicy } from "../src/policy/xeroSingaporeAccountingPolicy.js";
+import { createXeroDeclaredLedgerPolicy } from "../src/policy/xeroDeclaredLedgerPolicy.js";
 import { testXeroTenantCoaBinding } from "./helpers/xeroTenantCoaProfile.js";
 
 const target = {
@@ -38,7 +38,11 @@ function compileContact(overrides: Record<string, unknown> = {}, caseId = "conta
       units: [{ unitId: "contact-unit", expectedFactKinds: ["CONTACT_CANDIDATE" as const] }],
     }],
     facts: [contactFact(overrides)],
-  }, createXeroSingaporeAccountingPolicy({ paysTax: true }), createXeroAccountingCaseProviderContract(
+  }, createXeroDeclaredLedgerPolicy({
+    jurisdiction: "SG",
+    paysTax: true,
+    ledgerBinding: testXeroTenantCoaBinding(),
+  }), createXeroAccountingCaseProviderContract(
     new Map(),
     testXeroTenantCoaBinding(),
   ));

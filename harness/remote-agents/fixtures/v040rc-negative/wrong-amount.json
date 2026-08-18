@@ -12,17 +12,14 @@
       "due_date": "2026-08-01",
       "currency": "SGD",
       "contact": { "name": "Lion City Digital Pte. Ltd." },
-      "line_accounting_mode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
-      "accounting_category": "CONSULTING_REVENUE",
-      "tax_class": "SG_STANDARD_RATED",
-      "effective_tax_rate_percent": "9.00",
-      "transition_review_required": false,
       "lines": [
         {
           "description": "Synthetic consulting",
           "quantity": "20",
           "unit_amount_excluding_tax": "200.00",
-          "source_tax_amount": "360.00"
+          "source_tax_amount": "360.00",
+          "account_code": "200",
+          "tax_type": "OUTPUTY24"
         }
       ],
       "declared_net": "4000.00",

@@ -7,8 +7,43 @@ import { Aes256GcmTokenCipher } from "../src/security/tokenCipher.js";
 import { createXeroBuildIdentity, xeroBuildIdentityHash } from "../src/xeroRelease.js";
 import {
   testXeroBusinessAuthorityProfile,
-  testXeroTenantCoaProfile,
 } from "./helpers/xeroTenantCoaProfile.js";
+
+/**
+ * ADR-002 retains `XERO_TENANT_COA_PROFILES_JSON` and its legacy schema
+ * (`src/policy/xeroTenantCoaProfile.ts`) purely for deployment compatibility
+ * -- config.ts still parses it, but it no longer gates any write. This
+ * fixture only needs to satisfy that legacy schema's own shape; it carries
+ * no live behaviour any more.
+ */
+function testXeroTenantCoaProfile(tenantId: string, revision = 1) {
+  return {
+    profile_id: `test-sg-coa-${tenantId}`,
+    revision,
+    tenant_id: tenantId,
+    jurisdiction: "SG" as const,
+    categories: {
+      CONSULTING_REVENUE: {
+        account_id: "33333333-3333-4333-8333-333333333333",
+        account_code: "200",
+        expected_type: "REVENUE",
+        expected_class: "REVENUE",
+      },
+      OFFICE_SUPPLIES: {
+        account_id: "33333333-3333-4333-8333-333333333353",
+        account_code: "453",
+        expected_type: "EXPENSE",
+        expected_class: "EXPENSE",
+      },
+      CLOUD_SUBSCRIPTIONS: {
+        account_id: "33333333-3333-4333-8333-333333333385",
+        account_code: "485",
+        expected_type: "EXPENSE",
+        expected_class: "EXPENSE",
+      },
+    },
+  };
+}
 
 function validEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -292,21 +327,31 @@ describe("security configuration contract", () => {
     }))).toThrow(/explicit XERO_AUTHORITY_REVISION/u);
   });
 
+  // ADR-002: a per-tenant chart-of-accounts profile is no longer a write-startup
+  // precondition -- account and tax coordinates are declared by the caller and
+  // verified against the target tenant's live chart of accounts at prepare and
+  // execution time instead. These two cases used to assert startup rejection;
+  // they are inverted here to prove the removed gate stays removed.
   it.each([
     ["active standing-delegation tenant", {
       XERO_TENANT_COA_PROFILES_JSON: "[]",
     }, AUTONOMOUS_TENANT_ID],
     ["Accounting Case test tenant", {
       XERO_ACCOUNTING_CASE_TEST_TENANT_IDS: UNPROFILED_TEST_TENANT_ID,
+      XERO_ACCOUNTING_CASE_BUSINESS_AUTHORITIES_JSON: JSON.stringify([
+        testXeroBusinessAuthorityProfile(AUTONOMOUS_TENANT_ID),
+        testXeroBusinessAuthorityProfile(UNPROFILED_TEST_TENANT_ID),
+      ]),
     }, UNPROFILED_TEST_TENANT_ID],
-  ] as const)("rejects write startup when the %s has no server-owned COA profile", (
+  ] as const)("allows write startup when the %s has no server-owned COA profile", (
     _label,
     overrides,
-    missingTenantId,
+    tenantIdWithNoCoaProfile,
   ) => {
-    expect(() => loadConfig(autonomousWriteEnv(overrides))).toThrow(
-      new RegExp(`XERO_TENANT_COA_PROFILES_JSON.*missing.*${missingTenantId}`, "i"),
-    );
+    const config = loadConfig(autonomousWriteEnv(overrides));
+    expect(config.xeroWriteEnabled).toBe(true);
+    expect(config.xeroTenantCoaProfiles.some((profile) =>
+      profile.tenant_id === tenantIdWithNoCoaProfile)).toBe(false);
   });
 
   it("does not require tenant COA profiles while provider writes are disabled", () => {

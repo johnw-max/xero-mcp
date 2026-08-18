@@ -2,9 +2,41 @@ import { describe, expect, it } from "vitest";
 import { loadConfig, MCP_OAUTH_SCOPES } from "../src/config.js";
 import { createXeroBuildIdentity } from "../src/xeroRelease.js";
 import { sha256 } from "../src/security/hash.js";
-import {
-  testXeroTenantCoaProfile,
-} from "./helpers/xeroTenantCoaProfile.js";
+/**
+ * ADR-002 retains `XERO_TENANT_COA_PROFILES_JSON` and its legacy schema
+ * (`src/policy/xeroTenantCoaProfile.ts`) purely for deployment compatibility
+ * -- config.ts still parses it, but it no longer gates any write. This
+ * fixture only needs to satisfy that legacy schema's own shape; it carries
+ * no live behaviour any more.
+ */
+function testXeroTenantCoaProfile(tenantId: string, revision = 1) {
+  return {
+    profile_id: `test-sg-coa-${tenantId}`,
+    revision,
+    tenant_id: tenantId,
+    jurisdiction: "SG" as const,
+    categories: {
+      CONSULTING_REVENUE: {
+        account_id: "33333333-3333-4333-8333-333333333333",
+        account_code: "200",
+        expected_type: "REVENUE",
+        expected_class: "REVENUE",
+      },
+      OFFICE_SUPPLIES: {
+        account_id: "33333333-3333-4333-8333-333333333353",
+        account_code: "453",
+        expected_type: "EXPENSE",
+        expected_class: "EXPENSE",
+      },
+      CLOUD_SUBSCRIPTIONS: {
+        account_id: "33333333-3333-4333-8333-333333333385",
+        account_code: "485",
+        expected_type: "EXPENSE",
+        expected_class: "EXPENSE",
+      },
+    },
+  };
+}
 
 const AGENT2_CALLBACK = "https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callback";
 const TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 1).toString("base64");

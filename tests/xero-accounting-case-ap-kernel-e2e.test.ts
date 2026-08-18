@@ -33,7 +33,7 @@ import { XeroAccountingCaseService } from "../src/services/xeroAccountingCaseSer
 import { XeroCreditNoteManualJournalService } from "../src/services/xeroCreditNoteManualJournalService.js";
 import { XeroMutationService } from "../src/services/xeroMutationService.js";
 import { createTestXeroGovernanceArtifacts } from "./helpers/xeroGovernanceAuthority.js";
-import { testXeroAccounts, testXeroTenantCoaProfile } from "./helpers/xeroTenantCoaProfile.js";
+import { testXeroAccounts } from "./helpers/xeroTenantCoaProfile.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const contactId = "23232323-2323-4232-8232-232323232323";
@@ -58,24 +58,20 @@ function supplierBillCase() {
       due_date: "2026-08-20",
       currency: "SGD",
       contact: { name: "Historical Supplier" },
-      line_accounting_mode: "PER_LINE" as const,
-      transition_review_required: false,
       lines: [{
         description: "Office supplies",
         quantity: "1",
         unit_amount_excluding_tax: "100.00",
         source_tax_amount: "9.00",
-        accounting_category: "OFFICE_SUPPLIES" as const,
-        tax_class: "SG_STANDARD_RATED" as const,
-        effective_tax_rate_percent: "9.00",
+        account_code: "453",
+        tax_type: "INPUTY24",
       }, {
         description: "Cloud subscription",
         quantity: "1",
         unit_amount_excluding_tax: "50.00",
         source_tax_amount: "0.00",
-        accounting_category: "CLOUD_SUBSCRIPTIONS" as const,
-        tax_class: "NO_TAX" as const,
-        effective_tax_rate_percent: "0",
+        account_code: "485",
+        tax_type: "NONE",
       }],
       declared_net: "150.00",
       declared_tax: "9.00",
@@ -98,16 +94,13 @@ function supplierCreditCase() {
       document_date: "2026-08-01",
       currency: "SGD",
       contact: { name: "Historical Supplier" },
-      line_accounting_mode: "DOCUMENT_DEFAULT_FOR_ALL_LINES" as const,
-      accounting_category: "OFFICE_SUPPLIES" as const,
-      tax_class: "SG_STANDARD_RATED" as const,
-      effective_tax_rate_percent: "9.00",
-      transition_review_required: false,
       lines: [{
         description: "Partial historical credit",
         quantity: "1",
         unit_amount_excluding_tax: "100.00",
         source_tax_amount: "9.00",
+        account_code: "453",
+        tax_type: "INPUTY24",
       }],
       declared_net: "100.00",
       declared_tax: "9.00",
@@ -527,7 +520,6 @@ async function apKernelHarness(kind: ApCaseKind) {
     {
       continuationSecret: Buffer.alloc(32, 9),
       testTenantIds: [tenantId],
-      tenantCoaProfiles: [testXeroTenantCoaProfile(tenantId)],
       businessAuthorityProfiles: externalAuthority.authorityProfiles,
       clock: () => new Date(fixedNow),
     },

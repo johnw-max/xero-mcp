@@ -7,14 +7,36 @@ import {
   createXeroOriginalTransactionEvidence,
   XeroOriginalTransactionEvidenceError,
 } from "../src/policy/xeroOriginalTransactionEvidence.js";
-import { createXeroSingaporeAccountingPolicy } from "../src/policy/xeroSingaporeAccountingPolicy.js";
+import { createXeroDeclaredLedgerPolicy } from "../src/policy/xeroDeclaredLedgerPolicy.js";
+import { bindXeroDeclaredLedger, type XeroDeclaredLedgerBinding } from "../src/policy/xeroDeclaredLedgerBinding.js";
 import { lookupXeroOriginalTransaction } from "../src/services/xeroBusinessCoordinateHistory.js";
-import type { InvoiceSnapshot } from "../src/providers/types.js";
-import { testXeroTenantCoaBinding } from "./helpers/xeroTenantCoaProfile.js";
+import type { AccountSummary, InvoiceSnapshot, TaxRateSummary } from "../src/providers/types.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const contactId = "22222222-2222-4222-8222-222222222222";
 const invoiceId = "44444444-4444-4444-8444-444444444444";
+
+// ADR-002: the caller declares the exact live Xero account/tax coordinate and
+// the server verifies it against the tenant's own chart of accounts and tax
+// rates. These fixtures stand in for that live tenant data.
+const TEST_LEDGER_ACCOUNTS: readonly AccountSummary[] = [
+  { accountId: "33333333-3333-4333-8333-333333333333", code: "200", name: "Consulting Revenue", status: "ACTIVE", type: "REVENUE", class: "REVENUE" },
+  { accountId: "33333333-3333-4333-8333-333333333353", code: "453", name: "Office Supplies", status: "ACTIVE", type: "EXPENSE", class: "EXPENSE" },
+];
+const TEST_LEDGER_TAX_RATES: readonly TaxRateSummary[] = [
+  { taxType: "OUTPUTY24", name: "GST on Income", status: "ACTIVE", displayTaxRate: "9.0000", effectiveRate: "9.0000", canApplyToRevenue: true },
+  { taxType: "INPUTY24", name: "GST on Expenses", status: "ACTIVE", displayTaxRate: "9.0000", effectiveRate: "9.0000", canApplyToExpenses: true },
+];
+function testLedgerBinding(forTenantId: string): XeroDeclaredLedgerBinding {
+  return bindXeroDeclaredLedger({
+    tenantId: forTenantId,
+    jurisdiction: "SG",
+    accountCodes: TEST_LEDGER_ACCOUNTS.map((account) => account.code!),
+    taxTypes: TEST_LEDGER_TAX_RATES.map((taxRate) => taxRate.taxType),
+    accounts: TEST_LEDGER_ACCOUNTS,
+    taxRates: TEST_LEDGER_TAX_RATES,
+  });
+}
 
 function credit(overrides: Partial<NativeDocumentFact> = {}): NativeDocumentFact {
   return {
@@ -32,11 +54,7 @@ function credit(overrides: Partial<NativeDocumentFact> = {}): NativeDocumentFact
     documentDate: "2027-01-15",
     currency: "SGD",
     contactName: "Historical Customer",
-    accountingCategory: "CONSULTING_REVENUE",
-    taxClass: "SG_STANDARD_RATED",
     taxPolicyBasis: "ORIGINAL_TRANSACTION",
-    effectiveTaxRateBps: 900,
-    lineAccountingMode: "DOCUMENT_DEFAULT_FOR_ALL_LINES",
     originalDocumentReference: "INV-OLD-001",
     originalDocumentReferenceKind: "FORMAL_DOCUMENT_NUMBER",
     originalDocumentDate: "2026-07-01",
@@ -47,6 +65,8 @@ function credit(overrides: Partial<NativeDocumentFact> = {}): NativeDocumentFact
       quantity: "1",
       unitAmount: "100.00",
       sourceTax: "9.00",
+      accountCode: "200",
+      taxType: "OUTPUTY24",
     }],
     declaredNet: "100.00",
     declaredTax: "9.00",
@@ -99,8 +119,16 @@ function supplierCredit(): NativeDocumentFact {
     counterpartyRole: "SUPPLIER",
     reference: "SCN-001",
     contactName: "Historical Supplier",
-    accountingCategory: "OFFICE_SUPPLIES",
     originalDocumentReference: "BILL-SUPPLIER-001",
+    lines: [{
+      lineId: "credit-line-1",
+      description: "Partial service credit",
+      quantity: "1",
+      unitAmount: "100.00",
+      sourceTax: "9.00",
+      accountCode: "453",
+      taxType: "INPUTY24",
+    }],
   });
 }
 
@@ -121,7 +149,11 @@ function originalBill(overrides: Partial<InvoiceSnapshot> = {}): InvoiceSnapshot
 }
 
 function resolvedEvidence(rawCredit = credit(), snapshot = original()) {
-  const accountingPolicy = createXeroSingaporeAccountingPolicy({ paysTax: true });
+  const accountingPolicy = createXeroDeclaredLedgerPolicy({
+    jurisdiction: "SG",
+    paysTax: true,
+    ledgerBinding: testLedgerBinding(tenantId),
+  });
   const monetary = resolveSupportedAccountingMonetaryRule(accountingPolicy, rawCredit.currency);
   if (!monetary.rule) throw new Error("test monetary rule missing");
   return createXeroOriginalTransactionEvidence({
@@ -130,16 +162,20 @@ function resolvedEvidence(rawCredit = credit(), snapshot = original()) {
     expectedTenantId: tenantId,
     expectedContactId: contactId,
     checkedObjectCount: 1,
-    tenantCoaProfile: testXeroTenantCoaBinding(tenantId),
+    accounts: TEST_LEDGER_ACCOUNTS,
+    taxRates: TEST_LEDGER_TAX_RATES,
     monetaryRule: monetary.rule,
-    accountingPolicy,
   });
 }
 
 function compileCredit(rawCredit: NativeDocumentFact, snapshot = original()) {
   const resolved = resolvedEvidence(rawCredit, snapshot);
   const sealedCredit = { ...rawCredit, originalTransactionEvidenceHash: resolved.evidence.evidenceHash };
-  const policy = createXeroSingaporeAccountingPolicy({ paysTax: true });
+  const policy = createXeroDeclaredLedgerPolicy({
+    jurisdiction: "SG",
+    paysTax: true,
+    ledgerBinding: testLedgerBinding(tenantId),
+  });
   return compileAccountingCase({
     caseId: "historical-credit-case",
     expectedVersion: 0,
@@ -158,7 +194,7 @@ function compileCredit(rawCredit: NativeDocumentFact, snapshot = original()) {
     facts: [sealedCredit, resolved.evidence],
   }, policy, createXeroAccountingCaseProviderContract(
     new Map([[sealedCredit.factId, { contactId }]]),
-    testXeroTenantCoaBinding(tenantId),
+    testLedgerBinding(tenantId),
     undefined,
     undefined,
     new Map([[resolved.evidence.evidenceHash, resolved.binding]]),
@@ -176,10 +212,10 @@ describe("Xero historical original-transaction evidence", () => {
     });
     expect(resolved.evidence.lines[0]).toMatchObject({
       quantity: "2.0000",
-      taxClass: "SG_STANDARD_RATED",
+      accountCode: "200",
+      taxType: "OUTPUTY24",
       effectiveTaxRateBps: 900,
-      taxSemantics: "STANDARD_OUTPUT",
-      taxPolicyPeriodId: "SG_GST_9_2024_TO_2026H2",
+      taxSemantics: "OUTPUTY24",
     });
     const compiled = compileCredit(credit());
     expect(compiled.status).toBe("PLANNED_NEEDS_PREFLIGHT");
@@ -201,8 +237,9 @@ describe("Xero historical original-transaction evidence", () => {
       reference: "BILL-SUPPLIER-001",
     });
     expect(resolved.evidence.lines[0]).toMatchObject({
-      accountingCategory: "OFFICE_SUPPLIES",
-      taxSemantics: "STANDARD_INPUT",
+      accountCode: "453",
+      taxType: "INPUTY24",
+      taxSemantics: "INPUTY24",
     });
 
     const reader = {
@@ -247,12 +284,16 @@ describe("Xero historical original-transaction evidence", () => {
         quantity: "1",
         unitAmount: "100.00",
         sourceTax: "9.00",
+        accountCode: "200",
+        taxType: "OUTPUTY24",
       }, {
         lineId: "credit-line-2",
         description: "Second credit",
         quantity: "1",
         unitAmount: "100.00",
         sourceTax: "9.00",
+        accountCode: "200",
+        taxType: "OUTPUTY24",
       }],
       declaredNet: "200.00",
       declaredTax: "18.00",
@@ -269,17 +310,17 @@ describe("Xero historical original-transaction evidence", () => {
     expect(compiled.operations).toEqual([]);
   });
 
-  it("uses the original transaction date, not the later credit date, and blocks unsupported historic tax periods", () => {
+  it("uses the original transaction date, not the later credit date, to admit the credit", () => {
     expect(compileCredit(credit({ documentDate: "2027-12-31" })).status).toBe("PLANNED_NEEDS_PREFLIGHT");
-    const unsupported = credit({ originalDocumentDate: "2023-06-01" });
-    expect(() => resolvedEvidence(unsupported, original({ invoiceDate: "2023-06-01" })))
-      .toThrowError(XeroOriginalTransactionEvidenceError);
-    try {
-      resolvedEvidence(unsupported, original({ invoiceDate: "2023-06-01" }));
-    } catch (error) {
-      expect((error as XeroOriginalTransactionEvidenceError).reasonCodes)
-        .toContain("ORIGINAL_TAX_POLICY_PERIOD_UNSUPPORTED");
-    }
+  });
+
+  // ADR-002: the MCP holds no jurisdiction rate-period table, so an original
+  // transaction is no longer rejected merely for being historic. The tenant's
+  // live tax rate is proven directly against the declared line amounts
+  // instead; ORIGINAL_TAX_POLICY_PERIOD_UNSUPPORTED no longer exists.
+  it("does not reject an historic original solely for its transaction date", () => {
+    const historic = credit({ originalDocumentDate: "2023-06-01" });
+    expect(() => resolvedEvidence(historic, original({ invoiceDate: "2023-06-01" }))).not.toThrow();
   });
 
   it.each(["DRAFT", "SUBMITTED", "DELETED", "VOIDED", "UNKNOWN"])(

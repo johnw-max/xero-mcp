@@ -4,7 +4,7 @@ import { PostgresAccountingRepository } from "../src/db/postgresRepository.js";
 import { hashObject } from "../src/security/hash.js";
 import { createXeroRuntimeAttestation, XERO_RELEASE_ATTESTATION } from "../src/xeroRelease.js";
 import { XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION } from "../src/policy/xeroAccountingCaseProviderContract.js";
-import { XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION } from "../src/policy/xeroSingaporeAccountingPolicy.js";
+import { XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION } from "../src/policy/xeroDeclaredLedgerPolicy.js";
 import {
   EXPECTED_XERO_DUPLICATE_INDEXES,
   type XeroDuplicateIndexCatalogRow,
@@ -16,7 +16,7 @@ const requiredRecoveryProjection = {
   activeCaseCount: 0,
   storedPolicyProjectionVersions: [],
   storedProviderProjectionVersions: [],
-  requiredPolicyProjectionVersion: XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION,
+  requiredPolicyProjectionVersion: XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION,
   requiredProviderProjectionVersion: XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION,
 };
 const repositories: PostgresAccountingRepository[] = [];
@@ -190,7 +190,7 @@ describe("repository runtime readiness evidence", () => {
       expect.stringContaining("schema_migrations"),
       [
         requiredMigration,
-        XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION,
+        XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION,
         XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION,
       ],
     ]);

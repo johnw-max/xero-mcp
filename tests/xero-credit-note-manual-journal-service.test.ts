@@ -13,8 +13,12 @@ import { XeroCreditNoteManualJournalService } from "../src/services/xeroCreditNo
 import { XeroMutationService } from "../src/services/xeroMutationService.js";
 import { AppError } from "../src/errors.js";
 import { XERO_AUTONOMOUS_WRITE_ACTIONS } from "../src/policy/xeroAutonomousActions.js";
-import { createXeroTenantCoaExecutionConstraints } from "../src/policy/xeroTenantCoaProfile.js";
-import { testXeroTenantCoaBinding } from "./helpers/xeroTenantCoaProfile.js";
+import {
+  bindXeroDeclaredLedger,
+  createXeroDeclaredLedgerExecutionConstraints,
+  type XeroDeclaredLedgerBinding,
+} from "../src/policy/xeroDeclaredLedgerBinding.js";
+import type { AccountSummary, TaxRateSummary } from "../src/providers/types.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const contactId = "22222222-2222-4222-8222-222222222222";
@@ -22,6 +26,27 @@ const revenueAccountId = "33333333-3333-4333-8333-333333333333";
 const expenseAccountId = "44444444-4444-4444-8444-444444444444";
 const creditNoteId = "55555555-5555-4555-8555-555555555555";
 const manualJournalId = "66666666-6666-4666-8666-666666666666";
+
+// ADR-002: server-owned execution constraints now bind the caller-declared
+// account code + TaxType against the tenant's live chart of accounts, not a
+// semantic category profile.
+function testLedgerBinding(forTenantId: string): XeroDeclaredLedgerBinding {
+  const accounts: readonly AccountSummary[] = [
+    { accountId: revenueAccountId, code: "200", name: "Sales", status: "ACTIVE", type: "REVENUE", class: "REVENUE" },
+    { accountId: expenseAccountId, code: "400", name: "Operating expense", status: "ACTIVE", type: "EXPENSE", class: "EXPENSE" },
+  ];
+  const taxRates: readonly TaxRateSummary[] = [
+    { taxType: "OUTPUTY24", name: "GST on Income", status: "ACTIVE", displayTaxRate: "9.0000", effectiveRate: "9.0000", canApplyToRevenue: true },
+  ];
+  return bindXeroDeclaredLedger({
+    tenantId: forTenantId,
+    jurisdiction: "SG",
+    accountCodes: accounts.map((account) => account.code!),
+    taxTypes: taxRates.map((taxRate) => taxRate.taxType),
+    accounts,
+    taxRates,
+  });
+}
 
 const creditNoteInput = {
   source_ref: "work-material:credit-note-001",
@@ -535,9 +560,9 @@ describe("XeroCreditNoteManualJournalService", () => {
     const drift = harness();
     const confirmMutation = vi.spyOn(drift.repository, "confirmXeroMutationPreparation");
     const authorisePermit = vi.spyOn(drift.mutations, "authoriseAutonomous");
-    const constraints = createXeroTenantCoaExecutionConstraints(
-      testXeroTenantCoaBinding(tenantId),
-      ["CONSULTING_REVENUE"],
+    const constraints = createXeroDeclaredLedgerExecutionConstraints(
+      testLedgerBinding(tenantId),
+      [{ accountCode: "200", taxType: "OUTPUTY24" }],
     );
     const prepared = await drift.service.prepareCreditNoteDraft(drift.context, {
       ...creditNoteInput,
@@ -567,7 +592,7 @@ describe("XeroCreditNoteManualJournalService", () => {
     }, constraints)).rejects.toMatchObject({
       code: "STALE_PREFLIGHT",
       details: {
-        reasonCodes: ["XERO_COA_EXECUTION_ACCOUNT_SEMANTICS_DRIFT"],
+        reasonCodes: ["XERO_DECLARED_EXECUTION_ACCOUNT_SEMANTICS_DRIFT"],
         providerMutationPossible: false,
       },
     });

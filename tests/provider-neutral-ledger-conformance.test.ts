@@ -151,10 +151,13 @@ const fakeAccountingPolicy = Object.freeze({
   planProjection: Object.freeze({
     schemaVersion: "northland-policy-projection:v2",
     chartRevision: "tenant-coa-77",
+    // Keyed by the caller-declared account code -- this fake, non-Xero policy
+    // owns its own opaque interpretation of that string; the shared kernel
+    // never reads this map or the key it is keyed by.
     categories: Object.freeze({
-      CONSULTING_REVENUE: "REV-4100",
-      OFFICE_SUPPLIES: "OPEX-6105",
-      CLOUD_SUBSCRIPTIONS: "OPEX-6420",
+      "200": "REV-4100",
+      "453": "OPEX-6105",
+      "485": "OPEX-6420",
     }),
     monetaryRules: Object.freeze({
       ruleVersion: "northland-currency-rounding:v1",
@@ -178,15 +181,19 @@ const fakeAccountingPolicy = Object.freeze({
   },
   evaluateNativeDocument(fact: NativeDocumentFact) {
     const lineDecisions = fact.lines.map((line) => {
-      const accountingCategory = line.accountingCategory ?? fact.accountingCategory;
-      const taxClass = line.taxClass ?? fact.taxClass;
+      // This fake, non-Xero policy owns its own reading of the caller-declared
+      // coordinate: it treats the declared account code as its category key
+      // and the declared TaxType as its own rate class, entirely independent
+      // of what Xero's declared-ledger policy does with the same field names.
+      const accountingCategory = line.accountCode;
+      const taxClass = line.taxType;
       const accountRef = (this.planProjection.categories as Readonly<Record<string, string>>)[accountingCategory];
       const reasonCodes = accountRef ? [] : ["NORTHLAND_CATEGORY_UNKNOWN"];
       return {
         lineId: line.lineId,
         accountingCategory,
         taxClass,
-        effectiveTaxRateBps: taxClass === "NLX_STANDARD" ? 500 : 0,
+        effectiveTaxRateBps: taxClass !== "NONE" ? 500 : 0,
         taxSemantics: fact.counterpartyRole === "CUSTOMER" ? "NLX_OUTPUT" : "NLX_INPUT",
         taxPolicyPeriodId: "NLX_5_2020_TO_2030",
         lineFields: Object.freeze({ ...(accountRef ? { accountRef } : {}) }),
@@ -388,31 +395,38 @@ describe("provider-neutral ledger kernel conformance", () => {
       sources: PrepareAccountingCaseInput["sources"];
       facts: PrepareAccountingCaseInput["facts"];
     }>;
+    // ADR-002: the fixture now declares a live Xero account_code/tax_type per
+    // line instead of a document-level semantic taxClass. "Standard rated" is
+    // read from whether the declared TaxType is the zero-rate "NONE"; this
+    // fake, non-Xero policy re-simulates its own flat 5% rate on top.
     const facts = fixture.facts.map((fact) => fact.kind === "NATIVE_DOCUMENT"
-      ? {
-          ...fact,
-          taxClass: fact.taxClass === "SG_STANDARD_RATED" ? "NLX_STANDARD" : "NLX_ZERO",
-          effectiveTaxRateBps: fact.taxClass === "SG_STANDARD_RATED" ? 500 : 0,
-          declaredTax: fact.taxClass === "SG_STANDARD_RATED"
-            ? (Number(fact.declaredNet) * 0.05).toFixed(2)
-            : "0.00",
-          declaredGross: fact.taxClass === "SG_STANDARD_RATED"
-            ? (Number(fact.declaredNet) * 1.05).toFixed(2)
-            : fact.declaredNet,
-          lines: fact.lines.map((line) => ({
-            ...line,
-            sourceTax: fact.taxClass === "SG_STANDARD_RATED"
-              ? (Number(line.quantity) * Number(line.unitAmount) * 0.05).toFixed(2)
+      ? (() => {
+          const standardRated = fact.lines.every((line) => line.taxType !== "NONE");
+          return {
+            ...fact,
+            declaredTax: standardRated
+              ? (Number(fact.declaredNet) * 0.05).toFixed(2)
               : "0.00",
-          })),
-        }
+            declaredGross: standardRated
+              ? (Number(fact.declaredNet) * 1.05).toFixed(2)
+              : fact.declaredNet,
+            lines: fact.lines.map((line) => ({
+              ...line,
+              sourceTax: standardRated
+                ? (Number(line.quantity) * Number(line.unitAmount) * 0.05).toFixed(2)
+                : "0.00",
+            })),
+          };
+        })()
       : fact.kind === "PAYMENT"
         ? {
             ...fact,
             amount: (() => {
               const related = fixture.facts.find((candidate) =>
                 candidate.kind === "NATIVE_DOCUMENT" && candidate.eventKey === fact.relatedEventKey);
-              return related?.kind === "NATIVE_DOCUMENT" && related.taxClass === "SG_STANDARD_RATED"
+              const relatedStandardRated = related?.kind === "NATIVE_DOCUMENT" &&
+                related.lines.every((line) => line.taxType !== "NONE");
+              return relatedStandardRated
                 ? (Number(related.declaredNet) * 1.05).toFixed(2)
                 : fact.amount;
             })(),
@@ -601,10 +615,7 @@ describe("provider-neutral ledger kernel conformance", () => {
         dueDate: "2026-08-20",
         currency: "KWD",
         contactName: "Lion City Digital Pte. Ltd.",
-        accountingCategory: "CONSULTING_REVENUE",
-        taxClass: "NLX_ZERO",
         taxPolicyBasis: "DOCUMENT_DATE_NON_TRANSITION",
-        effectiveTaxRateBps: 0,
         lineAmountType: "NO_TAX",
         lines: [{
           lineId: "kwd-line",
@@ -612,6 +623,8 @@ describe("provider-neutral ledger kernel conformance", () => {
           quantity: "1",
           unitAmount: "1.2345",
           sourceTax: "0",
+          accountCode: "200",
+          taxType: "NONE",
         }],
         declaredNet: "1.235",
         declaredTax: "0",
