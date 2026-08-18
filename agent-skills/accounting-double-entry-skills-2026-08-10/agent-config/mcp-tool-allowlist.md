@@ -20,4 +20,6 @@ An Agent may compose profiles. For example, it may read source evidence through 
 
 Tool names, URLs, OAuth setup, tenant bindings, and environment-specific UAT evidence belong in the chosen profile or deployment configuration, not in the business Skills or generic Agent instructions.
 
+For the current Xero 0.4.0-rc.1 profile, deployment must expose exactly the repository's pinned 28-tool list. Its only public mutation entry points are `xero_prepare_accounting_case`, `xero_execute_accounting_case`, and `xero_get_accounting_case_status`. Do not expose legacy object-specific prepare/create tools, a manual-journal shortcut, or a browser approval/authorise route. The Case execute tool uses installation standing delegation and must not accept a per-transaction confirmation phrase.
+
 A profile table is a deployment specification, not proof that the runtime adapter is mounted or compliant. Do not call a deployment portable or live-ready until the actual tool-to-capability registry, target binding, normalized receipts, failure behavior, and read-back have passed UAT for that environment.

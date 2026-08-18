@@ -44,6 +44,17 @@ The Skill must not depend on `xero_*`, Google Drive tool names, OAuth fields, pr
 
 Deterministic controls such as balance, tenant binding, approval match, idempotency, valid period/account/tax, and duplicate prevention must not depend only on model compliance with a Skill.
 
+For a native document, accounting and tax semantics are line-scoped. A domain runtime may accept one explicit document default only when it is declared to apply to every line; mixed documents require a complete policy decision per line. The immutable plan and exact read-back contract must preserve a provider-neutral accounting-policy binding and provider-tax binding for every line. One bad or unresolved line blocks the whole native document before the adapter's mutation boundary; a valid multi-line document remains one provider object.
+
+### Authorization contract
+
+Every formal-ledger write must use exactly one authorization path for the same target, action, and scope:
+
+1. an exact current per-transaction approval when the connection or action requires per-transaction approval; or
+2. a platform-bound, currently valid standing delegation covering that same target, action, and scope.
+
+These paths are alternatives; the runtime must not require both. A natural-language business execution request is not permission; a natural-language business execution request or chat consent expresses intent, but is not permission. Before provider execution, the runtime must revalidate the selected path, target, scope, write gate, deterministic validation, idempotency, one-shot permit, receipt, and exact read-back. A typed Accounting Case that is explicitly mounted under standing delegation must not ask for a confirmation phrase or per-item approval.
+
 ## Fact provenance and ledger-target gate
 
 Classify each business fact by origin and destination role:
@@ -150,6 +161,9 @@ ledger.transaction.native.prepare
 ledger.transaction.native.execute
 ledger.transaction.journal.prepare
 ledger.transaction.journal.execute
+ledger.accounting_case.prepare
+ledger.accounting_case.execute
+ledger.accounting_case.status.read
 ledger.object.read_exact
 ledger.report.read
 ledger.report.trial_balance.read
@@ -186,7 +200,7 @@ capability_revision
 last_verified_at
 ```
 
-Effective capability is the intersection of release policy, connection health, bound target, OAuth scope, user permission, write gate, object/action support, and required approval. The appearance of one tool must not imply any other capability on that server.
+Effective capability is the intersection of release policy, connection health, bound target, OAuth scope, user permission, write gate, object/action support, and the selected authorization path. The appearance of one tool must not imply any other capability on that server.
 
 ## Execution and normalized receipt
 
@@ -194,8 +208,9 @@ Effective capability is the intersection of release policy, connection health, b
 describeCapabilities(context)
 resolveTarget(context)
 readReferenceData(intent)
-prepare(intent, mappedReferences)
-execute(preparedRef, verifiedApproval)
+prepareAccountingCase(submittedFacts, expectedVersion)
+executeAccountingCase(caseRef, standingDelegationOrExactApproval)
+getAccountingCaseStatus(caseRef)
 readBack(providerObjectRef)
 queryOutcome(attemptRef)
 readReport(reportSpec)
@@ -225,7 +240,7 @@ next_gate
 
 Keep `source_state`, `proposal_state`, `ledger_state`, `reconciliation_state`, and `close_state` separate. Only `ledger_effective=true` plus exact read-back permits `POSTED_READBACK_VERIFIED`.
 
-Capability availability and action outcome are separate facts. A mounted exact-read capability may still time out or fail for one attempt; retain `WRITE_RESULT_UNVERIFIED` until a later read-back succeeds. A write may also return `OUTCOME_UNKNOWN` when no outcome-query capability is available; retain the unknown state, prohibit blind resubmission, and route to manual investigation.
+Capability availability and action outcome are separate facts. A mounted exact-read capability may still time out or fail for one attempt; retain `WRITE_RESULT_UNVERIFIED` until a later read-back succeeds. A write may also return `OUTCOME_UNKNOWN` when no outcome-query capability is available; prohibit blind or new-key resubmission. The runtime may perform at most one controlled recovery while the provider-native idempotency window is open, for the same request and same idempotency key, under a durable single claim; otherwise retain the unknown state and route to manual investigation.
 
 ## Graceful degradation
 
@@ -238,7 +253,7 @@ Capability availability and action outcome are separate facts. A mounted exact-r
 | Ledger reference reads | mapped and validated proposal; unposted |
 | Ledger non-effective draft write + exact read-back | provider draft; unposted |
 | Definitive successful ledger write without successful exact read-back | `WRITE_RESULT_UNVERIFIED`; no posted claim |
-| Timeout or ambiguous execution result | `OUTCOME_UNKNOWN`; query the original attempt when supported, otherwise investigate manually, and never resubmit blindly |
+| Timeout or ambiguous execution result | `OUTCOME_UNKNOWN`; prohibit blind/new-key retry, but allow at most one controlled recovery in the provider-native idempotency window for the same request and same idempotency key under a durable single claim; then query the original attempt when supported, otherwise investigate manually |
 | Exact read-back conflicts with the approved intent | `WRITE_RESULT_MISMATCH`; investigate without blind retry |
 | Ledger-effective write + exact read-back | posted and read-back verified |
 | Trial Balance read | separate Trial Balance evidence only |

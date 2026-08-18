@@ -81,3 +81,28 @@ Secret 不进入 Agent 提示词、聊天、飞书文档、GitHub、截图或普
 5. 用同一 Work client 完成至少两个独立用户的 OAuth，确认两条 installation、token family 和 Organisation binding 同时有效、互不替换；全程保持 `XERO_WRITE_ENABLED=false`。
 
 2026-08-11 已用 Work 与 Agent2 两个独立 Host client 完成线上验收：Work 读取 `zcloak / HKD`，Agent2 读取 `Demo Company (Global) / USD`。完整证据见 `artifacts/test-runs/2026-08-11-shared-host-oauth-uat/`。
+
+## “Xero 已授权，但返回 Work 后认证失败”怎么定位
+
+这类现象不能笼统归为“Xero OAuth 失败”。完成 Xero 授权和 Organisation 选择，只证明内层 Xero 授权已完成；Work 还必须完成外层 MCP callback、authorization-code 交换和本地 flow/token 持久化。
+
+排查时先记录失败时间（含时区）、Work 用户、MCP Server Identifier、浏览器地址栏最终的 `error` 名称和页面截图。不要记录或转发 `code`、`state`、Client Secret、Access Token 或 Refresh Token。然后用同一时间窗对照 Work 后端日志和 MCP Nginx 的脱敏访问日志：
+
+| 观察结果 | 最可能失败阶段 | 处置 |
+|---|---|---|
+| Work callback 为 `invalid_state` 或 `csrf_validation_failed`，且 MCP `/token` 没有请求 | Work 的 OAuth flow/state、Cookie fallback、并发 reconnect 或共享 flow store | 核对 Work 是否包含 LibreChat 的 PENDING-flow/CSRF fallback 修复；多副本必须共享 flow store |
+| MCP `/token` 返回 `401` | Work 保存的 confidential Client Secret 缺失、被覆盖或与 MCP 服务端不一致 | 管理员在 Work 和服务端成对轮换同一 Work client 的 Secret；普通用户不接触 Secret |
+| MCP `/token` 返回 `400 invalid_target` | Work 显式传了错误的 MCP `resource`，或一个未获兼容批准的 Host 漏传 `resource` | 修 Host 请求或核对精确 client allowlist；即使允许省略，也只能补成唯一 canonical MCP resource，绝不接受错误值 |
+| MCP `/token` 返回 `400 invalid_grant` | PKCE verifier、Redirect URI、client/code 绑定不一致，或 code 已过期/消费 | 检查 Work 是否复用了最初生成的 authorization URL 和 PKCE 对，而不是 reconnect 时生成第二套 |
+| MCP `/token` 返回 `200`，Work 仍显示失败 | Work 没有完成 token/flow 持久化，或完成事件被后续 reconnect 覆盖 | 检查 Work 的 flow completion、token storage 和并发连接日志 |
+
+LibreChat 上游已经修过两组与该症状高度相关的问题：
+
+- [#12171](https://github.com/danny-avila/LibreChat/pull/12171)：新窗口/SSE 回调缺少 CSRF 或 session Cookie、陈旧 PENDING flow、并发连接及重认证失败；
+- [#13532](https://github.com/danny-avila/LibreChat/pull/13532)：`/oauth/initiate` 重新生成 authorization URL，导致原 PKCE verifier/challenge 与回调不再匹配。
+
+2026-08-14 至 15 日的同版本线上复现进一步把两层问题分开了：MCP 已完成 Xero consent、Organisation 选择并签发外层一次性 code，但 automatic direct-302 在测试浏览器中被客户端拦截，Work 没有继续请求 `/token`；一次失败后，Work/LibreChat 又可能长期停在 `Connecting`，即使重新登录也只重新读取 OAuth metadata、不再打开 `/authorize`。因此当前 Personal POC/UAT 的精确 Work client 与 Agent2 client 都配置在 `OAUTH_MANUAL_RETURN_CLIENT_IDS`，让用户点击 `Return to Work` 后以 GET 表单提交同一个注册 callback。这个兼容页不改变或绕过 `state`、PKCE、Redirect URI、一次性 code、client secret 或 token 校验。
+
+`OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS` 与上述浏览器返回策略仍然完全独立：前者只处理特定 Host 省略 RFC 8707 `resource` 的兼容，后者只处理浏览器跳转。若 Work 已卡在 `Connecting` 且服务端同一时间窗没有新的 `/authorize`，应先在 Work 平台清理或重建该 connector 的陈旧 OAuth flow；继续重启 MCP、重复 Xero consent 或放宽 OAuth 校验都不会修复这个客户端状态。
+
+因此，在没有同一失败时间窗的 Work/MCP 日志前，不应把问题直接归因给 Xero 或 MCP 服务端，也不应通过关闭 PKCE、忽略 `state`、接受错误 Redirect URI 或取消 `resource` 校验来“修复”。当前证据同时说明：MCP 端此前确有陈旧 reconnect 与浏览器 handoff 兼容缺口，已经在候选版本修复；Work 卡住且不再发起 `/authorize` 则是独立的平台状态机问题，需要 Work/LibreChat 侧清理。

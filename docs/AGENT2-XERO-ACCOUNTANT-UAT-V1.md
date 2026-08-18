@@ -1,5 +1,10 @@
 # Agent2 × Xero 会计用户 UAT V1
 
+> **历史契约 / 已由 0.4.0-rc.1 Accounting Case UAT 取代。** 本文记录 0.3.x
+> object-level 工具和逐单会话确认的当时验收方法，不应被改写成新的运行证据，也不能再作为
+> 28-tool 发布门禁。当前契约以 Standing Delegation、三个 Accounting Case 工具、Provider
+> receipt 与 exact readback 为准。
+
 状态：`BLOCKED`（截至 2026-08-05，Agent2 只读、材料和准备链已通过；真实 DRAFT 写入尚未完成）  
 唯一线上验收宿主：`https://agent2.zcloak.ai`  
 目标 MCP 槽位：`Accounting MCP`（Unique Server Identifier：`accounting-mcp`）  

@@ -628,7 +628,8 @@ OAuth JSON response 使用 `application/json`、`Cache-Control: no-store`、`Pra
 | `HOST_IDENTITY_AUDIENCE` | Team 必填 | zCloak Broker audience |
 | `HOST_IDENTITY_JWKS_URI` | Team 必填 | HTTPS、固定 allowlist，防 SSRF |
 | `PERSONAL_POC_ONLY` | 是 | 默认 `false`；缺稳定身份时才显式 `true` |
-| `MCP_OAUTH_ALLOW_MISSING_RESOURCE_FOR_POC` | 否 | 默认/生产 `false` |
+| `OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS` | 否 | 仅 `PERSONAL_POC_ONLY=true`；逗号分隔的已注册 Host client ID 精确 allowlist。允许这些客户端省略 `resource` 时只补成唯一 canonical MCP resource；显式错误 `resource` 仍拒绝 |
+| `OAUTH_MANUAL_RETURN_CLIENT_IDS` | 否 | 仅 `PERSONAL_POC_ONLY=true`；独立的已注册 Host client ID 精确 allowlist。只有这些客户端使用手动“返回 Host”页面；不得由 missing-resource 兼容设置隐式开启 |
 | `XERO_CLIENT_ID` | 是/Secret ref | Xero Web app Auth Code client |
 | `XERO_CLIENT_SECRET` | 是/Secret | 不进日志/数据库明文 |
 | `XERO_REDIRECT_URI` | 是 | `${PUBLIC_BASE_URL}/oauth/xero/callback` |
