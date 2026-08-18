@@ -19,6 +19,7 @@ import type {
   ContactListResult,
   ContactSummary,
   CreditNoteListResult,
+  CreditNoteSnapshot,
   CreditNoteSummary,
   InvoiceListResult,
   InvoiceSnapshot,
@@ -388,6 +389,18 @@ export class SyntheticXeroAccountingProvider implements AccountingProvider {
     });
     if (!invoice) throw new AppError("NOT_FOUND", "The synthetic invoice was not found.", { httpStatus: 404 });
     return clone(invoice);
+  }
+
+  async getCreditNote(
+    principal: AccountingPrincipal,
+    creditNoteId: string,
+    expectedType?: CreditNoteType,
+  ): Promise<CreditNoteSnapshot> {
+    this.#record("getCreditNote", principal, {
+      creditNoteId,
+      ...(expectedType ? { expectedType } : {}),
+    }, { found: false });
+    throw new AppError("NOT_FOUND", "The synthetic fixture has no exact credit-note snapshot.", { httpStatus: 404 });
   }
 
   async getSupplierBill(principal: AccountingPrincipal, invoiceId: string): Promise<SupplierBillSnapshot> {

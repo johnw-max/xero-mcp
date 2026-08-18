@@ -1,0 +1,17 @@
+export const REQUIRED_GATE_STEP_IDS = Object.freeze([
+  "independent-review-live",
+  "traceability-closed",
+  "local-agent-evidence",
+  "process-crash-restart-evidence",
+  "typecheck",
+  "build",
+  "full-regression",
+  "postgres-required",
+  "http-required",
+  "static-verification",
+  "git-diff-check",
+  "release-bundle-build",
+  "release-bundle-verify",
+  "release-oci-build",
+  "release-oci-runtime-smoke",
+]);

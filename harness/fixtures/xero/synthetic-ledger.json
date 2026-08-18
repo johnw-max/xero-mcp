@@ -85,6 +85,7 @@
       "taxType": "NONE",
       "status": "ACTIVE",
       "displayTaxRate": "0",
+      "effectiveRate": "0",
       "canApplyToExpenses": true,
       "canApplyToAssets": true,
       "canApplyToLiabilities": true
@@ -94,6 +95,7 @@
       "taxType": "OLDNONE",
       "status": "DELETED",
       "displayTaxRate": "0",
+      "effectiveRate": "0",
       "canApplyToExpenses": true,
       "canApplyToAssets": true,
       "canApplyToLiabilities": true

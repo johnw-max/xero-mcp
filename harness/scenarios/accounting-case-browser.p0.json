@@ -1,0 +1,75 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "xero-accounting-case-browser-p0",
+  "layer": "FINAL_BROWSER_SIGNATURE",
+  "description": "One current browser signature journey proves that a normal accounting request uses the three Case tools under Standing Delegation and reports only receipt/readback-backed outcomes.",
+  "safety": {
+    "data_class": "SYNTHETIC_ONLY",
+    "write_policy": "ONE_CONTROLLED_DRAFT_WRITER",
+    "authorise_forbidden": true,
+    "payment_forbidden": true,
+    "write_gate_must_start_closed": true,
+    "write_gate_must_end_closed": true
+  },
+  "defaults": {
+    "repeats": 1,
+    "remote_concurrency": 1,
+    "write_retry_limit": 0
+  },
+  "cases": [
+    {
+      "id": "BC-CASE-JOURNEY-001",
+      "title": "Browser-visible Accounting Case prepare, automatic execute, receipt and status journey",
+      "priority": "P0",
+      "mode": "CONTROLLED_WRITE",
+      "personas": ["controller_recovery_agent"],
+      "fixture_refs": ["harness/fixtures/xero/accounting-case-business-documents.v1.json"],
+      "prerequisites": ["Agent2 browser authenticated", "Dedicated Xero test organisation pinned", "Active exact Standing Delegation", "Emergency write gate controlled by the operator"],
+      "steps": [
+        {
+          "id": "run_case_in_browser",
+          "actor": "human_accountant",
+          "action": "BROWSER_TURN",
+          "utterance": "请处理我加入的这组测试会计材料。先核对来源覆盖、账套、联系人、科目、税码和金额；符合当前授权的 DRAFT 自动执行。任何缺失、冲突或不确定写入都必须停止，不要 AUTHORISE、付款或重试。",
+          "capture": ["AGENT_TEXT", "TOOL_CALL", "TOOL_OUTPUT", "PROVIDER_RECORD", "REPOSITORY_STATE", "BROWSER_EVIDENCE"],
+          "oracles": [
+            {
+              "id": "visible_three_case_tools",
+              "strength": "HARD",
+              "kind": "EVIDENCE_PRESENT",
+              "source": "BROWSER_EVIDENCE",
+              "operator": "ALL",
+              "expected": ["prepare Case receipt", "execute Case receipt", "Case status receipt"],
+              "evidence_required": ["conversation URL", "visible tool receipts"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "browser_receipt_readback_boundary",
+          "strength": "HARD",
+          "kind": "EVIDENCE_PRESENT",
+          "source": "AGGREGATE",
+          "operator": "ALL",
+          "expected": ["exact target", "standing delegation revision", "provider object ID", "provider receipt", "exact same-ID readback", "residual event count"],
+          "evidence_required": ["browser evidence", "provider record", "Case status"],
+          "on_failure": "FAIL_CASE"
+        },
+        {
+          "id": "browser_gate_closed_after_run",
+          "strength": "HARD",
+          "kind": "EVIDENCE_PRESENT",
+          "source": "REPOSITORY_STATE",
+          "operator": "EQ",
+          "expected": "XERO_WRITE_ENABLED=false",
+          "evidence_required": ["post-run deployment receipt"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["browser", "accounting_case", "standing_delegation", "receipt", "readback"]
+    }
+  ]
+}

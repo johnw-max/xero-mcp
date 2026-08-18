@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 export const VERDICTS = Object.freeze([
   "PASS",
+  "PASS_OFFLINE_CONTRACT",
   "FAIL",
   "BLOCKED_MODEL_PROVIDER",
   "BLOCKED_ENV",
@@ -15,6 +16,10 @@ export const VERDICTS = Object.freeze([
 ]);
 
 const VERDICT_SET = new Set(VERDICTS);
+const EVIDENCE_CLASSES = new Set([
+  "LIVE_AGENT2_ACCEPTANCE",
+  "OFFLINE_FAULT_INJECTION_CONTRACT",
+]);
 const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const DEFAULT_WRITE_TOOL_PATTERNS = [
   "re:(^|__|_)(create|update|delete|void|authori[sz]e|approve|pay|post|reconcile)(_|$)",
@@ -104,6 +109,8 @@ function validateExpectations(expect, label) {
     "requiredToolOutput",
     "forbiddenToolOutput",
     "requiredToolCalls",
+    "requiredToolCallJson",
+    "exactToolCallCounts",
     "minToolCalls",
     "maxToolCalls",
     "allCallsHaveOutput",
@@ -146,6 +153,69 @@ function validateExpectations(expect, label) {
       assertPatternList(requiredCall.output ?? [], `${callLabel}.output`);
     }
   }
+  if (expect.requiredToolCallJson !== undefined) {
+    if (!Array.isArray(expect.requiredToolCallJson) || expect.requiredToolCallJson.length === 0) {
+      throw new Error(`${label}.requiredToolCallJson must be a non-empty array`);
+    }
+    for (const [index, requiredCall] of expect.requiredToolCallJson.entries()) {
+      const callLabel = `${label}.requiredToolCallJson[${index}]`;
+      if (!requiredCall || typeof requiredCall !== "object" || Array.isArray(requiredCall)) {
+        throw new Error(`${callLabel} must be an object`);
+      }
+      const unknownCallKeys = Object.keys(requiredCall).filter(
+        (key) => !new Set(["tool", "assertions"]).has(key),
+      );
+      if (unknownCallKeys.length > 0) throw new Error(`${callLabel} has unsupported keys: ${unknownCallKeys.join(", ")}`);
+      assertNonEmptyString(requiredCall.tool, `${callLabel}.tool`);
+      assertPatternList([requiredCall.tool], `${callLabel}.tool`);
+      if (!Array.isArray(requiredCall.assertions) || requiredCall.assertions.length === 0) {
+        throw new Error(`${callLabel}.assertions must be a non-empty array`);
+      }
+      for (const [assertionIndex, assertion] of requiredCall.assertions.entries()) {
+        const assertionLabel = `${callLabel}.assertions[${assertionIndex}]`;
+        if (!assertion || typeof assertion !== "object" || Array.isArray(assertion)) {
+          throw new Error(`${assertionLabel} must be an object`);
+        }
+        const operators = ["equals", "length", "multiset", "everyEquals", "everyPresent"]
+          .filter((key) => assertion[key] !== undefined);
+        const unknownAssertionKeys = Object.keys(assertion).filter((key) => !["path", ...operators].includes(key));
+        assertNonEmptyString(assertion.path, `${assertionLabel}.path`);
+        if (!/^\$(?:\.[A-Za-z0-9_]+(?:\[\*\])?)*$/u.test(assertion.path)) {
+          throw new Error(`${assertionLabel}.path must be a bounded JSON path such as $.operations[*].state`);
+        }
+        if (operators.length !== 1 || unknownAssertionKeys.length > 0) {
+          throw new Error(`${assertionLabel} must contain exactly one supported operator`);
+        }
+        if (assertion.length !== undefined) asInteger(assertion.length, 0, 0, 10_000);
+        if (assertion.multiset !== undefined && !Array.isArray(assertion.multiset)) {
+          throw new Error(`${assertionLabel}.multiset must be an array`);
+        }
+        if (assertion.everyPresent !== undefined && assertion.everyPresent !== true) {
+          throw new Error(`${assertionLabel}.everyPresent must be true`);
+        }
+      }
+    }
+  }
+  if (expect.exactToolCallCounts !== undefined) {
+    if (!Array.isArray(expect.exactToolCallCounts) || expect.exactToolCallCounts.length === 0) {
+      throw new Error(`${label}.exactToolCallCounts must be a non-empty array`);
+    }
+    for (const [index, requiredCount] of expect.exactToolCallCounts.entries()) {
+      const countLabel = `${label}.exactToolCallCounts[${index}]`;
+      if (!requiredCount || typeof requiredCount !== "object" || Array.isArray(requiredCount)) {
+        throw new Error(`${countLabel} must be an object`);
+      }
+      const unknownCountKeys = Object.keys(requiredCount).filter(
+        (key) => !new Set(["tool", "count"]).has(key),
+      );
+      if (unknownCountKeys.length > 0) {
+        throw new Error(`${countLabel} has unsupported keys: ${unknownCountKeys.join(", ")}`);
+      }
+      assertNonEmptyString(requiredCount.tool, `${countLabel}.tool`);
+      assertPatternList([requiredCount.tool], `${countLabel}.tool`);
+      asInteger(requiredCount.count, 0, 0, 10_000);
+    }
+  }
   if (expect.minToolCalls !== undefined) {
     asInteger(expect.minToolCalls, 0, 0, 10_000);
   }
@@ -164,6 +234,50 @@ function validateExpectations(expect, label) {
   }
 }
 
+function validateMockTrace(mock, label) {
+  if (mock === undefined) return;
+  if (!mock || typeof mock !== "object" || Array.isArray(mock)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const supportedKeys = new Set(["sequence", "byAgent", "response"]);
+  const unknown = Object.keys(mock).filter((key) => !supportedKeys.has(key));
+  if (unknown.length > 0) throw new Error(`${label} has unsupported keys: ${unknown.join(", ")}`);
+  if (mock.response === undefined) return;
+  const response = mock.response;
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    throw new Error(`${label}.response must be an object`);
+  }
+  const unknownResponseKeys = Object.keys(response).filter(
+    (key) => !new Set(["assistantText", "toolCalls"]).has(key),
+  );
+  if (unknownResponseKeys.length > 0) {
+    throw new Error(`${label}.response has unsupported keys: ${unknownResponseKeys.join(", ")}`);
+  }
+  assertNonEmptyString(response.assistantText, `${label}.response.assistantText`);
+  if (!Array.isArray(response.toolCalls) || response.toolCalls.length === 0) {
+    throw new Error(`${label}.response.toolCalls must be a non-empty array`);
+  }
+  for (const [index, call] of response.toolCalls.entries()) {
+    const callLabel = `${label}.response.toolCalls[${index}]`;
+    if (!call || typeof call !== "object" || Array.isArray(call)) {
+      throw new Error(`${callLabel} must be an object`);
+    }
+    const unknownCallKeys = Object.keys(call).filter(
+      (key) => !new Set(["name", "arguments", "output"]).has(key),
+    );
+    if (unknownCallKeys.length > 0) {
+      throw new Error(`${callLabel} has unsupported keys: ${unknownCallKeys.join(", ")}`);
+    }
+    assertNonEmptyString(call.name, `${callLabel}.name`);
+    if (!call.arguments || typeof call.arguments !== "object" || Array.isArray(call.arguments)) {
+      throw new Error(`${callLabel}.arguments must be an object`);
+    }
+    if (!call.output || typeof call.output !== "object" || Array.isArray(call.output)) {
+      throw new Error(`${callLabel}.output must be an object`);
+    }
+  }
+}
+
 export function validateManifest(manifest) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
     throw new Error("Manifest root must be an object");
@@ -178,6 +292,9 @@ export function validateManifest(manifest) {
     throw new Error("Manifest version must be 1");
   }
   assertNonEmptyString(manifest.name, "manifest.name");
+  if (manifest.evidenceClass !== undefined && !EVIDENCE_CLASSES.has(manifest.evidenceClass)) {
+    throw new Error(`manifest.evidenceClass must be one of ${[...EVIDENCE_CLASSES].join(", ")}`);
+  }
   if (!Array.isArray(manifest.agents) || manifest.agents.length === 0) {
     throw new Error("manifest.agents must contain at least one agent");
   }
@@ -266,6 +383,13 @@ export function validateManifest(manifest) {
       }
     }
     validateExpectations(testCase.expect, `${label}.expect`);
+    validateMockTrace(testCase.mock, `${label}.mock`);
+    if (manifest.evidenceClass === "LIVE_AGENT2_ACCEPTANCE" && testCase.mock !== undefined) {
+      throw new Error(`${label}.mock is forbidden for LIVE_AGENT2_ACCEPTANCE evidence`);
+    }
+    if (manifest.evidenceClass === "OFFLINE_FAULT_INJECTION_CONTRACT" && testCase.mock === undefined) {
+      throw new Error(`${label}.mock is required for OFFLINE_FAULT_INJECTION_CONTRACT evidence`);
+    }
   }
 
   const settings = manifest.settings ?? {};
@@ -557,6 +681,30 @@ export function evaluateExpectations({ testCase, functionCalls, functionOutputs,
       })),
     });
   }
+  for (const [index, requiredCall] of (expect.requiredToolCallJson ?? []).entries()) {
+    const matchingCalls = functionCalls.filter((call) => anyMatches([call.name ?? ""], requiredCall.tool));
+    const candidates = matchingCalls.flatMap((call) =>
+      (outputsByCallId.get(call.call_id) ?? []).flatMap((output) => structuredOutputCandidates(output.output)));
+    const results = candidates.map((candidate) => requiredCall.assertions.map((assertion) =>
+      evaluateStructuredAssertion(candidate, assertion)));
+    const matched = results.some((candidateResults) => candidateResults.every((result) => result.pass));
+    assertions.push({
+      name: `required_tool_call_json:${index}:${requiredCall.tool}`,
+      pass: matched,
+      expected: requiredCall.assertions,
+      actual: results,
+    });
+  }
+  for (const [index, requiredCount] of (expect.exactToolCallCounts ?? []).entries()) {
+    const matchingCalls = functionCalls.filter((call) =>
+      anyMatches([call.name ?? ""], requiredCount.tool));
+    assertions.push({
+      name: `exact_tool_call_count:${index}:${requiredCount.tool}`,
+      pass: matchingCalls.length === requiredCount.count,
+      expected: requiredCount.count,
+      actual: matchingCalls.length,
+    });
+  }
   addPatternAssertions({
     assertions,
     patterns: expect.forbiddenAssistantText,
@@ -620,6 +768,87 @@ function stringifyOutput(value) {
   } catch {
     return String(value);
   }
+}
+
+function structuredOutputCandidates(value) {
+  const candidates = [];
+  const seen = new Set();
+  const visit = (candidate, depth = 0) => {
+    if (depth > 4 || candidate === null || candidate === undefined) return;
+    if (typeof candidate === "string") {
+      try {
+        visit(JSON.parse(candidate), depth + 1);
+      } catch {
+        // Non-JSON tool text is intentionally not a structured oracle.
+      }
+      return;
+    }
+    if (typeof candidate !== "object") return;
+    let identity;
+    try {
+      identity = JSON.stringify(candidate);
+    } catch {
+      return;
+    }
+    if (seen.has(identity)) return;
+    seen.add(identity);
+    candidates.push(candidate);
+    if (!Array.isArray(candidate)) {
+      visit(candidate.structuredContent, depth + 1);
+      visit(candidate.result, depth + 1);
+      if (Array.isArray(candidate.content)) {
+        for (const item of candidate.content) {
+          if (item && typeof item === "object" && item.type === "text") visit(item.text, depth + 1);
+        }
+      }
+    }
+  };
+  visit(value);
+  return candidates;
+}
+
+function jsonPathValues(root, pathValue) {
+  const tokens = pathValue === "$" ? [] : pathValue.slice(2).split(".");
+  let values = [root];
+  for (const token of tokens) {
+    const wildcard = token.endsWith("[*]");
+    const key = wildcard ? token.slice(0, -3) : token;
+    values = values.flatMap((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value) || !(key in value)) return [];
+      const selected = value[key];
+      return wildcard ? (Array.isArray(selected) ? selected : []) : [selected];
+    });
+  }
+  return values;
+}
+
+function stableComparable(value) {
+  return JSON.stringify(value, Object.keys(value && typeof value === "object" && !Array.isArray(value) ? value : {}).sort());
+}
+
+function evaluateStructuredAssertion(root, assertion) {
+  const values = jsonPathValues(root, assertion.path);
+  let pass = false;
+  let expected;
+  if (assertion.equals !== undefined) {
+    expected = assertion.equals;
+    pass = values.length === 1 && stableComparable(values[0]) === stableComparable(assertion.equals);
+  } else if (assertion.length !== undefined) {
+    expected = { length: assertion.length };
+    pass = values.length === 1 && Array.isArray(values[0]) && values[0].length === assertion.length;
+  } else if (assertion.multiset !== undefined) {
+    expected = { multiset: assertion.multiset };
+    const actual = values.map(stableComparable).sort();
+    const wanted = assertion.multiset.map(stableComparable).sort();
+    pass = JSON.stringify(actual) === JSON.stringify(wanted);
+  } else if (assertion.everyEquals !== undefined) {
+    expected = { everyEquals: assertion.everyEquals };
+    pass = values.length > 0 && values.every((value) => stableComparable(value) === stableComparable(assertion.everyEquals));
+  } else if (assertion.everyPresent === true) {
+    expected = { everyPresent: true };
+    pass = values.length > 0 && values.every((value) => value !== null && value !== undefined && value !== "");
+  }
+  return { path: assertion.path, pass, expected, actual: values };
 }
 
 function redactString(value, secrets) {
@@ -815,6 +1044,7 @@ function makeBaseResult({ task, runId, nowIso }) {
     case_id: task.testCase.id,
     case_title: task.testCase.title,
     operation: task.testCase.operation,
+    evidence_class: task.evidenceClass ?? "LEGACY_UNCLASSIFIED",
     repeatIndex: task.repeatIndex,
     repeatCount: task.repeatCount,
     agent: {
@@ -1037,6 +1267,12 @@ async function executeTask({
   if (result.retry_events.length > 0) {
     return finish("FLAKY", "Hard assertions passed after one or more bounded read retries");
   }
+  if (mode === "mock" && task.evidenceClass === "OFFLINE_FAULT_INJECTION_CONTRACT") {
+    return finish(
+      "PASS_OFFLINE_CONTRACT",
+      "Offline fault-injection contract assertions passed; this is not live Agent2 or Provider evidence",
+    );
+  }
   return finish("PASS", "All hard assertions passed on the first attempt");
 }
 
@@ -1126,6 +1362,7 @@ function expandTasks(manifest, mode, env) {
               ? `${testCase.id}::${alias}`
               : `${testCase.id}::${alias}::repeat-${repeatIndex}-of-${repeatCount}`,
           testCase,
+          evidenceClass: manifest.evidenceClass,
           agent,
           repeatIndex,
           repeatCount,
@@ -1204,6 +1441,7 @@ function buildSummary({ runId, mode, manifest, candidateVersion, settings, start
     `- Run: \`${runId}\``,
     `- Mode: \`${mode}\``,
     `- Manifest: ${manifest.name}`,
+    `- Evidence class: \`${manifest.evidenceClass ?? "LEGACY_UNCLASSIFIED"}\``,
     `- Local candidate package version: ${candidateVersion ?? "UNAVAILABLE"}`,
     `- Started: ${startedAt}`,
     `- Completed: ${completedAt}`,
@@ -1235,7 +1473,9 @@ function buildSummary({ runId, mode, manifest, candidateVersion, settings, start
     `- [Per-invocation results](./agent-results.jsonl): ${results.length} record(s)` ,
     `- [Function call receipts](./tool-receipts.jsonl): ${receipts.length} record(s)`,
     "",
-    "A `PASS` requires the manifest's hard assertions to pass; HTTP 200 alone is never counted as a pass. A `FLAKY` result passed those assertions only after a bounded read retry. Blocked, unsupported, skipped, and flaky results are not silently converted to passes.",
+    "Captured Agent2 function-call counts do not prove Provider request counts. Provider zero/one/create-once requires server audit, Provider trace, and Xero object-count evidence at live Gate W.",
+    "",
+    "A `PASS` requires live/legacy hard assertions to pass; HTTP 200 alone is never counted as a pass. `PASS_OFFLINE_CONTRACT` proves only an offline fault-injection oracle and is never live Agent2, MCP, OAuth, tenant, or Provider evidence. A `FLAKY` result passed only after bounded read retry. Blocked, unsupported, skipped, and flaky results are not silently converted to passes.",
     "",
   ];
   return lines.join("\n");
@@ -1264,11 +1504,53 @@ function makeMockResponse(spec) {
   };
 }
 
+function makeTraceMockResponse(task, response) {
+  const output = response.toolCalls.flatMap((call, index) => {
+    const callId = `call_${task.index}_${index}`;
+    return [
+      {
+        type: "function_call",
+        id: `fc_${task.index}_${index}`,
+        call_id: callId,
+        name: call.name,
+        arguments: JSON.stringify(call.arguments),
+        status: "completed",
+      },
+      {
+        type: "function_call_output",
+        id: `fco_${task.index}_${index}`,
+        call_id: callId,
+        output: JSON.stringify(call.output),
+        status: "completed",
+      },
+    ];
+  });
+  output.push({
+    type: "message",
+    id: `msg_${task.index}`,
+    role: "assistant",
+    status: "completed",
+    content: [{ type: "output_text", text: response.assistantText }],
+  });
+  return makeMockResponse({
+    status: 200,
+    body: {
+      id: `resp_${task.index}`,
+      object: "response",
+      status: "completed",
+      output,
+    },
+  });
+}
+
 export function createManifestMockTransport({ onRequest } = {}) {
   const attempts = new Map();
   return async ({ task, attempt, requestBody }) => {
     await onRequest?.({ task, attempt, requestBody });
     const key = task.resultId;
+    if (task.testCase.mock?.response) {
+      return makeTraceMockResponse(task, task.testCase.mock.response);
+    }
     const sequence = task.testCase.mock?.byAgent?.[task.agent.alias] ?? task.testCase.mock?.sequence;
     if (!Array.isArray(sequence) || sequence.length === 0) {
       throw new Error(`Mock mode requires ${task.testCase.id}.mock.sequence or mock.byAgent.${task.agent.alias}`);
@@ -1330,6 +1612,12 @@ export async function runHarness({
   }
   assertNonEmptyString(manifestPath, "manifestPath");
   const loaded = await loadManifest(manifestPath);
+  if (loaded.manifest.evidenceClass === "OFFLINE_FAULT_INJECTION_CONTRACT" && mode === "live") {
+    throw new Error("OFFLINE_FAULT_INJECTION_CONTRACT manifests cannot run in live mode");
+  }
+  if (loaded.manifest.evidenceClass === "LIVE_AGENT2_ACCEPTANCE" && mode === "mock") {
+    throw new Error("LIVE_AGENT2_ACCEPTANCE manifests cannot run in mock mode");
+  }
   const candidateVersion = await loadRepositoryPackageVersion();
   const settings = normalizedSettings(loaded.manifest.settings);
   const effectiveRunId = runId ?? defaultRunId(now());
@@ -1410,6 +1698,7 @@ export async function runHarness({
       run_id: effectiveRunId,
       mode,
       manifest_name: loaded.manifest.name,
+      evidence_class: loaded.manifest.evidenceClass ?? "LEGACY_UNCLASSIFIED",
       repository_package_version: candidateVersion,
       manifest_path: path.relative(process.cwd(), loaded.manifestPath),
       manifest_sha256: loaded.manifestSha256,

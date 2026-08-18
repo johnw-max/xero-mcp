@@ -1,6 +1,7 @@
 {
   "version": 1,
-  "name": "agent2-live-multi-persona-readonly-template",
+  "name": "agent2-live-v0.4.0-rc.1-multi-persona-readonly-template",
+  "releaseContract": "0.4.0-rc.1 / 28 public tools",
   "settings": {
     "concurrency": 2,
     "repeats": 1,
@@ -42,12 +43,15 @@
         },
         {
           "role": "user",
-          "content": "Please use xero_search_contacts, then xero_list_invoices with type ACCPAY, and tell me the historical Brown Office Supplies bills, their current Xero status, and the amount genuinely outstanding. This is read-only. Explain any data you cannot verify."
+          "content": "First pin the current Xero organisation. Then use xero_search_contacts and xero_list_invoices with type ACCPAY to tell me the historical Brown Office Supplies bills, their current Xero status, and the amount genuinely outstanding. This is read-only. Explain any data you cannot verify."
         }
       ],
       "expect": {
-        "requiredTools": ["*xero_search_contacts", "*xero_list_invoices"],
+        "requiredTools": ["*xero_pin_current_organisation", "*xero_search_contacts", "*xero_list_invoices"],
         "requiredToolCalls": [
+          {
+            "tool": "*xero_pin_current_organisation"
+          },
           {
             "tool": "*xero_search_contacts",
             "arguments": ["Brown Office Supplies"]

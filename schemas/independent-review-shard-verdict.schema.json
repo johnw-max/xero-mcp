@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcloak.network/schemas/independent-review-shard-verdict.schema.json",
+  "title": "Independent atomic claim shard review verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "implementation_execution_id",
+    "source_fingerprint",
+    "review_subject_sha256",
+    "review_inputs_sha256",
+    "plan_sha256",
+    "requirement_id",
+    "claim_id",
+    "shard_id",
+    "reviewer_role",
+    "decision",
+    "evidence_checked",
+    "dependency_edges_checked",
+    "probe_obligations_checked",
+    "review_axes",
+    "rationale",
+    "residual_risk"
+  ],
+  "properties": {
+    "schema_version": { "const": "2.0" },
+    "implementation_execution_id": { "$ref": "#/$defs/nonEmptyString" },
+    "source_fingerprint": { "$ref": "#/$defs/sha256" },
+    "review_subject_sha256": { "$ref": "#/$defs/sha256" },
+    "review_inputs_sha256": { "$ref": "#/$defs/sha256" },
+    "plan_sha256": { "$ref": "#/$defs/sha256" },
+    "requirement_id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]*-[0-9]{3,}$" },
+    "claim_id": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_-]*-[0-9]{3,}-(?:C[0-9]{2,}|GLOBAL[0-9]{2})$"
+    },
+    "shard_id": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_-]*-[0-9]{3,}-(?:C[0-9]{2,}|GLOBAL[0-9]{2})-S[0-9]{2,}$"
+    },
+    "reviewer_role": { "$ref": "#/$defs/nonEmptyString" },
+    "decision": { "enum": ["CLOSED", "REOPEN"] },
+    "evidence_checked": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/fileReceipt" }
+    },
+    "dependency_edges_checked": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/dependencyEdge" }
+    },
+    "probe_obligations_checked": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]*-[0-9]{3,}-C[0-9]{2,}-P[0-9]{2,}$" }
+    },
+    "review_axes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mcp_layer",
+        "provider_neutrality",
+        "durable_state",
+        "concurrency_recovery",
+        "test_evidence",
+        "adversarial_counterexample"
+      ],
+      "properties": {
+        "mcp_layer": { "$ref": "#/$defs/nonEmptyString" },
+        "provider_neutrality": { "$ref": "#/$defs/nonEmptyString" },
+        "durable_state": { "$ref": "#/$defs/nonEmptyString" },
+        "concurrency_recovery": { "$ref": "#/$defs/nonEmptyString" },
+        "test_evidence": { "$ref": "#/$defs/nonEmptyString" },
+        "adversarial_counterexample": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "rationale": { "$ref": "#/$defs/nonEmptyString" },
+    "residual_risk": { "$ref": "#/$defs/nonEmptyString" }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "fileReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/nonEmptyString" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "dependencyEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["importer", "dependency"],
+      "properties": {
+        "importer": { "$ref": "#/$defs/nonEmptyString" },
+        "dependency": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    }
+  }
+}

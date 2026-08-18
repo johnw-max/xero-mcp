@@ -9,6 +9,11 @@
   "claim_guardrails": "harness/manifests/claim-guardrails.json",
   "expected_reds": "harness/manifests/expected-reds.json",
   "scenario_manifests": [
+    "harness/scenarios/accounting-case-deterministic.p0.json",
+    "harness/scenarios/accounting-case-agent2.p0.json",
+    "harness/scenarios/accounting-case-browser.p0.json"
+  ],
+  "legacy_internal_manifests": [
     "harness/scenarios/deterministic-contract.p0.json",
     "harness/scenarios/agent2-behavior.p0.json",
     "harness/scenarios/final-browser-signatures.json"

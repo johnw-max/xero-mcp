@@ -1,15 +1,38 @@
 import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { basename, posix, resolve } from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 
-export const RELEASE_VERSION = "0.3.1";
+export const RELEASE_VERSION = "0.4.0-rc.1";
 export const RELEASE_BASENAME = `xero-accounting-mcp-${RELEASE_VERSION}-source`;
 export const RELEASE_ROOT = `xero-accounting-mcp-${RELEASE_VERSION}`;
 export const DEFAULT_SOURCE_DATE_EPOCH = 0;
 
 const LEGACY_PERSONAL_DOMAIN = ["offbeatlab", "fun"].join(".");
+const REQUIRED_MIGRATIONS_MANIFEST_PATH = "src/db/required-migrations.json";
+
+function loadRequiredMigrationReleaseFiles() {
+  const manifest = JSON.parse(readFileSync(
+    new URL("../../src/db/required-migrations.json", import.meta.url),
+    "utf8",
+  ));
+  if (
+    manifest?.schemaVersion !== 1 ||
+    !Array.isArray(manifest.requiredMigrations) ||
+    manifest.requiredMigrations.length === 0 ||
+    manifest.requiredMigrations.some((migration) =>
+      typeof migration !== "string" || !/^\d{3}_[a-z0-9_]+\.sql$/u.test(migration)
+    ) ||
+    new Set(manifest.requiredMigrations).size !== manifest.requiredMigrations.length
+  ) {
+    throw new Error("The required migrations manifest is invalid.");
+  }
+  return Object.freeze(manifest.requiredMigrations.map((migration) => `migrations/${migration}`));
+}
+
+const REQUIRED_MIGRATION_RELEASE_FILES = loadRequiredMigrationReleaseFiles();
 
 const EXACT_RELEASE_FILES = [
   ".dockerignore",
@@ -26,9 +49,14 @@ const EXACT_RELEASE_FILES = [
   "deploy/HETZNER-HOST-NGINX-RUNBOOK.md",
   "deploy/HETZNER_RUNBOOK.md",
   "deploy/env.vps.example",
-  "scripts/agent2_uat_write_gate_vps.sh",
   "scripts/copy-oauth-assets.mjs",
   "scripts/preflight_xero_duplicate_guards.sql",
+  "scripts/local-acceptance-contract.mjs",
+  "scripts/approved-local-builder-contract.mjs",
+  "scripts/verify-accepted-build-context.mjs",
+  "scripts/verify-accepted-oci-release.mjs",
+  "scripts/release/production-deployment-admission.mjs",
+  "scripts/release/production-deployment-contract.mjs",
   "tests/contract/expected-tools.json",
 ];
 
@@ -50,22 +78,34 @@ const REQUIRED_RELEASE_FILES = [
   "src/oauth/assets/zcloak-app-icon.png",
   "src/server.ts",
   "src/xeroRelease.ts",
+  REQUIRED_MIGRATIONS_MANIFEST_PATH,
   "migrations/001_init.sql",
   "migrations/020_xero_runtime_readiness_compatibility.sql",
+  ...REQUIRED_MIGRATION_RELEASE_FILES,
   "deploy/Dockerfile",
   "deploy/HETZNER-HOST-NGINX-RUNBOOK.md",
   "deploy/env.vps.example",
   "deploy/docker-compose/compose.host-nginx.green.vps.yaml",
   "deploy/scripts/verify-static.sh",
-  "scripts/agent2_uat_write_gate_vps.sh",
   "scripts/copy-oauth-assets.mjs",
   "scripts/preflight_xero_duplicate_guards.sql",
+  "scripts/local-acceptance-contract.mjs",
+  "scripts/approved-local-builder-contract.mjs",
+  "scripts/verify-accepted-build-context.mjs",
+  "scripts/verify-accepted-oci-release.mjs",
+  "scripts/release/production-deployment-admission.mjs",
+  "scripts/release/production-deployment-contract.mjs",
   "tests/contract/expected-tools.json",
 ];
 
 const ALLOWED_PNG_RELEASE_FILES = new Set([
   "src/oauth/assets/xero-logo.png",
   "src/oauth/assets/zcloak-app-icon.png",
+]);
+
+const ALLOWED_PRODUCTION_RELEASE_TOOLS = new Set([
+  "scripts/release/production-deployment-admission.mjs",
+  "scripts/release/production-deployment-contract.mjs",
 ]);
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -159,10 +199,13 @@ export function forbiddenReleasePathReason(relativePath) {
     lowerPath === "deploy/env.vps.example";
   const allowedContractFixture = lowerPath === "tests/contract/expected-tools.json";
 
+  if (name === ".ds_store" || name.startsWith("._")) {
+    return "OS_METADATA";
+  }
   if (segments.some((segment) => FORBIDDEN_DIRECTORY_SEGMENTS.has(segment))) {
     return "FORBIDDEN_DIRECTORY";
   }
-  if (lowerPath.startsWith("scripts/release/")) {
+  if (lowerPath.startsWith("scripts/release/") && !ALLOWED_PRODUCTION_RELEASE_TOOLS.has(lowerPath)) {
     return "LOCAL_RELEASE_TOOLING";
   }
   if (!allowedPlaceholderEnvironment &&
@@ -281,10 +324,15 @@ export async function enumerateReleaseFiles(repoRoot) {
     await collectDirectoryFiles(repoRoot, relativeDirectory, selected);
   }
   const files = [...selected].sort((left, right) => left.localeCompare(right, "en"));
-  for (const required of REQUIRED_RELEASE_FILES) {
-    if (!selected.has(required)) throw new Error(`Release selection omitted required file: ${required}`);
-  }
+  assertRequiredReleaseFiles(selected);
   return files;
+}
+
+export function assertRequiredReleaseFiles(selected) {
+  const selectedPaths = selected instanceof Set ? selected : new Set(selected);
+  for (const required of REQUIRED_RELEASE_FILES) {
+    if (!selectedPaths.has(required)) throw new Error(`Release selection omitted required file: ${required}`);
+  }
 }
 
 export function normalizedMode(statMode) {
@@ -341,7 +389,7 @@ function tarHeader(path, size, mode, mtime) {
   return header;
 }
 
-export function createDeterministicTarGz(entries, options = {}) {
+export function createDeterministicTar(entries, options = {}) {
   const sourceDateEpoch = options.sourceDateEpoch ?? DEFAULT_SOURCE_DATE_EPOCH;
   if (!Number.isSafeInteger(sourceDateEpoch) || sourceDateEpoch < 0) {
     throw new Error("sourceDateEpoch must be a non-negative integer.");
@@ -360,7 +408,11 @@ export function createDeterministicTarGz(entries, options = {}) {
     if (padding > 0) chunks.push(Buffer.alloc(padding, 0));
   }
   chunks.push(Buffer.alloc(1024, 0));
-  return gzipSync(Buffer.concat(chunks), { level: 9, mtime: 0 });
+  return Buffer.concat(chunks);
+}
+
+export function createDeterministicTarGz(entries, options = {}) {
+  return gzipSync(createDeterministicTar(entries, options), { level: 9, mtime: 0 });
 }
 
 function readTarString(header, offset, length) {
@@ -381,13 +433,11 @@ function isZeroBlock(block) {
   return block.length === 512 && block.every((byte) => byte === 0);
 }
 
-export function parseDeterministicTarGz(archive, options = {}) {
-  const maxArchiveBytes = options.maxArchiveBytes ?? 64 * 1024 * 1024;
+function parseTarBuffer(tar, options = {}) {
   const maxExpandedBytes = options.maxExpandedBytes ?? 128 * 1024 * 1024;
   const maxEntries = options.maxEntries ?? 10_000;
-  if (!Buffer.isBuffer(archive)) throw new TypeError("Archive must be a Buffer.");
-  if (archive.length > maxArchiveBytes) throw new Error(`Archive exceeds ${maxArchiveBytes} bytes.`);
-  const tar = gunzipSync(archive, { maxOutputLength: maxExpandedBytes });
+  if (!Buffer.isBuffer(tar)) throw new TypeError("Tar archive must be a Buffer.");
+  if (tar.length > maxExpandedBytes) throw new Error(`Expanded archive exceeds ${maxExpandedBytes} bytes.`);
   const entries = [];
   const seen = new Set();
   let offset = 0;
@@ -433,6 +483,23 @@ export function parseDeterministicTarGz(archive, options = {}) {
   return entries;
 }
 
+export function parseTarArchive(tar, options = {}) {
+  return parseTarBuffer(tar, options);
+}
+
+export function parseDeterministicTarGz(archive, options = {}) {
+  const maxArchiveBytes = options.maxArchiveBytes ?? 64 * 1024 * 1024;
+  const maxExpandedBytes = options.maxExpandedBytes ?? 128 * 1024 * 1024;
+  if (!Buffer.isBuffer(archive)) throw new TypeError("Archive must be a Buffer.");
+  if (archive.length > maxArchiveBytes) throw new Error(`Archive exceeds ${maxArchiveBytes} bytes.`);
+  const tar = gunzipSync(archive, { maxOutputLength: maxExpandedBytes });
+  return parseTarBuffer(tar, options);
+}
+
 export function requiredReleaseFiles() {
   return [...REQUIRED_RELEASE_FILES];
+}
+
+export function requiredMigrationReleaseFiles() {
+  return [...REQUIRED_MIGRATION_RELEASE_FILES];
 }

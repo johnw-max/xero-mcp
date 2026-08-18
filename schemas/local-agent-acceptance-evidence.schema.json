@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcloak.network/schemas/local-agent-acceptance-evidence.schema.json",
+  "title": "Current local Agent acceptance evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "captured_at", "release_version", "runtime_attestation_hash", "source_fingerprint", "generator", "raw_artifacts", "runs"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "status": { "const": "PASS" },
+    "captured_at": { "type": "string", "format": "date-time" },
+    "release_version": { "const": "0.4.0-rc.1" },
+    "runtime_attestation_hash": { "$ref": "#/$defs/sha256" },
+    "source_fingerprint": { "$ref": "#/$defs/sha256" },
+    "generator": { "$ref": "#/$defs/generator" },
+    "raw_artifacts": { "$ref": "#/$defs/rawArtifacts" },
+    "runs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["transport", "case_id", "tool_call_id", "provider_object_id", "mutation_receipt_id", "exact_readback_receipt_id", "evidence_chain_hash", "provider_write_count", "final_answer_claim", "final_answer", "raw_artifact_refs"],
+        "properties": {
+          "transport": { "enum": ["MCP_STDIO", "MCP_HTTP_LOOPBACK"] },
+          "case_id": { "$ref": "#/$defs/nonEmptyString" },
+          "tool_call_id": { "$ref": "#/$defs/nonEmptyString" },
+          "provider_object_id": { "$ref": "#/$defs/nonEmptyString" },
+          "mutation_receipt_id": { "$ref": "#/$defs/nonEmptyString" },
+          "exact_readback_receipt_id": { "$ref": "#/$defs/nonEmptyString" },
+          "evidence_chain_hash": { "$ref": "#/$defs/sha256" },
+          "provider_write_count": { "const": 1 },
+          "final_answer_claim": { "const": "COMPLETED_WITH_PROVIDER_ID_RECEIPT_EXACT_READBACK" },
+          "final_answer": { "$ref": "#/$defs/nonEmptyString" },
+          "raw_artifact_refs": { "$ref": "#/$defs/nonEmptyUniqueStrings" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "nonEmptyUniqueStrings": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/nonEmptyString" } },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "command", "version", "executable_path", "executable_sha256"],
+      "properties": {
+        "kind": { "const": "CURRENT_LOCAL_AGENT_HARNESS" },
+        "command": { "$ref": "#/$defs/nonEmptyString" },
+        "version": { "$ref": "#/$defs/nonEmptyString" },
+        "executable_path": { "$ref": "#/$defs/nonEmptyString" },
+        "executable_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "rawArtifacts": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact_type", "path", "sha256", "size_bytes"],
+        "properties": {
+          "artifact_type": {
+            "enum": [
+              "CODEX_EVENTS_JSONL",
+              "CODEX_STDERR",
+              "FINAL_ANSWER",
+              "SERVER_AUDIT",
+              "INVOCATION"
+            ]
+          },
+          "path": { "$ref": "#/$defs/nonEmptyString" },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "size_bytes": { "type": "integer", "minimum": 1 }
+        }
+      }
+    }
+  }
+}

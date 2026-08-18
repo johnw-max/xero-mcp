@@ -1,0 +1,194 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "xero-accounting-case-deterministic-p0",
+  "layer": "DETERMINISTIC_CONTRACT",
+  "description": "Current 0.4.0-rc.1 release contract: exact 28-tool surface, immutable Accounting Case plans, Standing Delegation, zero execute payload, idempotency and receipt plus exact-readback terminal evidence.",
+  "safety": {
+    "data_class": "SYNTHETIC_ONLY",
+    "write_policy": "ONE_CONTROLLED_DRAFT_WRITER",
+    "authorise_forbidden": true,
+    "payment_forbidden": true,
+    "write_gate_must_start_closed": true,
+    "write_gate_must_end_closed": true
+  },
+  "defaults": {
+    "repeats": 1,
+    "write_retry_limit": 0
+  },
+  "cases": [
+    {
+      "id": "AC-SURFACE-001",
+      "title": "Public MCP surface is exactly 28 tools with only three Case-level mutation tools",
+      "priority": "P0",
+      "mode": "READ_ONLY",
+      "personas": ["protocol_security_agent"],
+      "fixture_refs": [],
+      "prerequisites": ["Current 0.4.0-rc.1 server build"],
+      "steps": [
+        {
+          "id": "capture_current_surface",
+          "actor": "protocol_security_agent",
+          "action": "STATE_PROBE",
+          "capture": ["TOOL_OUTPUT"],
+          "oracles": [
+            {
+              "id": "exact_28_tools",
+              "strength": "HARD",
+              "kind": "EXACT_TOOL_SET",
+              "source": "TOOL_OUTPUT",
+              "operator": "SET_EQ",
+              "expected": "config/tool-allowlist.json",
+              "evidence_required": ["tools/list receipt", "reviewed allowlist"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "legacy_mutation_tools_absent",
+          "strength": "HARD",
+          "kind": "EVIDENCE_PRESENT",
+          "source": "TOOL_OUTPUT",
+          "operator": "NOT_CONTAINS",
+          "expected": "object-level Agent mutation tools",
+          "evidence_required": ["tools/list receipt"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["surface", "accounting_case", "no_bypass"]
+    },
+    {
+      "id": "AC-CASE-PREPARE-002",
+      "title": "Prepare compiles and persists one source-bound draft Case without writing Xero",
+      "priority": "P0",
+      "mode": "READ_ONLY",
+      "personas": ["protocol_security_agent"],
+      "fixture_refs": ["harness/scenarios/accounting-case-deterministic.p0.json#/cases/1/steps/0/input"],
+      "prerequisites": ["Pinned exact Xero target", "One inline synthetic existing-contact sales-invoice Case"],
+      "steps": [
+        {
+          "id": "prepare_case",
+          "actor": "protocol_security_agent",
+          "action": "MCP_CALL",
+          "tool": "xero_prepare_accounting_case",
+          "input": {
+            "case_id": "contract-case-001",
+            "expected_version": 0,
+            "source_label": "Synthetic customer invoice",
+            "source_set_complete": true,
+            "documents": [
+              {
+                "document_type": "CUSTOMER_INVOICE",
+                "reference": "INV-CONTRACT-001",
+                "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+                "document_date": "2026-07-20",
+                "due_date": "2026-08-20",
+                "currency": "SGD",
+                "contact": { "name": "Exact Customer" },
+                "line_accounting_mode": "DOCUMENT_DEFAULT_FOR_ALL_LINES",
+                "accounting_category": "CONSULTING_REVENUE",
+                "tax_class": "SG_STANDARD_RATED",
+                "effective_tax_rate_percent": "9.00",
+                "transition_review_required": false,
+                "lines": [
+                  {
+                    "description": "Synthetic consulting service",
+                    "quantity": "1",
+                    "unit_amount_excluding_tax": "100.00",
+                    "source_tax_amount": "9.00"
+                  }
+                ],
+                "declared_net": "100.00",
+                "declared_tax": "9.00",
+                "declared_gross": "109.00",
+                "document_validity": "TEST_OR_NOT_VALID"
+              }
+            ]
+          },
+          "capture": ["TOOL_CALL", "TOOL_OUTPUT", "REPOSITORY_STATE"],
+          "oracles": [
+            {
+              "id": "prepare_called_once",
+              "strength": "HARD",
+              "kind": "TOOL_CALL_COUNT",
+              "source": "TOOL_CALL",
+              "operator": "EQ",
+              "expected": 1,
+              "tool": "xero_prepare_accounting_case",
+              "count": 1,
+              "evidence_required": ["prepare receipt"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "prepare_not_written",
+          "strength": "HARD",
+          "kind": "JSON_PATH",
+          "source": "TOOL_OUTPUT",
+          "path": "$.result.completion_claim.ledger_write_claim",
+          "operator": "EQ",
+          "expected": "NOT_WRITTEN",
+          "evidence_required": ["prepare output", "provider write count zero"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["case_prepare", "coverage", "not_written"]
+    },
+    {
+      "id": "AC-DELEGATION-003",
+      "title": "Execute loads the stored Case and requires exact active Standing Delegation",
+      "priority": "P0",
+      "mode": "CONTROLLED_WRITE",
+      "personas": ["controller_recovery_agent"],
+      "fixture_refs": ["harness/scenarios/accounting-case-deterministic.p0.json#/cases/1/steps/0/input"],
+      "prerequisites": ["Dedicated test tenant", "Current Case version persisted", "Exact Standing Delegation active", "Emergency write gate opened for the isolated run"],
+      "steps": [
+        {
+          "id": "execute_stored_case",
+          "actor": "controller_recovery_agent",
+          "action": "MCP_CALL",
+          "tool": "xero_execute_accounting_case",
+          "input": {
+            "case_id": "contract-case-001",
+            "case_version": 1,
+            "request_id": "contract-case-execute-001"
+          },
+          "capture": ["TOOL_CALL", "TOOL_OUTPUT", "PROVIDER_CALL", "PROVIDER_RECORD", "REPOSITORY_STATE"],
+          "oracles": [
+            {
+              "id": "execute_identity_only",
+              "strength": "HARD",
+              "kind": "JSON_PATH",
+              "source": "TOOL_CALL",
+              "path": "$.arguments",
+              "operator": "ALL",
+              "expected": ["case_id", "case_version", "request_id"],
+              "evidence_required": ["execute function call"],
+              "on_failure": "FAIL_CASE"
+            }
+          ]
+        }
+      ],
+      "final_oracles": [
+        {
+          "id": "terminal_requires_receipt_and_readback",
+          "strength": "HARD",
+          "kind": "EVIDENCE_PRESENT",
+          "source": "AGGREGATE",
+          "operator": "ALL",
+          "expected": ["standing delegation revision", "provider receipt", "same-ID exact readback", "terminal Case status"],
+          "evidence_required": ["repository state", "provider record", "status receipt"],
+          "on_failure": "FAIL_CASE"
+        }
+      ],
+      "baseline_expectation": "PASS",
+      "tags": ["standing_delegation", "case_execute", "readback", "idempotency"]
+    }
+  ]
+}

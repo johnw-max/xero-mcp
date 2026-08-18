@@ -1,0 +1,12 @@
+SYNTHETIC FAULT-INJECTION SEEDS
+
+Each case below is a separately seeded Accounting Case version in a dedicated test environment:
+- negative-scope-case-001 v1: execute-capable Case, Agent transport lacks xero.draft.write.
+- negative-connection-case-001 v1: execute-capable Case, Xero connection is disconnected.
+- negative-provider-access-case-001 v1: execute-capable Case, current Provider user lacks access.
+- negative-wrong-tenant-case-001 v1: Case belongs to tenant A, pinned target belongs to tenant B.
+- negative-kill-switch-case-001 v1: execute-capable Case, release write kill switch is disabled.
+- negative-unknown-case-001 v1: first Provider create is accepted, response/readback becomes WRITE_UNCERTAIN.
+- negative-recovery-case-001 v1: already seeded WRITE_UNCERTAIN with Provider object ID xero-recovery-object-001; recovery must perform exact GET only.
+
+These are test identifiers, not authority. Never switch tenants or invent receipts from this file.

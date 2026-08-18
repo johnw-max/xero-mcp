@@ -3,10 +3,12 @@ import { resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { AppError } from "../../src/errors.js";
 import { createAccountingMcpServer } from "../../src/mcp/createServer.js";
 import { TOOL_ALLOWLIST } from "../../src/mcp/toolNames.js";
 import { createLegacySharedBearerRequestContext } from "../../src/security/requestContext.js";
-import { XERO_RELEASE_VERSION } from "../../src/xeroRelease.js";
+import { XERO_RELEASE_ATTESTATION, XERO_RELEASE_VERSION } from "../../src/xeroRelease.js";
+import type { XeroAccountingCaseService } from "../../src/services/xeroAccountingCaseService.js";
 import {
   createDeterministicAccountingService,
   type ServiceCall,
@@ -31,7 +33,11 @@ interface InvalidInputCase {
 
 interface ContractManifest {
   schemaVersion: string;
+  releaseVersion: string;
+  requiredMigration: string;
+  authorityModel: "STANDING_DELEGATION";
   expectedTools: string[];
+  forbiddenPublicTools: string[];
   dangerousTools: string[];
   validReadCases: ValidReadCase[];
   invalidInputCases: InvalidInputCase[];
@@ -60,15 +66,25 @@ interface ToolReceipt {
 const repoRoot = resolve(import.meta.dirname, "../..");
 const manifestPath = resolve(repoRoot, "harness/manifests/contract-v1.json");
 
-function parseRunId(argv: string[]): string {
-  const index = argv.indexOf("--run-id");
-  const explicit = index >= 0 ? argv[index + 1] : undefined;
+function parseOptions(argv: string[]): { runId: string; outputDirectory?: string } {
+  const runIdIndex = argv.indexOf("--run-id");
+  const explicit = runIdIndex >= 0 ? argv[runIdIndex + 1] : undefined;
+  if (runIdIndex >= 0 && !explicit) throw new Error("--run-id requires a value");
   const fromEnvironment = process.env.XERO_HARNESS_RUN_ID;
   const value = explicit ?? fromEnvironment ?? new Date().toISOString().replaceAll(":", "-");
   if (!/^[A-Za-z0-9._:-]+$/.test(value)) {
     throw new Error("run ID must contain only letters, numbers, dot, underscore, colon, or hyphen");
   }
-  return value;
+  const outputIndex = argv.indexOf("--out-dir");
+  const outputDirectory = outputIndex >= 0 ? argv[outputIndex + 1] : undefined;
+  if (outputIndex >= 0 && !outputDirectory) throw new Error("--out-dir requires a value");
+  const knownIndexes = new Set([
+    ...(runIdIndex >= 0 ? [runIdIndex, runIdIndex + 1] : []),
+    ...(outputIndex >= 0 ? [outputIndex, outputIndex + 1] : []),
+  ]);
+  const unknown = argv.find((_argument, index) => !knownIndexes.has(index));
+  if (unknown) throw new Error(`Unknown argument: ${unknown}`);
+  return { runId: value, ...(outputDirectory ? { outputDirectory: resolve(outputDirectory) } : {}) };
 }
 
 function serviceMethodsSince(calls: ServiceCall[], start: number): string[] {
@@ -162,8 +178,9 @@ async function callAndReceipt(options: {
 }
 
 async function main(): Promise<void> {
-  const runId = parseRunId(process.argv.slice(2));
-  const outputDirectory = resolve(repoRoot, "artifacts/harness-runs", runId);
+  const options = parseOptions(process.argv.slice(2));
+  const runId = options.runId;
+  const outputDirectory = options.outputDirectory ?? resolve(repoRoot, "artifacts/harness-runs", runId);
   const contractResultsPath = resolve(outputDirectory, "contract-results.json");
   const receiptsPath = resolve(outputDirectory, "tool-receipts.jsonl");
   const generatedAt = new Date().toISOString();
@@ -172,12 +189,48 @@ async function main(): Promise<void> {
   const results: CaseResult[] = [];
   const receipts: ToolReceipt[] = [];
   const harnessService = createDeterministicAccountingService();
+  const accountingCases = {
+    prepare: async (...args: unknown[]) => {
+      harnessService.calls.push({ method: "accountingCase.prepare", arguments: args });
+      return {
+        case_id: "contract-case-001",
+        case_version: 1,
+        state: "PLANNED_NEEDS_PREFLIGHT",
+        completion_claim: { ledger_write_claim: "NOT_WRITTEN" },
+      };
+    },
+    execute: async (...args: unknown[]) => {
+      harnessService.calls.push({ method: "accountingCase.execute", arguments: args });
+      throw new AppError(
+        "SCOPE_MISSING",
+        "The exact ordinary Accounting Case requires xero.draft.write before preflight or execution.",
+        {
+          httpStatus: 403,
+          details: {
+            failureLayer: "MCP_SCOPE",
+            reasonCodes: ["MISSING_MCP_SCOPE"],
+            recoveryAction: "REAUTHORISE_MCP_SCOPE",
+            providerMutationPossible: false,
+          },
+        },
+      );
+    },
+    status: async (...args: unknown[]) => {
+      harnessService.calls.push({ method: "accountingCase.status", arguments: args });
+      return {
+        case_id: "contract-case-001",
+        case_version: 1,
+        state: "PLANNED_NEEDS_PREFLIGHT",
+        completion_claim: { ledger_write_claim: "NOT_WRITTEN" },
+      };
+    },
+  } as unknown as Pick<XeroAccountingCaseService, "prepare" | "execute" | "status">;
   const context = createLegacySharedBearerRequestContext({
     actorId: "contract-harness-read-only",
     audience: "https://xero-mcp.contract-harness.invalid/mcp",
     scopes: ["xero.read"],
   });
-  const server = createAccountingMcpServer(harnessService.service, context);
+  const server = createAccountingMcpServer(harnessService.service, context, undefined, undefined, accountingCases);
   const client = new Client({ name: "xero-contract-harness", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -212,6 +265,22 @@ async function main(): Promise<void> {
       );
     }
 
+    if (manifest.requiredMigration === XERO_RELEASE_ATTESTATION.requiredMigration) {
+      pass(
+        results,
+        "version.migration-head",
+        "VERSION",
+        `contract and runtime require ${manifest.requiredMigration}`,
+      );
+    } else {
+      fail(
+        results,
+        "version.migration-head",
+        "VERSION",
+        `migration head drift: contract=${manifest.requiredMigration}, runtime=${XERO_RELEASE_ATTESTATION.requiredMigration}`,
+      );
+    }
+
     try {
       await client.ping();
       pass(results, "protocol.ping", "PROTOCOL", "ping returned successfully");
@@ -228,22 +297,28 @@ async function main(): Promise<void> {
     const allowlistDrift = manifestTools.filter((tool) => !productionAllowlist.includes(tool))
       .concat(productionAllowlist.filter((tool) => !manifestTools.includes(tool)));
 
-    if (actualTools.length === 43 && missing.length === 0 && unexpected.length === 0 && allowlistDrift.length === 0) {
-      pass(results, "surface.exact-forty-three", "TOOL_SURFACE", "tools/list exactly matches the pinned 43-tool production allowlist");
+    if (actualTools.length === TOOL_ALLOWLIST.length && missing.length === 0 && unexpected.length === 0 && allowlistDrift.length === 0) {
+      pass(results, "surface.exact-reviewed-tools", "TOOL_SURFACE", `tools/list exactly matches the pinned ${TOOL_ALLOWLIST.length}-tool production allowlist`);
     } else {
       fail(
         results,
-        "surface.exact-forty-three",
+        "surface.exact-reviewed-tools",
         "TOOL_SURFACE",
         `tool drift: count=${actualTools.length}, missing=${missing.join(",") || "none"}, unexpected=${unexpected.join(",") || "none"}, allowlistDrift=${allowlistDrift.join(",") || "none"}`,
       );
     }
 
     const dangerousPresent = manifest.dangerousTools.filter((tool) => actualTools.includes(tool));
-    if (dangerousPresent.length === 0) {
-      pass(results, "surface.no-dangerous-tools", "TOOL_SURFACE", "authorise, pay, reconcile, void, delete, and tax-file tools are absent");
+    const forbiddenPublicPresent = manifest.forbiddenPublicTools.filter((tool) => actualTools.includes(tool));
+    if (dangerousPresent.length === 0 && forbiddenPublicPresent.length === 0) {
+      pass(results, "surface.no-bypass-tools", "TOOL_SURFACE", "dangerous tools and legacy object-level mutation bypasses are absent");
     } else {
-      fail(results, "surface.no-dangerous-tools", "TOOL_SURFACE", `dangerous tools advertised: ${dangerousPresent.join(", ")}`);
+      fail(
+        results,
+        "surface.no-bypass-tools",
+        "TOOL_SURFACE",
+        `dangerous=${dangerousPresent.join(", ") || "none"}, legacyMutation=${forbiddenPublicPresent.join(", ") || "none"}`,
+      );
     }
 
     const unsafeAnnotationTools = listed.tools.filter((tool) =>
@@ -309,59 +384,66 @@ async function main(): Promise<void> {
       }
     }
 
-    for (const dangerousTool of manifest.dangerousTools) {
-      const caseId = `surface.invoke-absent.${dangerousTool}`;
+    for (const forbiddenTool of [...manifest.dangerousTools, ...manifest.forbiddenPublicTools]) {
+      const caseId = `surface.invoke-absent.${forbiddenTool}`;
       const invocation = await callAndReceipt({
         client,
         calls: harnessService.calls,
         writeAttempts: harnessService.writeAttempts,
         caseId,
-        tool: dangerousTool,
+        tool: forbiddenTool,
         arguments: {},
       });
       receipts.push(invocation.receipt);
       if ((invocation.thrown || resultIsError(invocation.result)) && invocation.receipt.serviceMethodsReached.length === 0) {
-        pass(results, caseId, "TOOL_SURFACE", "unadvertised dangerous tool invocation was rejected", dangerousTool);
+        pass(results, caseId, "TOOL_SURFACE", "unadvertised bypass tool invocation was rejected", forbiddenTool);
       } else {
-        fail(results, caseId, "TOOL_SURFACE", "dangerous tool invocation was not rejected at the MCP boundary", dangerousTool);
+        fail(results, caseId, "TOOL_SURFACE", "bypass tool invocation was not rejected at the MCP boundary", forbiddenTool);
       }
     }
 
-    const confirmedDraft = {
-      preparation_id: `xmp_${"a".repeat(32)}`,
-      request_id: "contract-harness-write-allowed-shape",
-      confirmation_phrase: "确认创建 Supplier Bill DRAFT｜合成合同测试",
+    const caseExecute = {
+      case_id: "contract-case-001",
+      case_version: 1,
+      request_id: "contract-harness-case-execute-scope-probe",
     };
+    const executeCallsBefore = harnessService.calls.filter((call) =>
+      call.method === "accountingCase.execute").length;
     const writeInvocation = await callAndReceipt({
       client,
       calls: harnessService.calls,
       writeAttempts: harnessService.writeAttempts,
-      caseId: "write-gate.read-only-scope-denies-valid-draft",
-      tool: "xero_create_draft_supplier_bill",
-      arguments: confirmedDraft,
+      caseId: "write-gate.read-only-scope-denies-case-execute",
+      tool: "xero_execute_accounting_case",
+      arguments: caseExecute,
     });
     receipts.push(writeInvocation.receipt);
+    const executeCallsAfter = harnessService.calls.filter((call) =>
+      call.method === "accountingCase.execute").length;
     const writeErrorJson = JSON.stringify(structuredContent(writeInvocation.result)) ?? "";
     if (
       resultIsError(writeInvocation.result) &&
-      writeErrorJson.includes("FORBIDDEN") &&
+      writeErrorJson.includes("SCOPE_MISSING") &&
+      writeErrorJson.includes("MCP_SCOPE") &&
+      writeErrorJson.includes("REAUTHORISE_MCP_SCOPE") &&
       writeErrorJson.includes("xero.draft.write") &&
+      executeCallsAfter - executeCallsBefore <= 1 &&
       harnessService.writeAttempts() === 0
     ) {
       pass(
         results,
-        "write-gate.read-only-scope-denies-valid-draft",
+        "write-gate.read-only-scope-denies-case-execute",
         "WRITE_GATE",
-        "schema-valid confirmed DRAFT was denied by xero.draft.write scope before the write service method",
-        "xero_create_draft_supplier_bill",
+        "ordinary Case execute was denied at the MCP/service state gate with zero Provider writes",
+        "xero_execute_accounting_case",
       );
     } else {
       fail(
         results,
-        "write-gate.read-only-scope-denies-valid-draft",
+        "write-gate.read-only-scope-denies-case-execute",
         "WRITE_GATE",
         `write gate failed closed incorrectly; writeAttempts=${harnessService.writeAttempts()}, response=${writeErrorJson}`,
-        "xero_create_draft_supplier_bill",
+        "xero_execute_accounting_case",
       );
     }
 
@@ -398,6 +480,7 @@ async function main(): Promise<void> {
         missing,
         unexpected,
         dangerousPresent,
+        forbiddenPublicPresent,
       },
       summary: {
         total: results.length,

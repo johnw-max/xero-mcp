@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# HISTORICAL 0.3.1 UAT SCRIPT ONLY. Its 44-tool and per-document workflow
+# assertions are preserved as deployment evidence and must not gate 0.4.0-rc.1.
 set -euo pipefail
 
 readonly RELEASE_DIR="/opt/xero-accounting-mcp-demo-0.3.1-20260810.1"

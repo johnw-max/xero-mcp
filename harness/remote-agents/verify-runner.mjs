@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   createManifestMockTransport,
   evaluateExpectations,
+  loadManifest,
   parseRetryAfter,
   RollingCallBudget,
   runHarness,
@@ -22,6 +23,16 @@ const productionReadOnlyManifest = path.join(
   here,
   "manifests",
   "agent2-production-current-readonly-2026-08-06.json",
+);
+const negativeLiveManifest = path.join(
+  here,
+  "manifests",
+  "agent2-xero-v040rc-negative-acceptance.template.json",
+);
+const negativeOfflineManifest = path.join(
+  here,
+  "manifests",
+  "mock-v040rc-negative-contract.json",
 );
 
 async function withTempDirectory(prefix, operation) {
@@ -147,6 +158,108 @@ test("production dry-run enumerates exactly 33 independent Agent/case samples wi
     const summary = await readFile(path.join(outputDir, "summary.md"), "utf8");
     assert.match(summary, /Planned worst-case Xero calls for one attempt per task: 111/);
     assert.match(summary, /actual Remote Agent attempts: 0/);
+  });
+});
+
+test("current negative live plan enumerates twelve NOT_RUN cases without transport", async () => {
+  await withTempDirectory("xero-agent2-negative-live-plan-", async (outputDir) => {
+    let calls = 0;
+    const result = await runHarness({
+      manifestPath: negativeLiveManifest,
+      mode: "dry-run",
+      outputDir,
+      runId: "test-negative-live-plan",
+      transport: async () => {
+        calls += 1;
+        throw new Error("negative live dry-run must not call transport");
+      },
+    });
+
+    assert.equal(calls, 0);
+    assert.equal(result.results.length, 12);
+    assert.ok(result.results.every((item) => item.verdict === "NOT_RUN"));
+    assert.ok(result.results.every((item) => item.attempts === 0));
+    assert.ok(result.results.every((item) => item.evidence_class === "LIVE_AGENT2_ACCEPTANCE"));
+    const runManifest = JSON.parse(await readFile(path.join(outputDir, "run-manifest.json"), "utf8"));
+    assert.equal(runManifest.evidence_class, "LIVE_AGENT2_ACCEPTANCE");
+  });
+});
+
+test("offline negative contract passes twelve linked traces without becoming live evidence", async () => {
+  await withTempDirectory("xero-agent2-negative-offline-", async (outputDir) => {
+    const result = await runHarness({
+      manifestPath: negativeOfflineManifest,
+      mode: "mock",
+      outputDir,
+      runId: "test-negative-offline-contract",
+    });
+
+    assert.equal(result.results.length, 12);
+    assert.ok(result.results.every((item) => item.verdict === "PASS_OFFLINE_CONTRACT"));
+    assert.ok(result.results.every((item) => item.attempts === 1));
+    assert.ok(result.results.every((item) => item.evidence_class === "OFFLINE_FAULT_INJECTION_CONTRACT"));
+    assert.equal(result.receipts.length, 14);
+    assert.ok(result.receipts.every((receipt) => receipt.output_status === "captured"));
+    assert.ok(result.receipts.every((receipt) => receipt.function_call?.call_id === receipt.function_call_output?.call_id));
+
+    const calls = result.results.flatMap((item) => item.response.function_calls);
+    assert.equal(calls.filter((call) => call.name.endsWith("xero_prepare_accounting_case")).length, 4);
+    assert.equal(calls.filter((call) => call.name.endsWith("xero_execute_accounting_case")).length, 7);
+    assert.equal(calls.filter((call) => call.name.endsWith("xero_get_accounting_case_status")).length, 3);
+    for (const caseId of ["offline-negative-write-uncertain", "offline-negative-readback-recovery-once"]) {
+      const item = result.results.find((candidate) => candidate.case_id === caseId);
+      assert.equal(item.response.function_calls.filter((call) => call.name.endsWith("xero_execute_accounting_case")).length, 1);
+    }
+
+    const summary = await readFile(path.join(outputDir, "summary.md"), "utf8");
+    assert.match(summary, /PASS_OFFLINE_CONTRACT/);
+    assert.match(summary, /never live Agent2, MCP, OAuth, tenant, or Provider evidence/);
+    assert.match(summary, /do not prove Provider request counts/);
+  });
+});
+
+test("table-driven denial oracles reject altered safe layer, reason, or mutation possibility", async () => {
+  const { manifest } = await loadManifest(negativeOfflineManifest);
+  const denialCases = manifest.cases.filter((item) => [
+    "offline-negative-mcp-scope",
+    "offline-negative-connection",
+    "offline-negative-provider-access",
+    "offline-negative-wrong-tenant",
+    "offline-negative-kill-switch",
+  ].includes(item.id));
+
+  const oraclePasses = (testCase, output) => {
+    const call = testCase.mock.response.toolCalls[0];
+    const assertions = evaluateExpectations({
+      testCase,
+      functionCalls: [{ call_id: "denial-call", name: call.name, arguments: JSON.stringify(call.arguments), status: "completed" }],
+      functionOutputs: [{ call_id: "denial-call", output: JSON.stringify(output), status: "completed" }],
+      assistantText: testCase.mock.response.assistantText,
+      writeToolPatterns: [],
+    });
+    return assertions.find((item) => item.name.startsWith("required_tool_call_json:"))?.pass;
+  };
+
+  assert.equal(denialCases.length, 5);
+  for (const testCase of denialCases) {
+    const original = testCase.mock.response.toolCalls[0].output;
+    assert.equal(oraclePasses(testCase, original), true, `${testCase.id} baseline`);
+    assert.equal(oraclePasses(testCase, { error: { ...original.error, failure_layer: "WRONG_LAYER" } }), false, `${testCase.id} layer`);
+    assert.equal(oraclePasses(testCase, { error: { ...original.error, reason_codes: ["WRONG_REASON"] } }), false, `${testCase.id} reason`);
+    assert.equal(oraclePasses(testCase, { error: { ...original.error, provider_mutation_possible: true } }), false, `${testCase.id} mutation flag`);
+  }
+});
+
+test("evidence classes cannot be promoted by choosing the wrong runner mode", async () => {
+  await withTempDirectory("xero-agent2-evidence-class-", async (outputDir) => {
+    await assert.rejects(
+      runHarness({ manifestPath: negativeOfflineManifest, mode: "live", outputDir }),
+      /cannot run in live mode/,
+    );
+    await assert.rejects(
+      runHarness({ manifestPath: negativeLiveManifest, mode: "mock", outputDir }),
+      /cannot run in mock mode/,
+    );
   });
 });
 
@@ -281,6 +394,81 @@ test("Open Responses evidence rejects malformed arguments, duplicate outputs, an
   assert.equal(byName.get("open_responses_unique_output_call_ids")?.pass, false);
   assert.equal(byName.get("all_calls_have_output")?.pass, false);
   assert.equal(byName.get("required_tool_call:0:*xero_list_payments")?.pass, false);
+});
+
+test("structured tool-output oracles reject a contact-only Accounting Case false green", () => {
+  const functionCalls = [{
+    call_id: "case_execute",
+    name: "accounting__xero_execute_accounting_case",
+    arguments: JSON.stringify({ case_id: "golden-14", case_version: 1, request_id: "run-1" }),
+    status: "completed",
+  }];
+  const expectedActions = [
+    "customer_invoice.create_draft",
+    "supplier_bill.create_draft",
+    "supplier_bill.create_draft",
+    "credit_note.create_draft",
+    "credit_note.create_draft",
+  ];
+  const expectation = {
+    requiredToolCallJson: [{
+      tool: "*xero_execute_accounting_case",
+      assertions: [
+        { path: "$.operations", length: 5 },
+        { path: "$.operations[*].action_id", multiset: expectedActions },
+        { path: "$.operations[*].state", everyEquals: "READBACK_VERIFIED" },
+        { path: "$.operations[*].xero_object_id", everyPresent: true },
+        { path: "$.completion_claim.ledger_write_claim", equals: "ALL_ELIGIBLE_WRITES_READBACK_VERIFIED" },
+      ],
+    }],
+  };
+  const evaluated = (body) => evaluateExpectations({
+    testCase: { operation: "write", expect: expectation },
+    functionCalls,
+    functionOutputs: [{
+      call_id: "case_execute",
+      output: JSON.stringify({ content: [{ type: "text", text: JSON.stringify(body) }] }),
+      status: "completed",
+    }],
+    assistantText: "",
+    writeToolPatterns: [],
+  }).find((assertion) => assertion.name.startsWith("required_tool_call_json:"));
+
+  const documents = expectedActions.map((action_id, index) => ({
+    action_id,
+    state: "READBACK_VERIFIED",
+    xero_object_id: `xero-document-${index + 1}`,
+  }));
+  assert.equal(evaluated({
+    operations: documents,
+    completion_claim: { ledger_write_claim: "ALL_ELIGIBLE_WRITES_READBACK_VERIFIED" },
+  })?.pass, true);
+  assert.equal(evaluated({
+    operations: [{ action_id: "contact.create_basic", state: "READBACK_VERIFIED", xero_object_id: "contact-1" }],
+    completion_claim: { ledger_write_claim: "ALL_ELIGIBLE_WRITES_READBACK_VERIFIED" },
+  })?.pass, false);
+});
+
+test("exact tool-call counts reject a second Accounting Case execute", () => {
+  const expectation = {
+    exactToolCallCounts: [{ tool: "*xero_execute_accounting_case", count: 1 }],
+  };
+  const executeCall = (call_id) => ({
+    call_id,
+    name: "accounting__xero_execute_accounting_case",
+    arguments: JSON.stringify({ case_id: "golden-14", case_version: 1, request_id: "run-1" }),
+    status: "completed",
+  });
+  const evaluated = (functionCalls) => evaluateExpectations({
+    testCase: { operation: "write", expect: expectation },
+    functionCalls,
+    functionOutputs: [],
+    assistantText: "",
+    writeToolPatterns: [],
+  }).find((assertion) => assertion.name.startsWith("exact_tool_call_count:"));
+
+  assert.equal(evaluated([executeCall("execute-1")])?.pass, true);
+  assert.equal(evaluated([executeCall("execute-1"), executeCall("execute-2")])?.pass, false);
 });
 
 test("every live read retry makes a fresh rolling Xero-call reservation", async () => {
