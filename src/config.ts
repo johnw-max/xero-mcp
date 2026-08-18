@@ -138,29 +138,6 @@ const xeroAccountingCaseBusinessAuthoritiesJson = z.string().default("[]").trans
   }
 });
 
-/**
- * Write actions whose business coordinate can never be provider-enforced unique,
- * and which therefore need verified firm-governance exclusive-writer authority
- * before a deployment may enable them.
- *
- * Xero enforces uniqueness on an ACCREC invoice number but not on an ACCPAY
- * bill number, so a supplier bill always needs the exclusive-writer proof and a
- * customer invoice with a formal document number never does. `credit_note`
- * covers the supplier direction too, so it stays conservative.
- *
- * Customer invoices are deliberately absent. Requiring governance for them here
- * would not refuse a single additional document -- the runtime already makes the
- * exact per-document determination in `xeroAccountingCaseService`, refusing any
- * coordinate that turns out to be non-unique, including a customer invoice
- * carrying a generic recurring reference. It would only force every deployment
- * to stand up Ed25519 signing infrastructure before it could write anything at
- * all, which is a provisioning cost with no safety return.
- */
-const GOVERNANCE_REQUIRING_WRITE_ACTIONS: ReadonlySet<string> = new Set([
-  "supplier_bill.create_draft",
-  "credit_note.create_draft",
-]);
-
 export const MCP_OAUTH_SCOPES = ["xero.read", "xero.draft.write"] as const;
 export type McpOAuthScope = (typeof MCP_OAUTH_SCOPES)[number];
 
@@ -211,8 +188,6 @@ const xeroStandingDelegationsJson = z.string().default("[]").transform((raw, con
     installationId: item.installation_id,
     tenantIds: [item.tenant_id],
     actionIds: item.action_ids as readonly XeroAutonomousWriteAction[],
-    ...(item.action_ids.some((actionId) =>
-      GOVERNANCE_REQUIRING_WRITE_ACTIONS.has(actionId)) ? { firmGovernanceRequired: true } : {}),
     ...(item.expires_at ? { expiresAt: new Date(item.expires_at) } : {}),
   }));
 });
@@ -738,36 +713,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     // verified against the target tenant's live chart of accounts and tax rates
     // at prepare and again at the provider permit edge. The environment
     // variable itself is retained so existing deployments keep booting.
-    const authorityRequiredTenants = new Set([
-      ...value.XERO_STANDING_DELEGATIONS_JSON
-        .filter((delegation) => delegation.status === "ACTIVE" &&
-          delegation.actionIds.some((actionId) => GOVERNANCE_REQUIRING_WRITE_ACTIONS.has(actionId)))
-        .flatMap((delegation) => delegation.tenantIds),
-      ...value.XERO_ACCOUNTING_CASE_TEST_TENANT_IDS,
-    ]);
-    const governanceHashes = [
-      value.XERO_GOVERNANCE_TRUST_BUNDLE_SHA256,
-      value.XERO_GOVERNANCE_RECEIPTS_SHA256,
-      value.XERO_GOVERNANCE_STATUS_SHA256,
-    ];
-    if (authorityRequiredTenants.size > 0) {
-      if (value.NODE_ENV === "test") {
-        const verifiedTenants = new Set(value.XERO_ACCOUNTING_CASE_BUSINESS_AUTHORITIES_JSON
-          .filter((profile) => profile.writer_authority.mode === "VERIFIED_FIRM_GOVERNANCE")
-          .map((profile) => profile.tenant_id.toLowerCase()));
-        const missing = [...authorityRequiredTenants]
-          .filter((tenantId) => !verifiedTenants.has(tenantId.toLowerCase()));
-        if (missing.length > 0) {
-          throw new Error(
-            `Invalid application configuration: missing externally verified exclusive-writer authority for active non-unique write tenants: ${missing.join(", ")}`,
-          );
-        }
-      } else if (governanceHashes.some((hash) => hash === undefined)) {
-        throw new Error(
-          `Invalid application configuration: host-admitted signed Xero governance hashes are required for active actions that can reach non-unique Xero coordinates: ${[...authorityRequiredTenants].join(", ")}`,
-        );
-      }
-    }
+    // Firm-governance exclusive-writer authority is no longer a deployment
+    // precondition for any write action. It guarded one residual case: another
+    // writer creating the same coordinate in Xero, on routes where Xero itself
+    // does not enforce uniqueness. That residual is now carried by controls
+    // that cost nothing to provision -- the provider coordinate-history lookup
+    // before every create, our own durable coordinate reservation, the
+    // idempotency identity, and the fact that this connector only ever creates
+    // DRAFTs that an accountant reviews in Xero before posting.
+    //
+    // Requiring signed governance artifacts up front bought none of that back;
+    // it only stopped a deployment from writing anything at all until firm
+    // signing infrastructure existed, which is the wrong trade while the
+    // product is being put in front of its first users.
   }
   const tokenEncryptionKey = Buffer.from(value.TOKEN_ENCRYPTION_KEY_B64, "base64");
   const xeroMutationConfirmationKey = Buffer.from(value.XERO_MUTATION_CONFIRMATION_KEY_B64, "base64");

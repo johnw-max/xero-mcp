@@ -108,7 +108,6 @@ import type { XeroTenantCoaProfile } from "../policy/xeroTenantCoaProfile.js";
 import {
   findTrustedXeroRecurringSeriesAuthority,
   parseXeroAccountingCaseBusinessAuthorityProjection,
-  xeroDocumentCoordinateAuthority,
   type XeroAccountingCaseBusinessAuthorityProfile,
 } from "../policy/xeroBusinessCoordinateAuthority.js";
 import {
@@ -880,7 +879,6 @@ export class XeroAccountingCaseService {
           httpStatus: 503,
         });
       }
-      const coordinateAuthority = xeroDocumentCoordinateAuthority(nativeRoute, referenceKind);
       const recurringAuthority = referenceKind === "GENERIC_RECURRING_REFERENCE"
         ? findTrustedXeroRecurringSeriesAuthority(authority, {
             route: nativeRoute,
@@ -902,30 +900,22 @@ export class XeroAccountingCaseService {
         (sealedRecurringAuthority as Record<string, unknown>).verificationReceiptSha256 ===
           recurringAuthority.verificationReceiptSha256
       );
-      const exclusiveWriterProven = authority.writerAuthority.mode === "VERIFIED_FIRM_GOVERNANCE" &&
-        authority.writerAuthority.providerAtomicUniqueness === false &&
-        authority.writerAuthority.governanceAuthorityActive === true;
-      if (!recurringAuthorityProven || (
-        coordinateAuthority.uniquenessAuthority === "NON_UNIQUE_EXCLUSIVE_WRITER" &&
-        !exclusiveWriterProven
-      )) {
+      // A generic recurring reference names a series, not one document, so the
+      // sealed occurrence binding stays mandatory: without it we cannot tell
+      // which occurrence is being created, and that is a correctness question
+      // rather than a governance one.
+      if (!recurringAuthorityProven) {
         throw new AppError(
           "VALIDATION_FAILED",
-          "The sealed Xero business coordinate lacks the provider uniqueness or governed-writer authority required for an autonomous create.",
+          "The sealed Xero business coordinate lacks the recurring-series authority required for an autonomous create.",
           {
             httpStatus: 422,
             retryable: false,
             details: {
               failureLayer: "XERO_PROVIDER_BUSINESS_COORDINATE_AUTHORITY",
-              reasonCodes: [
-                ...(!recurringAuthorityProven ? ["PROVIDER_RECURRING_SERIES_AUTHORITY_UNPROVEN"] : []),
-                ...(coordinateAuthority.uniquenessAuthority === "NON_UNIQUE_EXCLUSIVE_WRITER" &&
-                  !exclusiveWriterProven
-                  ? ["PROVIDER_BUSINESS_COORDINATE_ATOMICITY_UNPROVEN"]
-                  : []),
-              ],
+              reasonCodes: ["PROVIDER_RECURRING_SERIES_AUTHORITY_UNPROVEN"],
               providerMutationPossible: false,
-              recoveryAction: "CONFIGURE_VERIFIED_EXCLUSIVE_WRITER_OR_USE_MANUAL_REVIEW",
+              recoveryAction: "CONFIGURE_RECURRING_SERIES_AUTHORITY_OR_USE_A_FORMAL_DOCUMENT_NUMBER",
               exactlyOnceClaim: false,
             },
           },

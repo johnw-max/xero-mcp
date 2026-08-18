@@ -1784,7 +1784,16 @@ describe("XeroAccountingCaseService", () => {
     expect(harness.providerWrite).toHaveBeenCalledOnce();
   });
 
-  it("blocks a formal supplier credit without exclusive-writer authority", async () => {
+  // Superseded deliberately. Firm-governance exclusive-writer authority is no
+  // longer required to create a supplier credit note, even though Xero does
+  // not enforce credit-note-number uniqueness for the supplier direction. The
+  // residual that authority used to guard -- another writer creating the same
+  // coordinate -- is carried instead by the provider coordinate-history
+  // lookup already run above (`providerHistorySequence`), the durable
+  // business-coordinate reservation, the idempotency identity, and the
+  // receipt-plus-exact-readback chain asserted below. This is now the
+  // positive case: the write must succeed end to end.
+  it("writes a formal supplier credit though Xero never enforces credit-note-number uniqueness", async () => {
     const original = historicalOriginal("SUPPLIER");
     const history = { invoices: [original], creditNotes: [] };
     const harness = runtime({
@@ -1807,19 +1816,24 @@ describe("XeroAccountingCaseService", () => {
     const prepared = await harness.service.prepare(context(), normalizeXeroAccountingCaseBusinessIntake(
       xeroAccountingCaseBusinessIntakeSchema.parse(historicalCreditBusinessIntake("SUPPLIER")),
     ));
-    await expect(harness.service.execute(context(), {
+    const executed = await harness.service.execute(context(), {
       case_id: prepared.case_id,
       case_version: prepared.case_version,
       request_id: "supplier-credit-no-writer",
-    })).rejects.toMatchObject({
-      code: "VALIDATION_FAILED",
-      details: expect.objectContaining({
-        reasonCodes: ["PROVIDER_BUSINESS_COORDINATE_ATOMICITY_UNPROVEN"],
-        providerMutationPossible: false,
-      }),
     });
-    expect(harness.providerWrite).not.toHaveBeenCalled();
-    expect(harness.providerWritePermit).not.toHaveBeenCalled();
+    expect(executed.state).toBe("TERMINAL");
+    expect(executed.operations).toEqual([
+      expect.objectContaining({
+        action_id: "credit_note.create_draft",
+        state: "READBACK_VERIFIED",
+        provider_receipt_recorded: true,
+        exact_readback_recorded: true,
+        xero_object_id: expect.any(String),
+      }),
+    ]);
+    expect(harness.providerWrite).toHaveBeenCalledOnce();
+    expect(harness.providerWrite).toHaveBeenCalledWith(expect.objectContaining({ objectType: "CREDIT_NOTE" }));
+    expect(harness.providerWritePermit).toHaveBeenCalledOnce();
   });
 
   it("blocks at the permit edge when a second original takes the same ordinary coordinate after preparation", async () => {
@@ -2001,7 +2015,15 @@ describe("XeroAccountingCaseService", () => {
     expect(harness.providerWrite).toHaveBeenCalledOnce();
   });
 
-  it("blocks a non-unique supplier bill without exclusive-writer authority", async () => {
+  // Superseded deliberately. Firm-governance exclusive-writer authority is no
+  // longer required to create a supplier bill, even though Xero does not
+  // enforce uniqueness on ACCPAY bill numbers -- the residual that authority
+  // used to guard is carried instead by the provider coordinate-history
+  // lookup, the durable business-coordinate reservation, the idempotency
+  // identity, and the receipt-plus-exact-readback chain asserted below. This
+  // is now the positive case the product decision exists to enable: the
+  // write must succeed end to end.
+  it("writes a supplier bill though Xero never enforces ACCPAY bill-number uniqueness", async () => {
     const harness = runtime({
       businessAuthorityProfiles: [],
       initialContacts: [{
@@ -2012,20 +2034,23 @@ describe("XeroAccountingCaseService", () => {
       }],
     });
     const prepared = await harness.service.prepare(context(), supplierBillSource());
-    await expect(harness.service.execute(context(), {
+    const executed = await harness.service.execute(context(), {
       case_id: prepared.case_id,
       case_version: prepared.case_version,
       request_id: "supplier-history-no-exclusive-writer",
-    })).rejects.toMatchObject({
-      code: "VALIDATION_FAILED",
-      details: expect.objectContaining({
-        reasonCodes: ["PROVIDER_BUSINESS_COORDINATE_ATOMICITY_UNPROVEN"],
-        exactlyOnceClaim: false,
-        providerMutationPossible: false,
-      }),
     });
-    expect(harness.accounting.prepareSupplierBillDraft).not.toHaveBeenCalled();
-    expect(harness.providerWrite).not.toHaveBeenCalled();
+    expect(executed.state).toBe("TERMINAL");
+    expect(executed.operations).toEqual([
+      expect.objectContaining({
+        action_id: "supplier_bill.create_draft",
+        state: "READBACK_VERIFIED",
+        provider_receipt_recorded: true,
+        exact_readback_recorded: true,
+        xero_object_id: expect.any(String),
+      }),
+    ]);
+    expect(harness.accounting.prepareSupplierBillDraft).toHaveBeenCalledOnce();
+    expect(harness.providerWrite).toHaveBeenCalledOnce();
   });
 
   it("rechecks provider history inside the final permit callback and blocks economic drift with zero write", async () => {

@@ -116,12 +116,6 @@ function autonomousWriteEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEn
     OAUTH_COOKIE_STATE_KEY_B64: Buffer.alloc(32, 10).toString("base64"),
     ...overrides,
   });
-  const configuredDelegations = JSON.parse(
-    configured.XERO_STANDING_DELEGATIONS_JSON ?? "[]",
-  ) as Array<{ status?: string; action_ids?: string[] }>;
-  const firmGovernanceRequired = configuredDelegations.some((delegation) =>
-    delegation.status === "ACTIVE" && delegation.action_ids?.some((actionId) =>
-      ["supplier_bill.create_draft", "credit_note.create_draft"].includes(actionId)) === true);
   return {
     ...configured,
     XERO_STANDING_DELEGATIONS_CONFIG_SHA256:
@@ -129,61 +123,15 @@ function autonomousWriteEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEn
       sha256(configured.XERO_STANDING_DELEGATIONS_JSON ?? "[]"),
     XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256:
       overrides.XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256 ?? "1".repeat(64),
+    // Firm-governance exclusive-writer authority is no longer a deployment
+    // precondition for any write action (src/config.ts no longer derives
+    // `firmGovernanceRequired` from any delegated action), so every
+    // deployment's expected governance hash is the fixed "NOT_REQUIRED"
+    // sentinel regardless of which actions are delegated.
     XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256:
-      overrides.XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 ??
-      (firmGovernanceRequired ? "2".repeat(64) : "NOT_REQUIRED"),
+      overrides.XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 ?? "NOT_REQUIRED",
   };
 }
-
-describe("firm-governance provisioning scope", () => {
-  /**
-   * Requiring signed firm-governance artifacts before a deployment may write
-   * anything is a provisioning cost that must be paid only where it buys
-   * safety. Xero enforces uniqueness on ACCREC invoice numbers but not on
-   * ACCPAY bill numbers, so only the genuinely non-unique routes need the
-   * exclusive-writer proof up front. The runtime still refuses any individual
-   * coordinate that turns out to be non-unique, so no document that needed
-   * governance escapes it.
-   */
-  function delegationFor(actionIds: string[]): string {
-    return JSON.stringify([{
-      delegation_id: "delegation-scope-test",
-      revision: 1,
-      status: "ACTIVE",
-      workspace_id: "workspace-test",
-      agent_id: "agent-test",
-      installation_id: "installation-test",
-      tenant_id: AUTONOMOUS_TENANT_ID,
-      action_ids: actionIds,
-    }]);
-  }
-
-  it("lets a customer-invoice-only deployment start without signed governance artifacts", () => {
-    const config = loadConfig(autonomousWriteEnv({
-      XERO_STANDING_DELEGATIONS_JSON: delegationFor(["customer_invoice.create_draft"]),
-      XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256: "NOT_REQUIRED",
-    }));
-    expect(config.xeroWriteEnabled).toBe(true);
-  });
-
-  it("still demands governance for supplier bills, whose numbers Xero never makes unique", () => {
-    expect(() =>
-      loadConfig(autonomousWriteEnv({
-        XERO_STANDING_DELEGATIONS_JSON: delegationFor(["supplier_bill.create_draft"]),
-        XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256: "NOT_REQUIRED",
-      }))
-    ).toThrow(/firm-governance governance requirement|governance requirement/iu);
-  });
-
-  it("still demands governance for credit notes, which cover the supplier direction", () => {
-    expect(() =>
-      loadConfig(autonomousWriteEnv({
-        XERO_STANDING_DELEGATIONS_JSON: delegationFor(["credit_note.create_draft"]),
-        XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256: "NOT_REQUIRED",
-      }))
-    ).toThrow(/firm-governance governance requirement|governance requirement/iu);
-  });
-});
 
 describe("security configuration contract", () => {
   it("requires HTTPS public callback URLs in production", () => {
@@ -411,44 +359,36 @@ describe("security configuration contract", () => {
   });
 
   /**
-   * Superseded deliberately. This previously required exclusive-writer authority
-   * for a customer-invoice-only delegation, on the correct observation that the
-   * action also accepts generic recurring references, which are not
-   * provider-unique.
+   * Superseded deliberately. This previously required exclusive-writer
+   * authority before a deployment holding a supplier_bill.create_draft or
+   * credit_note.create_draft delegation could even start, on the correct
+   * observation that Xero does not enforce uniqueness on ACCPAY bill numbers
+   * or (for the supplier direction) credit-note numbers.
    *
-   * The requirement moved from deployment time to write time. A customer-invoice
-   * delegation now starts without provisioned authority, and the runtime refuses
-   * the individual coordinates that actually need it -- the same refusal already
-   * observed for supplier bills. No document that needed exclusive-writer proof
-   * escapes it; what changes is that standing up Ed25519 governance artifacts is
-   * no longer a precondition for deployments that only ever write
-   * provider-unique documents.
+   * The requirement is now removed outright, both here and at write time in
+   * xeroAccountingCaseService (see `PROVIDER_BUSINESS_COORDINATE_ATOMICITY_UNPROVEN`,
+   * which no longer exists). The residual it guarded -- another writer
+   * creating the same coordinate in Xero -- is carried by controls that cost
+   * nothing to provision and already run on every create: the provider
+   * coordinate-history lookup, our own durable coordinate reservation, the
+   * idempotency identity, receipt plus exact readback, and the fact that every
+   * write here is a DRAFT an accountant reviews in Xero before it posts. No
+   * deployment needs Ed25519 governance artifacts to start writing any
+   * Accounting Case document, including supplier bills and credit notes.
    */
-  it("starts a customer-invoice delegation without provisioned authority", () => {
+  it.each([
+    "customer_invoice.create_draft",
+    "supplier_bill.create_draft",
+    "credit_note.create_draft",
+  ])("starts a %s delegation without provisioned exclusive-writer authority", (actionId) => {
     const delegations = JSON.parse(standingDelegations()) as Array<Record<string, unknown>>;
-    delegations[0] = { ...delegations[0], action_ids: ["customer_invoice.create_draft"] };
+    delegations[0] = { ...delegations[0], action_ids: [actionId] };
     const config = loadConfig(autonomousWriteEnv({
       XERO_STANDING_DELEGATIONS_JSON: JSON.stringify(delegations),
       XERO_ACCOUNTING_CASE_BUSINESS_AUTHORITIES_JSON: "[]",
     }));
     expect(config.xeroWriteEnabled).toBe(true);
   });
-
-  it.each(["supplier_bill.create_draft", "credit_note.create_draft"])(
-    "requires exclusive-writer authority when the reachable action is %s",
-    (actionId) => {
-      const delegations = JSON.parse(standingDelegations()) as Array<Record<string, unknown>>;
-      delegations[0] = { ...delegations[0], action_ids: [actionId] };
-      expect(() => loadConfig(autonomousWriteEnv({
-        XERO_STANDING_DELEGATIONS_JSON: JSON.stringify(delegations),
-        XERO_ACCOUNTING_CASE_BUSINESS_AUTHORITIES_JSON: JSON.stringify([{
-          tenant_id: AUTONOMOUS_TENANT_ID,
-          writer_authority: { mode: "NONE" },
-          recurring_series_authorities: [],
-        }]),
-      }))).toThrow(/missing.*exclusive-writer authority/i);
-    },
-  );
 
   it("accepts write enablement only with Broker, target and an exact standing delegation", () => {
     const config = loadConfig(autonomousWriteEnv());

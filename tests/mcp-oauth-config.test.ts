@@ -208,7 +208,11 @@ describe("MCP OAuth Broker configuration", () => {
       XERO_STANDING_DELEGATIONS_JSON: delegations,
       XERO_STANDING_DELEGATIONS_CONFIG_SHA256: sha256(delegations),
       XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256: "6".repeat(64),
-      XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256: "7".repeat(64),
+      // Firm-governance exclusive-writer authority is no longer a deployment
+      // precondition for any write action, including the supplier_bill
+      // delegation configured here, so the expected governance hash is
+      // always the fixed "NOT_REQUIRED" sentinel (src/config.ts).
+      XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256: "NOT_REQUIRED",
     }));
 
     expect(config.xeroWriteEnabled).toBe(true);
