@@ -26,7 +26,10 @@ import {
 import type { CompiledAccountingCase } from "../src/domain/accountingCase.js";
 import type { ContactDurableIdentity } from "../src/domain/accountingCase.js";
 import type { PrepareAccountingCaseInput } from "../src/domain/accountingCaseSchemas.js";
-import type { XeroMutationPreparation } from "../src/domain/xeroMutation.js";
+import type {
+  ConfirmXeroMutationPreparationInput,
+  XeroMutationPreparation,
+} from "../src/domain/xeroMutation.js";
 import { XERO_MUTATION_EXPECTED_READBACK_STATUS } from "../src/domain/xeroMutation.js";
 import { hashObject } from "../src/security/hash.js";
 
@@ -351,6 +354,46 @@ async function confirmMutation(
   });
   if (!confirmed) throw new Error("test mutation confirmation failed");
   return confirmed.request;
+}
+
+/**
+ * Same field set as confirmMutation's request, but returned instead of sent,
+ * and overridable, so negative tests can disagree with the preparation in
+ * exactly one field while leaving confirmMutation's happy path untouched.
+ */
+function confirmMutationInput(
+  preparation: XeroMutationPreparation,
+  mutationRequestId: string,
+  overrides: Partial<ConfirmXeroMutationPreparationInput> = {},
+): ConfirmXeroMutationPreparationInput {
+  return {
+    mutationRequestId,
+    preparationId: preparation.preparationId,
+    requestId: `request:${mutationRequestId}`,
+    actorId: preparation.actorId,
+    workspaceId: preparation.workspaceId,
+    tenantId: preparation.tenantId,
+    installationId: preparation.installationId,
+    bindingId: preparation.bindingId,
+    bindingRevision: preparation.bindingRevision,
+    connectionId: preparation.connectionId,
+    targetSessionId: preparation.targetSessionId,
+    objectType: preparation.objectType,
+    operation: preparation.operation,
+    canonicalPayload: preparation.canonicalPayload,
+    canonicalPayloadHash: preparation.canonicalPayloadHash,
+    sourceRef: preparation.sourceRef,
+    sourceUnitKey: preparation.sourceUnitKey,
+    sourceSha256: preparation.sourceSha256,
+    sourceEvidenceType: preparation.sourceEvidenceType,
+    confirmationSummaryHash: preparation.confirmationSummaryHash,
+    confirmationPhraseHash: preparation.confirmationPhraseHash,
+    authorizationReceipt: { receiptType: "TEST_AUTONOMOUS_AUTHORITY" },
+    successfulValidationReceipt: { receiptType: "TEST_VALIDATION" },
+    claimForWrite: true,
+    now,
+    ...overrides,
+  };
 }
 
 async function expireMutationPreparation(
@@ -2439,6 +2482,360 @@ describe("InMemory Accounting Case repository concurrency and state consistency"
     await expect(repository.readinessEvidence("test-migration")).resolves.toMatchObject({
       ready: true,
       activeAccountingCaseRecoveryProjection: { status: "COMPATIBLE", activeCaseCount: 0 },
+    });
+  });
+
+  it("rejects a mutation lifecycle call whose bound coordinates disagree with the confirmed request's OAuth binding", async () => {
+    // If absent: write evidence carrying a different connectionId (e.g. a stale or
+    // reconnected OAuth session) could be attached to a mutation request confirmed
+    // under a different provider connection, misattributing which org was written to.
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const value = compiled(1);
+    await createCase(repository, binding(), value);
+    await claimCase(repository, "binding-drift");
+    const operation = value.operations.find((candidate) => candidate.nativeRoute === "SALES_INVOICE");
+    if (!operation) throw new Error("fixture has no SALES_INVOICE operation");
+    const preparation = await casePreparation(repository, value, operation.operationId);
+    const mutationRequestId = "binding-drift-mutation";
+    await confirmMutation(repository, preparation, mutationRequestId);
+
+    const bound = boundMutationInput(preparation, mutationRequestId);
+    await expect(repository.recordXeroMutationWriteEvidence({
+      ...bound,
+      connectionId: "connection-attacker",
+      xeroObjectId: "xero-object-binding-drift",
+      writeReceipt: { providerRequestId: "provider-binding-drift" },
+    })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "Mutation request does not match the active OAuth binding.",
+    });
+  });
+
+  it("does not create a mutation request when the confirming call's OAuth binding disagrees with the preparation", async () => {
+    // If absent: a confirmation call could durably claim the provider-write slot
+    // using a different OAuth binding revision than the one the operator's
+    // preparation was actually scoped to, e.g. after a reconnect changed it.
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const value = compiled(1);
+    await createCase(repository, binding(), value);
+    await claimCase(repository, "confirm-binding-drift");
+    const operation = value.operations.find((candidate) => candidate.nativeRoute === "SALES_INVOICE");
+    if (!operation) throw new Error("fixture has no SALES_INVOICE operation");
+    const preparation = await casePreparation(repository, value, operation.operationId);
+
+    await expect(repository.confirmXeroMutationPreparation(
+      confirmMutationInput(preparation, "confirm-binding-drift-mutation", {
+        connectionId: "connection-attacker",
+      }),
+    )).resolves.toBeUndefined();
+    await expect(repository.getXeroMutationPreparation(preparation.preparationId))
+      .resolves.toMatchObject({ state: "PREPARED" });
+  });
+
+  it("does not create a mutation request when the confirmation summary hash disagrees with the preparation", async () => {
+    // If absent: a confirmation could be satisfied against a summary the operator
+    // never actually reviewed, detaching the approval from the text shown to them.
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const value = compiled(1);
+    await createCase(repository, binding(), value);
+    await claimCase(repository, "confirm-summary-drift");
+    const operation = value.operations.find((candidate) => candidate.nativeRoute === "SALES_INVOICE");
+    if (!operation) throw new Error("fixture has no SALES_INVOICE operation");
+    const preparation = await casePreparation(repository, value, operation.operationId);
+
+    await expect(repository.confirmXeroMutationPreparation(
+      confirmMutationInput(preparation, "confirm-summary-drift-mutation", {
+        confirmationSummaryHash: "0".repeat(64),
+      }),
+    )).resolves.toBeUndefined();
+    await expect(repository.getXeroMutationPreparation(preparation.preparationId))
+      .resolves.toMatchObject({ state: "PREPARED" });
+  });
+
+  it("does not create a mutation request when the confirmation phrase hash disagrees with the preparation", async () => {
+    // If absent: a confirmation could be satisfied even though the operator typed
+    // a different confirmation phrase than the one bound to this exact preparation.
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const value = compiled(1);
+    await createCase(repository, binding(), value);
+    await claimCase(repository, "confirm-phrase-drift");
+    const operation = value.operations.find((candidate) => candidate.nativeRoute === "SALES_INVOICE");
+    if (!operation) throw new Error("fixture has no SALES_INVOICE operation");
+    const preparation = await casePreparation(repository, value, operation.operationId);
+
+    await expect(repository.confirmXeroMutationPreparation(
+      confirmMutationInput(preparation, "confirm-phrase-drift-mutation", {
+        confirmationPhraseHash: "0".repeat(64),
+      }),
+    )).resolves.toBeUndefined();
+    await expect(repository.getXeroMutationPreparation(preparation.preparationId))
+      .resolves.toMatchObject({ state: "PREPARED" });
+  });
+
+  it("rejects claiming a provider write when the stored ledger authority no longer matches what the operator expected", async () => {
+    // If absent: an approval issued against a stale ledger authority (e.g. before a
+    // delegation was revoked) could still durably claim a live Xero write today.
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const rev1 = await repository.publishLedgerAuthoritySnapshot({
+      providerId: "xero",
+      revision: 1,
+      writeKillSwitchEnabled: false,
+      standingDelegations: [],
+      publishedAt: now,
+    });
+    await repository.publishLedgerAuthoritySnapshot({
+      providerId: "xero",
+      revision: 2,
+      writeKillSwitchEnabled: false,
+      standingDelegations: [],
+      publishedAt: now,
+    });
+
+    const caseBinding = binding();
+    const canonicalPayload = {
+      schemaVersion: "test-contact-v1",
+      objectType: "CONTACT",
+      operation: "CREATE",
+      externalReference: "ZC:test:authority-snapshot",
+      target: { name: "Authority Snapshot Test Co" },
+    };
+    const preparation = await repository.createXeroMutationPreparation({
+      preparationId: "authority-snapshot-preparation",
+      actorId: caseBinding.actorId,
+      workspaceId: caseBinding.workspaceId,
+      tenantId: caseBinding.tenantId,
+      installationId: caseBinding.installationId,
+      bindingId: caseBinding.bindingId,
+      bindingRevision: caseBinding.bindingRevision,
+      connectionId: caseBinding.connectionId,
+      targetSessionId: caseBinding.targetSessionId,
+      objectType: "CONTACT",
+      operation: "CREATE",
+      canonicalPayload,
+      canonicalPayloadHash: hashObject(canonicalPayload),
+      sourceUnitKey: "operation:authority-snapshot",
+      sourceSha256: hashObject({ source: "authority-snapshot" }),
+      sourceEvidenceType: "SERVER_FINGERPRINTED_EXTRACTION",
+      confirmationSummaryHash: hashObject({ summary: "authority-snapshot" }),
+      confirmationPhraseHash: hashObject({ phrase: "authority-snapshot" }),
+      expiresAt: new Date(now.getTime() + 20 * 60_000),
+      now,
+    });
+
+    await expect(repository.confirmXeroMutationPreparation(confirmMutationInput(
+      preparation,
+      "authority-snapshot-mutation",
+      {
+        authorizationReceipt: {
+          receiptType: "TEST_AUTONOMOUS_AUTHORITY",
+          authoritySnapshotRevision: rev1.snapshot.revision,
+          authoritySnapshotHash: rev1.snapshot.snapshotHash,
+        },
+        expectedAuthoritySnapshotRevision: rev1.snapshot.revision,
+        expectedAuthoritySnapshotHash: rev1.snapshot.snapshotHash,
+      },
+    ))).rejects.toMatchObject({
+      code: "APPROVAL_INVALID",
+      message: "Ledger authority changed before the provider-write claim.",
+    });
+  });
+
+  it("rejects a verified readback whose payload hash disagrees with the confirmed canonical payload", async () => {
+    // If absent: a write could be marked verified even though what Xero returned
+    // does not match the payload the operator approved, hiding a corrupted or
+    // substituted write behind a READBACK_VERIFIED state.
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const value = compiled(1);
+    await createCase(repository, binding(), value);
+    await claimCase(repository, "readback-payload-mismatch");
+    const operation = value.operations.find((candidate) => candidate.nativeRoute === "SALES_INVOICE");
+    if (!operation) throw new Error("fixture has no SALES_INVOICE operation");
+    const preparation = await casePreparation(repository, value, operation.operationId);
+    const mutationRequestId = "readback-payload-mismatch-mutation";
+    await confirmMutation(repository, preparation, mutationRequestId);
+    const bound = boundMutationInput(preparation, mutationRequestId);
+    const objectId = `xero:${mutationRequestId}`;
+    const writeReceipt = { providerRequestId: `provider:${mutationRequestId}` };
+    await repository.recordXeroMutationWriteEvidence({ ...bound, xeroObjectId: objectId, writeReceipt });
+    const readbackSnapshot = {
+      xeroObjectId: objectId,
+      status: XERO_MUTATION_EXPECTED_READBACK_STATUS[preparation.objectType],
+      canonicalPayload: preparation.canonicalPayload,
+      evidence: economicReadbackEvidence(operation, objectId),
+    };
+
+    await expect(repository.markXeroMutationReadbackVerified({
+      ...bound,
+      xeroObjectId: objectId,
+      writeReceipt,
+      readbackSnapshot,
+      readbackSnapshotHash: hashObject(readbackSnapshot),
+      readbackCanonicalPayload: preparation.canonicalPayload,
+      readbackPayloadHash: "0".repeat(64),
+      readbackStatus: XERO_MUTATION_EXPECTED_READBACK_STATUS[preparation.objectType],
+    })).rejects.toMatchObject({
+      code: "READBACK_MISMATCH",
+      message: "Verified readback hash does not match the confirmed payload.",
+    });
+  });
+
+  it("rejects a verified readback whose status disagrees with the object type's expected status", async () => {
+    // If absent: a write could be marked verified even though Xero reports a
+    // status the case never expected for this object type (e.g. a voided
+    // document standing in for what should be a fresh draft).
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const value = compiled(1);
+    await createCase(repository, binding(), value);
+    await claimCase(repository, "readback-status-mismatch");
+    const operation = value.operations.find((candidate) => candidate.nativeRoute === "SALES_INVOICE");
+    if (!operation) throw new Error("fixture has no SALES_INVOICE operation");
+    const preparation = await casePreparation(repository, value, operation.operationId);
+    const mutationRequestId = "readback-status-mismatch-mutation";
+    await confirmMutation(repository, preparation, mutationRequestId);
+    const bound = boundMutationInput(preparation, mutationRequestId);
+    const objectId = `xero:${mutationRequestId}`;
+    const writeReceipt = { providerRequestId: `provider:${mutationRequestId}` };
+    await repository.recordXeroMutationWriteEvidence({ ...bound, xeroObjectId: objectId, writeReceipt });
+    const readbackSnapshot = {
+      xeroObjectId: objectId,
+      status: XERO_MUTATION_EXPECTED_READBACK_STATUS[preparation.objectType],
+      canonicalPayload: preparation.canonicalPayload,
+      evidence: economicReadbackEvidence(operation, objectId),
+    };
+
+    await expect(repository.markXeroMutationReadbackVerified({
+      ...bound,
+      xeroObjectId: objectId,
+      writeReceipt,
+      readbackSnapshot,
+      readbackSnapshotHash: hashObject(readbackSnapshot),
+      readbackCanonicalPayload: preparation.canonicalPayload,
+      readbackPayloadHash: preparation.canonicalPayloadHash,
+      readbackStatus: `NOT_${XERO_MUTATION_EXPECTED_READBACK_STATUS[preparation.objectType]}`,
+    })).rejects.toMatchObject({
+      code: "READBACK_MISMATCH",
+      message: "Verified readback hash does not match the confirmed payload.",
+    });
+  });
+
+  it("rejects replacing a mutation's already-recorded Xero object id with a different one", async () => {
+    // If absent: a second (e.g. retried or racing) write-evidence call could
+    // silently rebind a mutation to a different Xero object than the one it
+    // already recorded, corrupting which record the mutation refers to.
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const value = compiled(1);
+    await createCase(repository, binding(), value);
+    await claimCase(repository, "object-id-replace");
+    const operation = value.operations.find((candidate) => candidate.nativeRoute === "SALES_INVOICE");
+    if (!operation) throw new Error("fixture has no SALES_INVOICE operation");
+    const preparation = await casePreparation(repository, value, operation.operationId);
+    const mutationRequestId = "object-id-replace-mutation";
+    await confirmMutation(repository, preparation, mutationRequestId);
+    const bound = boundMutationInput(preparation, mutationRequestId);
+    await repository.recordXeroMutationWriteEvidence({
+      ...bound,
+      xeroObjectId: "xero-object-original",
+      writeReceipt: { providerRequestId: "provider-original" },
+    });
+
+    await expect(repository.recordXeroMutationWriteEvidence({
+      ...bound,
+      xeroObjectId: "xero-object-different",
+      writeReceipt: { providerRequestId: "provider-original" },
+    })).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "Mutation cannot replace its exact Xero object identifier.",
+    });
+  });
+
+  it("rejects replacing a mutation's already-recorded write receipt with different evidence", async () => {
+    // If absent: a second write-evidence call could overwrite the durable proof
+    // of what Xero actually returned for the first write, letting fabricated or
+    // mismatched evidence paper over the real provider result.
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const value = compiled(1);
+    await createCase(repository, binding(), value);
+    await claimCase(repository, "receipt-replace");
+    const operation = value.operations.find((candidate) => candidate.nativeRoute === "SALES_INVOICE");
+    if (!operation) throw new Error("fixture has no SALES_INVOICE operation");
+    const preparation = await casePreparation(repository, value, operation.operationId);
+    const mutationRequestId = "receipt-replace-mutation";
+    await confirmMutation(repository, preparation, mutationRequestId);
+    const bound = boundMutationInput(preparation, mutationRequestId);
+    await repository.recordXeroMutationWriteEvidence({
+      ...bound,
+      xeroObjectId: "xero-object-receipt-replace",
+      writeReceipt: { providerRequestId: "provider-original" },
+    });
+
+    await expect(repository.recordXeroMutationWriteEvidence({
+      ...bound,
+      xeroObjectId: "xero-object-receipt-replace",
+      writeReceipt: { providerRequestId: "provider-tampered" },
+    })).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "Mutation cannot replace previously recorded write evidence.",
+    });
+  });
+
+  it("rejects UPDATE write evidence whose Xero object id disagrees with the operation's immutable target", async () => {
+    // If absent: an UPDATE's provider evidence could be recorded against a
+    // completely different Xero object than the one the operator approved for
+    // update, silently redirecting the write to the wrong record.
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const caseBinding = binding();
+    const targetXeroObjectId = "contact-update-target-1";
+    const canonicalPayload = {
+      schemaVersion: "test-contact-update-v1",
+      objectType: "CONTACT",
+      operation: "UPDATE",
+      target: { contactId: targetXeroObjectId, name: "Renamed Co" },
+    };
+    const preparation = await repository.createXeroMutationPreparation({
+      preparationId: "update-target-preparation",
+      actorId: caseBinding.actorId,
+      workspaceId: caseBinding.workspaceId,
+      tenantId: caseBinding.tenantId,
+      installationId: caseBinding.installationId,
+      bindingId: caseBinding.bindingId,
+      bindingRevision: caseBinding.bindingRevision,
+      connectionId: caseBinding.connectionId,
+      targetSessionId: caseBinding.targetSessionId,
+      objectType: "CONTACT",
+      operation: "UPDATE",
+      targetXeroObjectId,
+      canonicalPayload,
+      canonicalPayloadHash: hashObject(canonicalPayload),
+      sourceUnitKey: "operation:update-target",
+      sourceSha256: hashObject({ source: "update-target" }),
+      sourceEvidenceType: "SERVER_FINGERPRINTED_EXTRACTION",
+      confirmationSummaryHash: hashObject({ summary: "update-target" }),
+      confirmationPhraseHash: hashObject({ phrase: "update-target" }),
+      expiresAt: new Date(now.getTime() + 20 * 60_000),
+      now,
+    });
+    const mutationRequestId = "update-target-mutation";
+    // claimForWrite goes straight to WRITE_IN_FLIGHT without ever calling
+    // beginXeroMutationWrite, so request.xeroObjectId is still unset here: the
+    // only thing standing between this call and a misdirected UPDATE is the
+    // operation-aware target check, not the generic "already recorded" guard.
+    const confirmed = await repository.confirmXeroMutationPreparation(confirmMutationInput(
+      preparation,
+      mutationRequestId,
+      { targetXeroObjectId, claimForWrite: true },
+    ));
+    if (!confirmed) throw new Error("test UPDATE mutation confirmation failed");
+    expect(confirmed.request.state).toBe("WRITE_IN_FLIGHT");
+    expect(confirmed.request.xeroObjectId).toBeUndefined();
+
+    const bound = { ...boundMutationInput(preparation, mutationRequestId), targetXeroObjectId };
+    await expect(repository.recordXeroMutationWriteEvidence({
+      ...bound,
+      xeroObjectId: "contact-update-different-target",
+      writeReceipt: { providerRequestId: "provider-update-target" },
+    })).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "UPDATE result does not match its immutable Xero target.",
     });
   });
 });
