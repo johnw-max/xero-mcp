@@ -2600,6 +2600,17 @@ export async function createIndependentReviewObligationProbeReceipt({
     throw new Error("INDEPENDENT_REVIEW_OBLIGATION_FROZEN_SOURCE_SNAPSHOT_REQUIRED");
   }
   await assertIndependentReviewSourceSnapshotUnchanged(snapshot);
+  // The external-toolchain rule was only enforced when planning a review. A probe
+  // executes the same cited tests, so a probe whose tests can shell out is exactly
+  // as non-hermetic as a plan that can - it just reached the mutation run first.
+  const probeTests = await testReferenceIdentities(document, [requirementId], snapshot);
+  const probeExternalToolTests = probeTests.filter((test) => test.invokes_external_child_process);
+  if (probeExternalToolTests.length > 0) {
+    throw new Error(
+      "INDEPENDENT_REVIEW_EXTERNAL_TOOLCHAIN_ATTESTATION_REQUIRED:" +
+      probeExternalToolTests.map((test) => test.path).join(","),
+    );
+  }
   const approvedRuntime = approvedReviewRuntimeSha256 ??
     (snapshot.externally_immutable ? undefined : (await deriveObservedIndependentReviewRuntimeIdentity({
       repoRoot: executionRoot,
@@ -2626,13 +2637,20 @@ export async function createIndependentReviewObligationProbeReceipt({
       !targetText.includes(obligation.target_anchor)) {
     throw new Error("INDEPENDENT_REVIEW_OBLIGATION_TARGET_ANCHOR_OR_LITERAL_INVALID");
   }
+  // executionRoot is the snapshot root, already canonicalised through realpath.
+  // documentPath is not, so on any host whose temp directory is a symlink - every
+  // macOS, where /var resolves to /private/var - the two describe the same place
+  // in different words. Containment is decided by path.relative between them, so
+  // the mismatch reports evidence sitting next to the document as living outside
+  // the repository. Both sides have to be in the same form before they are compared.
+  const canonicalDocumentPath = await realpath(resolve(documentPath)).catch(() => resolve(documentPath));
   const semanticBinding = await recordedObligationSemanticBinding({
     document,
     requirementId,
     claimId,
     obligationId,
     repoRoot: executionRoot,
-    documentPath,
+    documentPath: canonicalDocumentPath,
     sourceSnapshotContext: snapshot,
   });
   const bindingFields = [
@@ -2816,10 +2834,62 @@ async function testReferenceIdentities(document, requirementIds, sourceSnapshotC
     }
     identities.push({
       ...reference, path: safePath, size_bytes: bytes.length, sha256: identity.sha256,
-      invokes_external_child_process: /(?:node:)?child_process/u.test(bytes.toString("utf8")),
+      invokes_external_child_process: /(?:node:)?child_process/u.test(bytes.toString("utf8")) ||
+        reachesExternalProcessModule(safePath, sourcePaths, sourceSnapshotContext.contentByPath),
     });
   }
   return identities;
+}
+
+// EXTERNAL_PROCESS_MODULES and EXTERNAL_PROCESS_WRAPPER_PACKAGES were declared but
+// never consulted: the only detection was a substring match on the cited test's own
+// bytes. Moving the spawn one file away - into a helper the test imports - defeated
+// it completely, which is the whole point of the rule. Follow the test's local
+// import graph inside the frozen snapshot and inspect every file it reaches.
+function reviewModuleSpecifiers(text) {
+  const specifiers = new Set();
+  for (const pattern of [
+    /\bfrom\s*["']([^"']+)["']/gu,
+    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/gu,
+    /\brequire\s*\(\s*["']([^"']+)["']\s*\)/gu,
+    /\bimport\s+["']([^"']+)["']/gu,
+  ]) {
+    for (const match of text.matchAll(pattern)) specifiers.add(match[1]);
+  }
+  return specifiers;
+}
+
+function resolveFrozenSnapshotImport(fromPath, specifier, sourcePaths) {
+  if (!specifier.startsWith(".")) return undefined;
+  const base = posix.normalize(posix.join(posix.dirname(fromPath), specifier));
+  const candidates = [];
+  // TypeScript ESM cites the emitted extension, so ./helper.js means ./helper.ts.
+  if (base.endsWith(".js")) candidates.push(`${base.slice(0, -3)}.ts`, `${base.slice(0, -3)}.tsx`);
+  if (base.endsWith(".mjs")) candidates.push(`${base.slice(0, -4)}.mts`);
+  candidates.push(base, `${base}.ts`, `${base}.tsx`, `${base}.mjs`, `${base}.js`,
+    posix.join(base, "index.ts"), posix.join(base, "index.js"));
+  return candidates.find((candidate) => sourcePaths.has(candidate));
+}
+
+function reachesExternalProcessModule(startPath, sourcePaths, contentByPath) {
+  const visited = new Set();
+  const pending = [startPath];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const bytes = contentByPath.get(current);
+    if (!Buffer.isBuffer(bytes)) continue;
+    for (const specifier of reviewModuleSpecifiers(bytes.toString("utf8"))) {
+      if (EXTERNAL_PROCESS_MODULES.has(specifier) ||
+          EXTERNAL_PROCESS_WRAPPER_PACKAGES.has(specifier)) {
+        return true;
+      }
+      const resolved = resolveFrozenSnapshotImport(current, specifier, sourcePaths);
+      if (resolved) pending.push(resolved);
+    }
+  }
+  return false;
 }
 
 function lockedRuntimeDependencyPath(packages, fromPackagePath, dependencyName) {

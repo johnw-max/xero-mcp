@@ -6,7 +6,7 @@ import { constants as fsConstants } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildIndependentReviewCodexCommand,
   buildIndependentReviewObligationProbeCommand,
@@ -230,6 +230,36 @@ async function installFrozenTypescriptFixture(root: string) {
   ]);
 }
 
+// installFrozenTypescriptFixture writes package.json but no lockfile, and
+// deriveObservedIndependentReviewRuntimeIdentity requires both. Supply only the
+// missing lockfile, mirroring the package.json already there - rewriting the
+// manifest would change the fixture's declared dependency set and quietly move
+// the control being tested.
+async function installFrozenRuntimeLockfile(root: string) {
+  // No stub node_modules/vitest here: probes that actually run an in-memory Vitest
+  // mutation resolve vitest from this root, and a stub shadows the real package.
+  // The lockfile closure check reads the lockfile, not the directory.
+  await Promise.all([
+    writeFile(join(root, "package.json"), `${JSON.stringify({
+      name: "independent-review-plan-fixture",
+      private: true,
+      devDependencies: { typescript: "5.9.2", vitest: "1.0.0" },
+    })}\n`),
+    writeFile(join(root, "package-lock.json"), `${JSON.stringify({
+      name: "independent-review-plan-fixture",
+      lockfileVersion: 3,
+      packages: {
+        "": {
+          name: "independent-review-plan-fixture",
+          devDependencies: { typescript: "5.9.2", vitest: "1.0.0" },
+        },
+        "node_modules/typescript": { version: "5.9.2" },
+        "node_modules/vitest": { version: "1.0.0" },
+      },
+    })}\n`),
+  ]);
+}
+
 function requirement() {
   const control = "Closure is replayed from a separate read-only Codex process.";
   return {
@@ -395,28 +425,32 @@ async function writeHostProtectionPlanFixture() {
   });
 }
 
-async function writeRuntimeIdentityPlanFixture() {
-  const fixture = await writeHostProtectionPlanFixture();
+// deriveObservedIndependentReviewRuntimeIdentity needs package.json AND
+// package-lock.json present in the snapshot, and throws
+// RUNTIME_PACKAGE_IDENTITY_MISSING before any later check runs. A fixture without
+// them fails on the wrong control, so a test aiming at the toolchain check never
+// reaches it.
+async function installRuntimeIdentityFixture(root: string) {
   await Promise.all([
-    mkdir(join(fixture.root, "node_modules/vitest"), { recursive: true }),
-    mkdir(join(fixture.root, "node_modules/zod"), { recursive: true }),
+    mkdir(join(root, "node_modules/vitest"), { recursive: true }),
+    mkdir(join(root, "node_modules/zod"), { recursive: true }),
   ]);
   await Promise.all([
-    writeFile(join(fixture.root, "node_modules/vitest/package.json"),
+    writeFile(join(root, "node_modules/vitest/package.json"),
       `${JSON.stringify({ name: "vitest", version: "1.0.0" })}\n`),
-    writeFile(join(fixture.root, "node_modules/vitest/vitest.mjs"),
+    writeFile(join(root, "node_modules/vitest/vitest.mjs"),
       "export const fixtureVitest = true;\n"),
-    writeFile(join(fixture.root, "node_modules/zod/package.json"),
+    writeFile(join(root, "node_modules/zod/package.json"),
       `${JSON.stringify({ name: "zod", version: "1.0.0" })}\n`),
-    writeFile(join(fixture.root, "node_modules/zod/index.js"),
+    writeFile(join(root, "node_modules/zod/index.js"),
       "export const fixtureZod = true;\n"),
-    writeFile(join(fixture.root, "package.json"), `${JSON.stringify({
+    writeFile(join(root, "package.json"), `${JSON.stringify({
       name: "independent-review-runtime-fixture",
       private: true,
       dependencies: { zod: "1.0.0" },
       devDependencies: { typescript: "1.0.0", vitest: "1.0.0" },
     })}\n`),
-    writeFile(join(fixture.root, "package-lock.json"), `${JSON.stringify({
+    writeFile(join(root, "package-lock.json"), `${JSON.stringify({
       name: "independent-review-runtime-fixture",
       lockfileVersion: 3,
       packages: {
@@ -431,6 +465,11 @@ async function writeRuntimeIdentityPlanFixture() {
       },
     })}\n`),
   ]);
+}
+
+async function writeRuntimeIdentityPlanFixture() {
+  const fixture = await writeHostProtectionPlanFixture();
+  await installRuntimeIdentityFixture(fixture.root);
   const sourceSnapshotContext = await syntheticSourceSnapshotContext(
     fixture.traceability,
     fixture.root,
@@ -1292,6 +1331,14 @@ async function recomputeDeclaredClosureWithoutFreshInspection(
   await fixture.refreshRawArtifact("CODEX_EVENTS_JSONL");
 }
 
+// Every test here hashes real trees, resolves real dependency graphs, and runs
+// real in-memory Vitest mutations; the honest running time is seconds to tens of
+// seconds, not the 5s default. Individual tests were already carrying 30s/60s/120s
+// overrides one at a time, and the ones that never got one failed or passed
+// depending on machine load - which made the suite's failure count vary run to run
+// and cost real time chasing failures that were only clocks.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
+
 describe("independent Codex review closure evidence", () => {
   it("partitions a transitive requirement component into bounded atomic-claim shards with exact path, edge, and probe coverage", async () => {
     const root = await mkdtemp(join(tmpdir(), "independent-review-plan-"));
@@ -2132,6 +2179,9 @@ describe("independent Codex review closure evidence", () => {
   it("maps a reviewed control to its direct consumer and that consumer's dependencies", async () => {
     const root = await mkdtemp(join(tmpdir(), "independent-review-dependency-"));
     try {
+      // frozenReviewTypescriptParser resolves TypeScript from this root, so the
+      // fixture needs the same frozen toolchain every other test here installs.
+      await installFrozenTypescriptFixture(root);
       await mkdir(join(root, "src"), { recursive: true });
       await Promise.all([
         writeFile(join(root, "src/control.ts"), "export const control = true;\n"),
@@ -2808,19 +2858,26 @@ describe("independent Codex review closure evidence", () => {
         expected_failure_message_patterns: ["strict"],
       }],
     });
+    await installFrozenRuntimeLockfile(fixture.root);
     try {
       const sourceSnapshotContext = await syntheticSourceSnapshotContext(
         fixture.traceability,
         fixture.root,
         fixture.documentPath,
       );
+      // The fixture's own runtime is the approved one here; the check under test is
+      // the external-toolchain rule further down, not runtime approval.
+      const runtime = await deriveObservedIndependentReviewRuntimeIdentity({
+        repoRoot: fixture.root,
+        sourceSnapshotContext,
+      });
       await expect(createIndependentReviewTestPlan({
         document: fixture.traceability,
         requirementIds: ["K-999"],
         repoRoot: fixture.root,
         documentPath: fixture.documentPath,
         sourceSnapshotContext,
-        approvedReviewRuntimeSha256: "9".repeat(64),
+        approvedReviewRuntimeSha256: runtime.observed_review_runtime_sha256,
       })).rejects.toThrow("INDEPENDENT_REVIEW_EXTERNAL_TOOLCHAIN_ATTESTATION_REQUIRED");
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
@@ -2856,19 +2913,26 @@ describe("independent Codex review closure evidence", () => {
         expected_failure_message_patterns: ["strict"],
       }],
     });
+    await installFrozenRuntimeLockfile(fixture.root);
     try {
       const sourceSnapshotContext = await syntheticSourceSnapshotContext(
         fixture.traceability,
         fixture.root,
         fixture.documentPath,
       );
+      // The fixture's own runtime is the approved one here; the check under test is
+      // the external-toolchain rule further down, not runtime approval.
+      const runtime = await deriveObservedIndependentReviewRuntimeIdentity({
+        repoRoot: fixture.root,
+        sourceSnapshotContext,
+      });
       await expect(createIndependentReviewTestPlan({
         document: fixture.traceability,
         requirementIds: ["K-999"],
         repoRoot: fixture.root,
         documentPath: fixture.documentPath,
         sourceSnapshotContext,
-        approvedReviewRuntimeSha256: "9".repeat(64),
+        approvedReviewRuntimeSha256: runtime.observed_review_runtime_sha256,
       })).rejects.toThrow("INDEPENDENT_REVIEW_EXTERNAL_TOOLCHAIN_ATTESTATION_REQUIRED");
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
@@ -2904,12 +2968,19 @@ describe("independent Codex review closure evidence", () => {
         expected_failure_message_patterns: ["strict"],
       }],
     });
+    await installFrozenRuntimeLockfile(fixture.root);
     try {
       const sourceSnapshotContext = await syntheticSourceSnapshotContext(
         fixture.traceability,
         fixture.root,
         fixture.documentPath,
       );
+      // The fixture's own runtime is the approved one here; the check under test is
+      // the external-toolchain rule, not runtime approval.
+      const runtime = await deriveObservedIndependentReviewRuntimeIdentity({
+        repoRoot: fixture.root,
+        sourceSnapshotContext,
+      });
       await expect(createIndependentReviewObligationProbeReceipt({
         document: fixture.traceability,
         requirementId: "K-999",
@@ -2921,7 +2992,7 @@ describe("independent Codex review closure evidence", () => {
         inspectionNonce: "7".repeat(32),
         probeNonce: "8".repeat(32),
         sourceSnapshotContext,
-        approvedReviewRuntimeSha256: "9".repeat(64),
+        approvedReviewRuntimeSha256: runtime.observed_review_runtime_sha256,
       })).rejects.toThrow("INDEPENDENT_REVIEW_EXTERNAL_TOOLCHAIN_ATTESTATION_REQUIRED");
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
