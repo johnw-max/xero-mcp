@@ -37,7 +37,7 @@ import { XERO_RELEASE_ATTESTATION, XERO_RELEASE_VERSION } from "../../src/xeroRe
 import {
   parseXeroAccountingCaseBusinessAuthorityProfiles,
 } from "../../src/policy/xeroBusinessCoordinateAuthority.js";
-import { testXeroAccounts, testXeroTenantCoaProfile } from "../../tests/helpers/xeroTenantCoaProfile.js";
+import { testXeroAccounts } from "../../tests/helpers/xeroTenantCoaProfile.js";
 
 const REQUIRED_SCENARIOS = [
   "AFTER_PREFLIGHT_PREPARED",
@@ -176,7 +176,7 @@ class DurableSyntheticXeroProvider implements AccountingProvider {
       status: "ACTIVE",
       isCustomer: true,
     });
-    this.#accounts = Object.freeze(testXeroAccounts(testXeroTenantCoaProfile(metadata.tenant_id))
+    this.#accounts = Object.freeze(testXeroAccounts()
       .map((account) => Object.freeze({ ...account })));
     this.#taxRate = Object.freeze({
       taxType: "OUTPUTY24",
@@ -668,7 +668,6 @@ async function main(): Promise<void> {
     const caseService = new XeroAccountingCaseService(repository, provider, accounting, mutations, {
       continuationSecret: PROCESS_CRASH_CONTINUATION_SECRET,
       testTenantIds: [metadata.tenant_id],
-      tenantCoaProfiles: [testXeroTenantCoaProfile(metadata.tenant_id)],
       businessAuthorityProfiles: parseXeroAccountingCaseBusinessAuthorityProfiles([{
         tenant_id: metadata.tenant_id,
         writer_authority: {
