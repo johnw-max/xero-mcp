@@ -14,6 +14,7 @@ import type {
   AccountingFact,
   ContactDurableIdentity,
   NativeDocumentFact,
+  NativeDocumentRoute,
   OriginalTransactionEvidenceFact,
 } from "../domain/accountingCase.js";
 import type {
@@ -3520,21 +3521,44 @@ export class XeroAccountingCaseService {
         throw this.#existingBusinessCoordinateError(operation, providerHistory);
       }
     };
-    const written = operation.nativeRoute === "SUPPLIER_BILL"
-      ? await this.accounting.executePreparedSupplierBillDraft(
-          context,
-          { preparation_id: preparationId, request_id: requestId },
-          serverCoaConstraints,
-          recheckProviderHistoryBeforeWriteClaim,
-          firmGovernanceExpectation,
-        )
-      : await this.accounting.executePreparedSalesInvoiceDraft(
-          context,
-          { preparation_id: preparationId, request_id: requestId },
-          serverCoaConstraints,
-          recheckProviderHistoryBeforeWriteClaim,
-          firmGovernanceExpectation,
-        );
+    // Exhaustive, not a ternary. The credit routes are already returned above, so
+    // the old `SUPPLIER_BILL ? bill : salesInvoice` was correct for today's four
+    // routes - but only by accident of that earlier guard. Any route added to
+    // NativeDocumentRoute would have fallen into the else branch and executed as
+    // a sales invoice, silently and with no type error. Now it fails to compile.
+    const executePrepared = (route: NativeDocumentRoute | "CONTACT_CREATE") => {
+      const request = { preparation_id: preparationId, request_id: requestId };
+      switch (route) {
+        case "SUPPLIER_BILL":
+          return this.accounting.executePreparedSupplierBillDraft(
+            context, request, serverCoaConstraints, recheckProviderHistoryBeforeWriteClaim,
+            firmGovernanceExpectation,
+          );
+        case "SALES_INVOICE":
+          return this.accounting.executePreparedSalesInvoiceDraft(
+            context, request, serverCoaConstraints, recheckProviderHistoryBeforeWriteClaim,
+            firmGovernanceExpectation,
+          );
+        case "CUSTOMER_CREDIT":
+        case "SUPPLIER_CREDIT":
+        case "CONTACT_CREATE":
+          // Both are dispatched earlier - credits just above, contact creation in
+          // #executeOperation by actionId - so neither reaches this boundary. The
+          // type says they can, so they are answered rather than assumed away.
+          throw new AppError(
+            "PERSISTENCE_FAILURE",
+            `Route ${route} is dispatched before the native document write boundary.`,
+            { httpStatus: 500 },
+          );
+        default: {
+          const unreachable: never = route;
+          throw new AppError("PERSISTENCE_FAILURE", `Unhandled native document route: ${String(unreachable)}`, {
+            httpStatus: 500,
+          });
+        }
+      }
+    };
+    const written = await executePrepared(operation.nativeRoute);
     const receipt = written.providerReceipt;
     if (!receipt) throw new AppError("WRITE_RESULT_UNKNOWN", "Xero returned no durable provider receipt.", { httpStatus: 502 });
     const projected = await this.repository.projectAccountingCaseOperationFromMutation({
