@@ -69,6 +69,14 @@ export const ACCEPTANCE_SOURCE_ROOTS = Object.freeze([
   "package-lock.json",
   "tsconfig.json",
   "tsconfig.build.json",
+  // The vitest configs decide what `npm test` means - which files run, with what
+  // timeout, and whether database-backed files may contend. Leaving them out of
+  // the snapshot meant the gate ran the suite under vitest's defaults while a
+  // developer ran it under the repo's, so the two measured different things and
+  // the gate's own full-regression step silently ignored the settings added to
+  // make its numbers reproducible.
+  "vitest.config.ts",
+  "vitest.review.config.ts",
   "agent-skills",
   "config",
   "deploy",
