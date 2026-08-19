@@ -1,0 +1,216 @@
+{
+  "schema_version": "1.1",
+  "gate": "LOCAL_RELEASE_ACCEPTANCE",
+  "gate_l_claim": "NOT_IMPLIED",
+  "independent_review_authority": "LOCAL_EVIDENCE_UNTRUSTED",
+  "gate_run_id": "ba3e2098-2273-438d-b4f4-cf339e921f54",
+  "live_review_challenge_sha256": "5933b7b4d9ca0d3639e491c0f9db00955b333ff5dcaf35321357339de6836270",
+  "status": "FAIL",
+  "started_at": "2026-08-19T11:08:47.989Z",
+  "finished_at": "2026-08-19T11:08:48.404Z",
+  "test_database": {
+    "database_name": "xero_mcp_test",
+    "protocol": "postgres:",
+    "host_hash": "04d4713d6d99f0d333cc52ee28e6076752b6d9f07d25fc4a3af7ead170044543"
+  },
+  "execution_boundary": "DIGEST_NAMED_READ_ONLY_SOURCE_SNAPSHOT",
+  "approved_control_catalog_sha256": "e488e6ed4cdbe665f214a65ce9d55d42ce1ac3adf54e77317078bb0ec7209fbe",
+  "source_snapshot": {
+    "fingerprint": {
+      "algorithm": "sha256-path-size-executable-content-v2",
+      "file_count": 590,
+      "sha256": "fb029ec321b5ca34f7c0d848509111c5e3bd894622cf40b1a783b09e13befe3a",
+      "roots": [
+        ".dockerignore",
+        ".gitignore",
+        "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+        "README.md",
+        "package.json",
+        "package-lock.json",
+        "tsconfig.json",
+        "tsconfig.build.json",
+        "agent-skills",
+        "config",
+        "deploy",
+        "docs",
+        "handoff",
+        "harness",
+        "migrations",
+        "schemas",
+        "scripts",
+        "src",
+        "tests"
+      ]
+    },
+    "original_mutation_guard": {
+      "algorithm": "sha256-path-type-device-inode-mode-size-ctime-mtime-v1",
+      "entry_count": 680,
+      "sha256": "2b7cba93ea821bf77f24eb9991137489d7bc20c6048fedc074876ac5f7aaf9d1"
+    },
+    "immutable_snapshot_mutation_guard": {
+      "algorithm": "sha256-path-type-device-inode-mode-size-ctime-mtime-v1",
+      "entry_count": 680,
+      "sha256": "a5168f6da37da5e2018905412f602b51a75e4b775ccb376699741f70ae763b83"
+    },
+    "manifest_file": "source-snapshot.manifest.json",
+    "manifest_sha256": "41115ac124213094bbc696a71c6de7f91002ee3b33f0e454e9d8d126bf2814e9",
+    "file_count": 590,
+    "dependencies_copied_not_linked": true,
+    "git_metadata_copied_not_linked": true
+  },
+  "source_fingerprint_before": {
+    "algorithm": "sha256-path-size-executable-content-v2",
+    "file_count": 590,
+    "sha256": "fb029ec321b5ca34f7c0d848509111c5e3bd894622cf40b1a783b09e13befe3a",
+    "roots": [
+      ".dockerignore",
+      ".gitignore",
+      "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+      "README.md",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "tsconfig.build.json",
+      "agent-skills",
+      "config",
+      "deploy",
+      "docs",
+      "handoff",
+      "harness",
+      "migrations",
+      "schemas",
+      "scripts",
+      "src",
+      "tests"
+    ]
+  },
+  "source_fingerprint_after": {
+    "algorithm": "sha256-path-size-executable-content-v2",
+    "file_count": 590,
+    "sha256": "fb029ec321b5ca34f7c0d848509111c5e3bd894622cf40b1a783b09e13befe3a",
+    "roots": [
+      ".dockerignore",
+      ".gitignore",
+      "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+      "README.md",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "tsconfig.build.json",
+      "agent-skills",
+      "config",
+      "deploy",
+      "docs",
+      "handoff",
+      "harness",
+      "migrations",
+      "schemas",
+      "scripts",
+      "src",
+      "tests"
+    ]
+  },
+  "snapshot_fingerprint_after": {
+    "algorithm": "sha256-path-size-executable-content-v2",
+    "file_count": 590,
+    "sha256": "fb029ec321b5ca34f7c0d848509111c5e3bd894622cf40b1a783b09e13befe3a",
+    "roots": [
+      ".dockerignore",
+      ".gitignore",
+      "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+      "README.md",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "tsconfig.build.json",
+      "agent-skills",
+      "config",
+      "deploy",
+      "docs",
+      "handoff",
+      "harness",
+      "migrations",
+      "schemas",
+      "scripts",
+      "src",
+      "tests"
+    ]
+  },
+  "source_mutation_events": [],
+  "snapshot_mutation_events": [],
+  "source_watcher_errors": [],
+  "snapshot_watcher_errors": [],
+  "generated_artifact_snapshots": [],
+  "final_integrity_error": null,
+  "source_stable": true,
+  "release_artifact_identity": null,
+  "failed_step_id": "traceability-closed",
+  "steps": [
+    {
+      "id": "traceability-closed",
+      "status": "FAIL",
+      "command": "/Users/jiayuanwang/.hermes/node/bin/node scripts/review/validate-requirements-traceability.mjs --file <traceability>/requirements-traceability.json --require-closed --approved-control-catalog-sha256 e488e6ed4cdbe665f214a65ce9d55d42ce1ac3adf54e77317078bb0ec7209fbe --expected-source-fingerprint fb029ec321b5ca34f7c0d848509111c5e3bd894622cf40b1a783b09e13befe3a",
+      "execution_cwd": "MUTATION_GUARDED_ORIGINAL_EVIDENCE_BOUNDARY",
+      "started_at": "2026-08-19T11:08:47.990Z",
+      "finished_at": "2026-08-19T11:08:48.155Z",
+      "exit_code": 1,
+      "signal": null,
+      "spawn_error": null,
+      "evidence_sha256": null,
+      "stdout": {
+        "file": "traceability-closed.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0
+      },
+      "stderr": {
+        "file": "traceability-closed.stderr.log",
+        "sha256": "175f788347a38fa4a4f1713fa0feec5282cee21ca1f26444115f859bd8afc989",
+        "size_bytes": 9891
+      }
+    },
+    {
+      "id": "local-agent-evidence",
+      "status": "NOT_CAPTURED",
+      "command": "validate-evidence LOCAL_AGENT artifacts/ledger-kernel-review/round-2026-08-13-local/local-agent-run.json",
+      "execution_cwd": "IMMUTABLE_SOURCE_PLUS_HASH_BOUND_EXTERNAL_EVIDENCE",
+      "started_at": "2026-08-19T11:08:48.219Z",
+      "finished_at": "2026-08-19T11:08:48.219Z",
+      "exit_code": null,
+      "signal": null,
+      "spawn_error": null,
+      "evidence_sha256": null,
+      "stdout": {
+        "file": "local-agent-evidence.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0
+      },
+      "stderr": {
+        "file": "local-agent-evidence.stderr.log",
+        "sha256": "c835035d769af170c777c365aab8a48fa9c3ec689d7e39b4a3e21f32b77d2030",
+        "size_bytes": 70
+      }
+    },
+    {
+      "id": "process-crash-restart-evidence",
+      "status": "NOT_CAPTURED",
+      "command": "validate-evidence PROCESS_CRASH_RESTART artifacts/ledger-kernel-review/round-2026-08-13-local/process-crash-restart.json",
+      "execution_cwd": "IMMUTABLE_SOURCE_PLUS_HASH_BOUND_EXTERNAL_EVIDENCE",
+      "started_at": "2026-08-19T11:08:48.282Z",
+      "finished_at": "2026-08-19T11:08:48.282Z",
+      "exit_code": null,
+      "signal": null,
+      "spawn_error": null,
+      "evidence_sha256": null,
+      "stdout": {
+        "file": "process-crash-restart-evidence.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0
+      },
+      "stderr": {
+        "file": "process-crash-restart-evidence.stderr.log",
+        "sha256": "5d62db23a36a80a2b1cd22b549f8c1e41b748b0c26e4333055970ee6ae805111",
+        "size_bytes": 122
+      }
+    }
+  ]
+}

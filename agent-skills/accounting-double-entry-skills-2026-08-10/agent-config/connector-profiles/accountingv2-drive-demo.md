@@ -17,15 +17,6 @@ Apply each mapping only when that exact tool is mounted and authorized:
 |---|---|---|---|
 | `list_google_drive_files` | `source.metadata.read` | Drive file/folder metadata | Bounded authorized query; no body-read claim |
 | `read_google_drive_file` | `source.content.read` | Google Docs and supported text-like files | Exact file reference; a PDF or a Google Sheet returns `unsupported mime type` — verified live 2026-08-19 |
-
-A PDF is not unreadable, it is unreadable *through this connector*. The platform
-extracts the text of a file attached to the conversation, so a PDF the accountant
-attaches in chat can be read and booked normally — a supplier invoice attached
-that way was posted end to end on 2026-08-19. `ingest_source_material` stores a
-Drive reference for a PDF but leaves `rawText` null, so it records provenance
-rather than content. When a client's document lives in Drive as a PDF and its
-figures are needed, ask for it as an attachment instead of reporting that it
-cannot be read.
 | `read_google_drive_file` | `work.proposal.readback` | Text-like proposal artifact | Exact returned file ID and supported MIME only |
 | `upload_google_drive_file_auto` | `source.original.preserve` | Original binary only when the channel exposes complete bytes | Preserve upload receipt separately; this is not material registration or original-byte read-back |
 | `create_google_drive_text_file` | `work.proposal.persist` | Explicitly requested text proposal/handoff artifact | Never treat as source-original preservation or ledger write |
@@ -39,6 +30,15 @@ cannot be read.
 | `list_review_items` | `work.open_item.read` | Review/open item | Bounded current-scope query |
 | `add_expense` | `work.review_record.persist` | Expense candidate | Not a formal expense/subledger posting |
 | `list_expenses`, `query_expense_summary` | `work.review_record.search` | Expense candidates/summary | Work-store view only |
+
+A PDF is not unreadable, it is unreadable *through this connector*. The platform
+extracts the text of a file attached to the conversation, so a PDF the accountant
+attaches in chat can be read and booked normally — a supplier invoice attached
+that way was posted end to end on 2026-08-19. `ingest_source_material` stores a
+Drive reference for a PDF but leaves `rawText` null, so it records provenance
+rather than content. When a client's document lives in Drive as a PDF and its
+figures are needed, ask for it as an attachment instead of reporting that it
+cannot be read.
 
 `create_google_drive_folder` is a provider storage primitive and has no standalone accounting capability ID. `move_google_drive_file`, raw/chunk upload tools, destructive actions, saved views, and cancel actions are not mapped by this profile.
 
