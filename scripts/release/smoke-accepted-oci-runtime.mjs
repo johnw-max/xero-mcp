@@ -195,7 +195,7 @@ async function main() {
     if (challengeResult.releaseVersion !== receipt.releaseVersion ||
         challengeResult.releaseAttestationHash !== receipt.releaseAttestationHash ||
         challengeResult.requiredMigration !== receipt.requiredMigration ||
-        challengeResult.toolCount !== 28 ||
+        challengeResult.toolCount !== 29 ||
         challengeResult.toolsetHash !== receipt.toolsetHash ||
         challengeResult.buildIdentityHash !== receipt.semanticBuildIdentityHash ||
         challengeResult.acceptanceSourceSha256 !== receipt.acceptanceSourceSha256 ||
@@ -285,7 +285,7 @@ async function main() {
         ready.authorityWriteKillSwitchEnabled !== false ||
         ready.requiredMigrationStatus !== "APPLIED" || ready.migrationHead !== ready.requiredMigration ||
         ready.activeAccountingCaseRecoveryProjection?.status !== "COMPATIBLE" ||
-        health.body?.toolCount !== 28 || health.body?.toolsetHash !== ready.toolsetHash) {
+        health.body?.toolCount !== 29 || health.body?.toolsetHash !== ready.toolsetHash) {
       throw new Error("OCI_RUNTIME_HEALTH_READINESS_CONTRACT_INVALID");
     }
     assertRuntimeIdentity(health.body, receipt, "HEALTH");
