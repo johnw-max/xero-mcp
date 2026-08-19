@@ -408,7 +408,7 @@ describe("security configuration contract", () => {
 });
 
 describe("fixed MCP tool contract", () => {
-  it("matches the reviewed twenty-eight-tool Accounting Case allowlist exactly", () => {
+  it("matches the reviewed twenty-nine-tool Accounting Case allowlist exactly", () => {
     const configured = JSON.parse(
       readFileSync(new URL("../config/tool-allowlist.json", import.meta.url), "utf8"),
     ).tools as string[];
@@ -416,7 +416,7 @@ describe("fixed MCP tool contract", () => {
       readFileSync(new URL("./contract/expected-tools.json", import.meta.url), "utf8"),
     ) as string[];
     expect([...new Set(configured)].sort()).toEqual([...expected].sort());
-    expect(configured).toHaveLength(28);
+    expect(configured).toHaveLength(29);
     expect(configured).toEqual(expect.arrayContaining([
       "xero_prepare_accounting_case",
       "xero_execute_accounting_case",

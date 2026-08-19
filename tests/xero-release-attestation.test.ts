@@ -38,8 +38,8 @@ describe("Xero 0.4 runtime attestation", () => {
     expect(hashObject(XERO_RELEASE_ATTESTATION)).toMatch(/^[a-f0-9]{64}$/u);
   });
 
-  it("attests the reviewed 28-tool public surface with only one mutation route", () => {
-    expect(TOOL_ALLOWLIST).toHaveLength(28);
+  it("attests the reviewed 29-tool public surface with only one mutation route", () => {
+    expect(TOOL_ALLOWLIST).toHaveLength(29);
     expect(TOOL_ALLOWLIST).toContain("xero_execute_accounting_case");
     expect(TOOL_ALLOWLIST.some((tool) => /xero_(?:create|prepare)_manual_journal/u.test(tool))).toBe(false);
     expect(TOOL_ALLOWLIST.some((tool) => /^xero_(?:create|prepare)_(?!accounting_case)/u.test(tool))).toBe(false);

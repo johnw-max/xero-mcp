@@ -2,7 +2,7 @@
 
 核对日期：2026-08-13
 
-当前候选：`0.4.0-rc.1` / 28 个公共工具 / Accounting Case / Standing Delegation
+当前候选：`0.4.0-rc.1` / 29 个公共工具 / Accounting Case / Standing Delegation
 晋级状态：本地候选，尚未部署，Agent2 与 Work 的 0.4 写入验收尚未执行
 
 ## 一句话结论
@@ -18,11 +18,11 @@
 | 层级 | 已证明 | 未证明 |
 |---|---|---|
 | 线上历史 0.3.1 | 44 工具的只读核心流程、受控组织切换和零写入边界曾完成 Agent2 / Work 验收 | 不代表当前 0.4 Case 写契约已部署或已验收 |
-| 本地候选 0.4.0-rc.1 | 28-tool 合同、Case compiler、动态授权、幂等、Provider permit、经济数回读与 PostgreSQL 状态机正在本地发布门复验 | 尚无真实 Agent2 / Work 0.4 对话、当前部署 attestation 或真实 Xero Golden14 写入证据 |
+| 本地候选 0.4.0-rc.1 | 29-tool 合同、Case compiler、动态授权、幂等、Provider permit、经济数回读与 PostgreSQL 状态机正在本地发布门复验 | 尚无真实 Agent2 / Work 0.4 对话、当前部署 attestation 或真实 Xero Golden14 写入证据 |
 
 因此当前可说“0.4 候选已实现并在本地验收”，不能说“0.4 已上线”或“Agent2 / Work 已自动记账成功”。
 
-## 会计用户看到的 28 个公共工具
+## 会计用户看到的 29 个公共工具
 
 - 23 个读取工具：Organisation、Account、Tax Rate、Contact、Invoice/Bill、Credit Note、Payment、Quote、Purchase Order、Manual Journal、Item、Bank Transaction 和有界 Trial Balance。
 - 2 个目标控制工具：pin 当前 Organisation，以及发起受控 Organisation 切换。
@@ -111,7 +111,7 @@ Quote、Purchase Order、Manual Journal、Contact update 和 Item create/update 
 ## 还差哪些上线证据
 
 1. Gate L：最新整树 typecheck/build/full regression、HTTP、真实 PostgreSQL 025–032、静态发布包与 reviewer verdict 全绿。
-2. Gate A2：专用测试 Organisation、精确三联系人、当前 28-tool Agent、真实 prepare/execute/status tool trace；5 张文档各自有 ID、receipt、经济数 exact readback；负向权限、连接、错误金额、漏项和 unknown-result 话术也通过。
+2. Gate A2：专用测试 Organisation、精确三联系人、当前 29-tool Agent、真实 prepare/execute/status tool trace；5 张文档各自有 ID、receipt、经济数 exact readback；负向权限、连接、错误金额、漏项和 unknown-result 话术也通过。
 3. Gate W：在 Work 的真实绑定中复跑最小高信号链，并确认最终聊天没有把 partial/unsupported/unknown 说成完成。
 4. 只有以上证据完成后，才讨论部署切换和是否在受控测试窗口开启写闸；默认仍保持关闭。
 

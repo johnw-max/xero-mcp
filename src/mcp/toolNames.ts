@@ -11,6 +11,7 @@ export const TOOL_ALLOWLIST = [
   "xero_prepare_accounting_case",
   "xero_execute_accounting_case",
   "xero_get_accounting_case_status",
+  "xero_list_accounting_cases",
   "xero_list_invoices",
   "xero_list_credit_notes",
   "xero_list_payments",

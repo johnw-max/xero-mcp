@@ -763,6 +763,54 @@ async function resealInputForTest(
   };
 }
 
+/**
+ * Drives one fresh single-operation contact Case all the way to
+ * RECOVERY_REQUIRED with its sole operation left WRITE_UNCERTAIN and holding
+ * a real (synthetic) xeroObjectId -- the exact shape
+ * listAttentionAccountingCases must surface.
+ */
+async function contactCaseInRecoveryRequired(
+  repository: InMemoryAccountingRepository,
+  caseBinding: AccountingCaseBinding,
+  caseId: string,
+  companyNumber: string,
+  requestId: string,
+): Promise<{ value: CompiledAccountingCase; operationId: string; objectId: string }> {
+  await seedLiveTarget(repository, caseBinding);
+  const value = compiledContactCase({
+    caseId,
+    identity: { kind: "LEGAL_REGISTRY", jurisdiction: "SG", registryScheme: "ACRA", number: companyNumber },
+  });
+  await createCase(repository, caseBinding, value);
+  await claimCase(repository, requestId, caseBinding, value);
+  const operation = value.operations[0]!;
+  const operationId = operation.operationId;
+  const preparation = await casePreparation(repository, value, operationId, caseBinding);
+  const mutationRequestId = `${requestId}-mutation`;
+  const objectId = `xero-${requestId}-object`;
+  await confirmMutation(repository, preparation, mutationRequestId);
+  await repository.projectAccountingCaseOperationFromMutation({
+    binding: caseBinding, caseId: value.caseId, version: 1, operationId,
+    requestId, expectedStates: ["PREPARED"], desiredState: "WRITE_IN_FLIGHT",
+    mutationRequestId, now,
+  });
+  await repository.markXeroMutationWriteUnknown({
+    ...boundMutationInput(preparation, mutationRequestId),
+    xeroObjectId: objectId,
+    writeReceipt: { requestId: `provider-${requestId}` },
+  });
+  await repository.projectAccountingCaseOperationFromMutation({
+    binding: caseBinding, caseId: value.caseId, version: 1, operationId,
+    requestId, expectedStates: ["WRITE_IN_FLIGHT"], desiredState: "WRITE_UNCERTAIN",
+    mutationRequestId, now,
+  });
+  await repository.finalizeAccountingCase({
+    binding: caseBinding, caseId: value.caseId, version: 1, requestId,
+    state: "RECOVERY_REQUIRED", terminalSummary: { uncertainOperationIds: [operationId] }, now,
+  });
+  return { value, operationId, objectId };
+}
+
 describe("InMemory Accounting Case repository concurrency and state consistency", () => {
   it("atomically claims one tenant bare number before preflight across different typed namespaces", async () => {
     const repository = new InMemoryAccountingRepository({ now: () => now });
@@ -2836,6 +2884,101 @@ describe("InMemory Accounting Case repository concurrency and state consistency"
     })).rejects.toMatchObject({
       code: "CONFLICT",
       message: "UPDATE result does not match its immutable Xero target.",
+    });
+  });
+
+  it("lists a RECOVERY_REQUIRED case with its uncertain operation and object id", async () => {
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const caseBinding = binding();
+    const { value, operationId, objectId } = await contactCaseInRecoveryRequired(
+      repository, caseBinding, "attention-list-recovery-1", "attn-rec-001", "attn-execute-1",
+    );
+
+    await expect(repository.listAttentionAccountingCases({
+      currentAccessBinding: caseBinding,
+      limit: 50,
+    })).resolves.toEqual({
+      hasMore: false,
+      cases: [{
+        caseId: value.caseId,
+        caseVersion: 1,
+        state: "RECOVERY_REQUIRED",
+        operations: [{ operationId, state: "WRITE_UNCERTAIN", xeroObjectId: objectId }],
+      }],
+    });
+  });
+
+  it("does not list a fully READBACK_VERIFIED TERMINAL case", async () => {
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const caseBinding = binding();
+    await seedLiveTarget(repository, caseBinding);
+    const value = compiledContactCase({
+      caseId: "attention-list-terminal-1",
+      identity: { kind: "LEGAL_REGISTRY", jurisdiction: "SG", registryScheme: "ACRA", number: "attn-term-001" },
+    });
+    await createCase(repository, caseBinding, value);
+    await claimCase(repository, "attn-execute-2", caseBinding, value);
+    const operation = value.operations[0]!;
+    const operationId = operation.operationId;
+    const preparation = await casePreparation(repository, value, operationId, caseBinding);
+    const mutationRequestId = "attn-mutation-2";
+    await recordVerifiedMutation(repository, preparation, mutationRequestId, operation, "xero-attention-object-2");
+    await repository.projectAccountingCaseOperationFromMutation({
+      binding: caseBinding, caseId: value.caseId, version: 1, operationId,
+      requestId: "attn-execute-2", expectedStates: ["PREPARED"], desiredState: "READBACK_VERIFIED",
+      mutationRequestId, now,
+    });
+    await expect(repository.finalizeAccountingCase({
+      binding: caseBinding, caseId: value.caseId, version: 1, requestId: "attn-execute-2",
+      state: "TERMINAL", terminalSummary: { completedOperationIds: [operationId] }, now,
+    })).resolves.toMatchObject({ state: "TERMINAL" });
+
+    await expect(repository.listAttentionAccountingCases({
+      currentAccessBinding: caseBinding,
+      limit: 50,
+    })).resolves.toEqual({ cases: [], hasMore: false });
+  });
+
+  it("never lists a case belonging to a different binding or tenant", async () => {
+    const repository = new InMemoryAccountingRepository({ now: () => now });
+    const owner = binding();
+    await contactCaseInRecoveryRequired(
+      repository, owner, "attention-list-isolation-1", "attn-iso-001", "attn-execute-3",
+    );
+
+    // Same set of identity fields sameAccountingCaseAccessIdentity checks
+    // (target-session evidence is intentionally excluded from that check, so
+    // it is deliberately not exercised here -- see the renewed-target-session
+    // positive control below instead).
+    const mismatches: AccountingCaseBinding[] = [
+      binding({ actorId: "workspace-1:user:user-2" }),
+      binding({ workspaceId: "workspace-2" }),
+      binding({ subjectType: "TEAM" }),
+      binding({ subjectId: "user-2" }),
+      binding({ agentId: "accounting-agent-2" }),
+      binding({ installationId: "installation-2" }),
+      binding({ bindingId: "binding-2" }),
+      binding({ bindingRevision: 4 }),
+      binding({ connectionId: "connection-2" }),
+      binding({ tenantId: "tenant-other" }),
+    ];
+    for (const mismatch of mismatches) {
+      await expect(repository.listAttentionAccountingCases({
+        currentAccessBinding: mismatch,
+        limit: 50,
+      })).resolves.toEqual({ cases: [], hasMore: false });
+    }
+
+    // Positive control: the exact owner identity, even under a freshly
+    // renewed target session (access identity intentionally ignores target
+    // session evidence), still finds it -- proving the empty results above
+    // come from real isolation, not a filter that rejects everything.
+    const renewed = binding({ targetSessionId: "target-session-renewed", targetSessionHash: "b".repeat(64) });
+    await expect(repository.listAttentionAccountingCases({
+      currentAccessBinding: renewed,
+      limit: 50,
+    })).resolves.toMatchObject({
+      cases: [expect.objectContaining({ caseId: "attention-list-isolation-1" })],
     });
   });
 });

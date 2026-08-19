@@ -270,7 +270,7 @@ export function createAccountingMcpServer(
   context: RequestContext,
   organisationSwitch?: Pick<OrganisationSwitchService, "start">,
   targetSessions?: Pick<LedgerTargetSessionService, "issue" | "resolve" | "required">,
-  accountingCases?: Pick<XeroAccountingCaseService, "prepare" | "execute" | "status">,
+  accountingCases?: Pick<XeroAccountingCaseService, "prepare" | "execute" | "status" | "listAttentionCases">,
   options?: { unsafeExposeLegacyObjectMutationToolsForTests?: boolean },
 ): McpServer {
   const actorId = context.actorId;
@@ -300,6 +300,7 @@ export function createAccountingMcpServer(
     prepare: unavailableAccountingCase,
     execute: unavailableAccountingCase,
     status: unavailableAccountingCase,
+    listAttentionCases: unavailableAccountingCase,
   };
 
   {
@@ -360,6 +361,25 @@ export function createAccountingMcpServer(
         toolName: "xero_get_accounting_case_status",
         input,
         action: (effectiveContext, businessInput) => caseRuntime.status(effectiveContext, businessInput),
+      }),
+    );
+
+    server.registerTool(
+      "xero_list_accounting_cases",
+      {
+        title: "List Xero Accounting Cases needing attention",
+        description: "Lists Accounting Cases in the pinned organisation that were left unresolved: state RECOVERY_REQUIRED, or a current operation still WRITE_UNCERTAIN, WRITE_IN_FLIGHT, READBACK_MISMATCH, or not executed after its target session expired. Use this to find work started in an earlier session and never confirmed finished, when you do not already know its case_id. A listed case is finished the same way any Case is: call xero_execute_accounting_case again with that same case_id and case_version; it resumes the durable Case and never re-asks for the original payload. Returns at most 50 cases, newest first, and reports whether more exist beyond that page.",
+        inputSchema: targeted(noInputSchema),
+        annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false },
+      },
+      async (input) => audited({
+        service,
+        context,
+        requiredScope: "xero.read",
+        actorId,
+        toolName: "xero_list_accounting_cases",
+        input,
+        action: (effectiveContext) => caseRuntime.listAttentionCases(effectiveContext),
       }),
     );
   }

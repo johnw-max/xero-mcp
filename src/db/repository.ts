@@ -128,6 +128,8 @@ import type {
   GetAccountingCaseRecoveryResidualGrantResult,
   GetBoundAccountingCaseInput,
   AccountingCaseVersionRecord,
+  ListAttentionAccountingCasesInput,
+  ListAttentionAccountingCasesResult,
   RecordAccountingCasePreflightInput,
   RecordAccountingCasePreflightResult,
   ResealAndClaimAccountingCaseExecutionInput,
@@ -440,6 +442,17 @@ export interface AccountingRepository {
   getAccessibleAccountingCase(
     input: GetAccessibleAccountingCaseInput,
   ): Promise<AccountingCaseVersionRecord | undefined>;
+  /**
+   * Discovery-only, read-only enumeration of the caller's own cases still
+   * needing attention (RECOVERY_REQUIRED, or a current operation left
+   * WRITE_UNCERTAIN / WRITE_IN_FLIGHT / READBACK_MISMATCH /
+   * NOT_EXECUTED_AFTER_TARGET_EXPIRY). Scoped by the same durable access
+   * identity as getAccessibleAccountingCase; never returns another binding
+   * or tenant's case.
+   */
+  listAttentionAccountingCases(
+    input: ListAttentionAccountingCasesInput,
+  ): Promise<ListAttentionAccountingCasesResult>;
   /**
    * Tenant-bound identity registry backed only by an Accounting Case contact
    * create whose exact provider read-back reached READBACK_VERIFIED.

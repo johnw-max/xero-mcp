@@ -266,7 +266,7 @@ export function assertAgentSkillReadCommandEvents(events, {
   });
 }
 
-// The MCP backend retains the reviewed 28-tool surface. This execution Agent
+// The MCP backend retains the reviewed 29-tool surface. This execution Agent
 // receives only the typed Case vertical slice, using Codex's native per-server
 // enabled_tools filter. Agent2 must mount the same profile for comparable UAT.
 export const ACCOUNTING_CASE_AGENT_ENABLED_TOOLS = Object.freeze([
@@ -280,7 +280,7 @@ export const ACCOUNTING_CASE_AGENT_ENABLED_TOOLS = Object.freeze([
 /**
  * The schema source set is intentionally explicit.  The hash is not a claim
  * that source text is a runtime schema; it is a deployment identity for the
- * code that produces the 28-tool MCP surface and its input schemas.
+ * code that produces the 29-tool MCP surface and its input schemas.
  */
 export const TOOL_SCHEMA_SOURCES = Object.freeze([
   "config/tool-allowlist.json",
@@ -429,9 +429,9 @@ export async function buildToolContractEvidence(repoRoot) {
   } catch {
     throw new Error("TOOL_ALLOWLIST_INVALID_JSON");
   }
-  if (!Array.isArray(parsed?.tools) || parsed.tools.length !== 28 ||
+  if (!Array.isArray(parsed?.tools) || parsed.tools.length !== 29 ||
       parsed.tools.some((tool) => typeof tool !== "string" || !tool)) {
-    throw new Error("TOOL_ALLOWLIST_MUST_CONTAIN_28_TOOLS");
+    throw new Error("TOOL_ALLOWLIST_MUST_CONTAIN_29_TOOLS");
   }
   const schemaSources = await schemaSourceEntries(repoRoot);
   const schemaManifest = { tools: parsed.tools, sources: schemaSources };

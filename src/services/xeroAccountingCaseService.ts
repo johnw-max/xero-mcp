@@ -242,6 +242,25 @@ export interface AccountingCaseSummary {
       };
 }
 
+/** Cap for xero_list_accounting_cases: newest (by version updated_at) first. */
+export const ACCOUNTING_CASE_ATTENTION_LIST_LIMIT = 50;
+
+export interface AccountingCaseAttentionListSummary {
+  cases: Array<{
+    case_id: string;
+    case_version: number;
+    state: AccountingCaseVersionRecord["state"];
+    /** Only the operations currently needing attention, not every operation on the case. */
+    attention_operations: Array<{
+      operation_id: string;
+      state: AccountingCaseOperationRecord["state"];
+      xero_object_id?: string;
+    }>;
+  }>;
+  /** True when more matching cases exist beyond this page. */
+  has_more: boolean;
+}
+
 function caseBinding(context: RequestContext, tenantId: string): AccountingCaseBinding {
   const principal = requireOAuthBoundRequestContext(context);
   if (
@@ -1778,6 +1797,36 @@ export class XeroAccountingCaseService {
       });
     }
     return summary(record, this.#continuationSecret);
+  }
+
+  /**
+   * Read-only discovery across the caller's own cases in the pinned
+   * organisation: everything left RECOVERY_REQUIRED, or holding a current
+   * operation still WRITE_UNCERTAIN, WRITE_IN_FLIGHT, READBACK_MISMATCH, or
+   * not executed after its target session expired. Never mutates, executes,
+   * or recovers anything; a listed case is finished by calling execute()
+   * again with its exact case_id and case_version.
+   */
+  async listAttentionCases(context: RequestContext): Promise<AccountingCaseAttentionListSummary> {
+    const resolved = await this.provider.resolveContext(context);
+    const currentAccessBinding = caseBinding(context, resolved.tenantId);
+    const result = await this.repository.listAttentionAccountingCases({
+      currentAccessBinding,
+      limit: ACCOUNTING_CASE_ATTENTION_LIST_LIMIT,
+    });
+    return {
+      cases: result.cases.map((entry) => ({
+        case_id: entry.caseId,
+        case_version: entry.caseVersion,
+        state: entry.state,
+        attention_operations: entry.operations.map((operation) => ({
+          operation_id: operation.operationId,
+          state: operation.state,
+          ...(operation.xeroObjectId ? { xero_object_id: operation.xeroObjectId } : {}),
+        })),
+      })),
+      has_more: result.hasMore,
+    };
   }
 
   async execute(context: RequestContext, raw: ExecuteAccountingCaseInput): Promise<AccountingCaseSummary> {

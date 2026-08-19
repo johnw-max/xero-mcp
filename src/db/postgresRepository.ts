@@ -102,6 +102,8 @@ import type {
   GetBoundAccountingCaseInput,
   GetAccountingCaseRecoveryResidualGrantInput,
   GetAccountingCaseRecoveryResidualGrantResult,
+  ListAttentionAccountingCasesInput,
+  ListAttentionAccountingCasesResult,
   PauseAccountingCaseExecutionInput,
   ProjectAccountingCaseOperationFromMutationInput,
   RecordAccountingCasePreflightInput,
@@ -120,6 +122,7 @@ import {
   matchesAccountingCaseRecoveryResidualAuthorization,
 } from "../domain/accountingCaseContinuation.js";
 import {
+  ACCOUNTING_CASE_ATTENTION_OPERATION_STATES,
   ACCOUNTING_CASE_MIN_PREPARATION_RUNWAY_MS,
   ACCOUNTING_CASE_SOURCE_CASE_CLAIMS,
   accountingCaseMutationRoute,
@@ -7257,6 +7260,89 @@ export class PostgresAccountingRepository implements AccountingRepository {
     } finally {
       client.release();
     }
+  }
+
+  async listAttentionAccountingCases(
+    input: ListAttentionAccountingCasesInput,
+  ): Promise<ListAttentionAccountingCasesResult> {
+    if (!Number.isInteger(input.limit) || input.limit <= 0) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case attention list limit is invalid.", {
+        httpStatus: 422,
+      });
+    }
+    const attentionStates = [...ACCOUNTING_CASE_ATTENTION_OPERATION_STATES];
+    // Same durable access identity as getAccessibleAccountingCase (target-session
+    // evidence intentionally excluded): a caller only ever sees its own
+    // workspace/agent/tenant binding's cases, never another binding or tenant's.
+    const selected = await this.pool.query(
+      `SELECT case_head.case_id, case_head.current_version AS case_version, version_row.state AS version_state
+         FROM accounting_cases case_head
+         JOIN accounting_case_versions version_row
+           ON version_row.case_id = case_head.case_id
+          AND version_row.version = case_head.current_version
+        WHERE case_head.actor_id = $1 AND case_head.workspace_id = $2 AND case_head.subject_type = $3
+          AND case_head.subject_id = $4 AND case_head.agent_id = $5 AND case_head.oauth_installation_id = $6
+          AND case_head.binding_id = $7 AND case_head.binding_revision = $8 AND case_head.connection_id = $9
+          AND case_head.tenant_id = $10
+          AND (
+            version_row.state = 'RECOVERY_REQUIRED'
+            OR EXISTS (
+              SELECT 1 FROM accounting_case_operations attention_op
+               WHERE attention_op.case_id = case_head.case_id
+                 AND attention_op.case_version = case_head.current_version
+                 AND attention_op.state = ANY($11::text[])
+            )
+          )
+        ORDER BY version_row.updated_at DESC
+        LIMIT $12`,
+      [
+        ...accountingCaseAccessIdentityValues(input.currentAccessBinding),
+        attentionStates,
+        input.limit + 1,
+      ],
+    );
+    const rows = selected.rows as Row[];
+    const hasMore = rows.length > input.limit;
+    const page = rows.slice(0, input.limit);
+    if (page.length === 0) return { cases: [], hasMore: false };
+    const caseIds = page.map((row) => String(row.case_id));
+    const caseVersions = page.map((row) => positiveSafeInteger(row.case_version, "Accounting Case version"));
+    const operationRows = await this.pool.query(
+      // Pairs case_id[i] with case_version[i] in lockstep so an operation from
+      // one case's OTHER (non-current, historical) version can never be
+      // attributed to a different case that happens to share that version number.
+      `SELECT op.case_id, op.operation_id, op.state, op.xero_object_id
+         FROM accounting_case_operations op
+         JOIN unnest($1::text[], $2::bigint[]) AS wanted(case_id, case_version)
+           ON wanted.case_id = op.case_id AND wanted.case_version = op.case_version
+        WHERE op.state = ANY($3::text[])
+        ORDER BY op.case_id, op.ordinal ASC`,
+      [caseIds, caseVersions, attentionStates],
+    );
+    const operationsByCaseId = new Map<string, Array<{
+      operationId: string;
+      state: AccountingCaseOperationState;
+      xeroObjectId?: string;
+    }>>();
+    for (const row of operationRows.rows as Row[]) {
+      const caseId = String(row.case_id);
+      const list = operationsByCaseId.get(caseId) ?? [];
+      list.push({
+        operationId: String(row.operation_id),
+        state: row.state as AccountingCaseOperationState,
+        ...(row.xero_object_id ? { xeroObjectId: String(row.xero_object_id) } : {}),
+      });
+      operationsByCaseId.set(caseId, list);
+    }
+    return {
+      cases: page.map((row) => ({
+        caseId: String(row.case_id),
+        caseVersion: positiveSafeInteger(row.case_version, "Accounting Case version"),
+        state: row.version_state as AccountingCaseVersionRecord["state"],
+        operations: operationsByCaseId.get(String(row.case_id)) ?? [],
+      })),
+      hasMore,
+    };
   }
 
   async recordAccountingCasePreflight(

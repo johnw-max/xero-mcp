@@ -3,7 +3,7 @@ import { oracleRunSchema } from "../harness/lib/oracleResultRuntimeSchema.js";
 import { executeP0AccountingCaseSuite } from "../harness/runners/run-p0-accounting-case.js";
 
 describe("current Accounting Case controlled-write release runner", () => {
-  it("proves the 28-tool Case surface, prepare-without-write and receipt/readback-bounded autonomous execute", async () => {
+  it("proves the 29-tool Case surface, prepare-without-write and receipt/readback-bounded autonomous execute", async () => {
     const result = await executeP0AccountingCaseSuite({
       runId: "p0-accounting-case-vitest-001",
       writeArtifacts: false,
@@ -32,7 +32,7 @@ describe("current Accounting Case controlled-write release runner", () => {
     expect(surface).toMatchObject({ actual_status: "PASS", hard_gate_passed: true });
     expect(surface?.oracle_results.find((item) => item.oracle_id === "exact_28_tools")).toMatchObject({
       status: "PASS",
-      observed: { expectedCount: 28, actualCount: 28 },
+      observed: { expectedCount: 29, actualCount: 29 },
     });
     expect(surface?.oracle_results.find((item) => item.oracle_id === "legacy_mutation_tools_absent"))
       .toMatchObject({ status: "PASS", observed: { advertised: false, directCallRejected: true } });

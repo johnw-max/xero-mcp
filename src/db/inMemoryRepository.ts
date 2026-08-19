@@ -88,6 +88,8 @@ import type {
   AccountingCaseOperationState,
   AccountingCaseVersionRecord,
   GetAccessibleAccountingCaseInput,
+  ListAttentionAccountingCasesInput,
+  ListAttentionAccountingCasesResult,
   RecordAccountingCasePreflightInput,
   RecordAccountingCasePreflightResult,
   ResealAndClaimAccountingCaseExecutionInput,
@@ -128,6 +130,7 @@ import {
   type PublishLedgerAuthoritySnapshotResult,
 } from "../domain/ledgerAuthority.js";
 import {
+  ACCOUNTING_CASE_ATTENTION_OPERATION_STATES,
   ACCOUNTING_CASE_MIN_PREPARATION_RUNWAY_MS,
   accountingCaseMutationRoute,
   accountingCasePlanHash,
@@ -4039,6 +4042,48 @@ export class InMemoryAccountingRepository implements AccountingRepository {
           delete projected.recoveryResidualGrant;
           return projected;
         })();
+  }
+
+  async listAttentionAccountingCases(
+    input: ListAttentionAccountingCasesInput,
+  ): Promise<ListAttentionAccountingCasesResult> {
+    if (!Number.isInteger(input.limit) || input.limit <= 0) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case attention list limit is invalid.", {
+        httpStatus: 422,
+      });
+    }
+    const matches: Array<{
+      record: AccountingCaseVersionRecord;
+      attentionOperations: AccountingCaseOperationRecord[];
+    }> = [];
+    for (const aggregate of this.#accountingCases.values()) {
+      // Same durable access identity as getAccessibleAccountingCase (target-session
+      // evidence intentionally excluded): a caller only ever sees its own
+      // workspace/agent/tenant binding's cases, never another binding or tenant's.
+      if (!sameAccountingCaseAccessIdentity(aggregate.binding, input.currentAccessBinding)) continue;
+      const record = aggregate.versions.get(aggregate.currentVersion);
+      if (!record) continue;
+      const attentionOperations = record.operations.filter((operation) =>
+        ACCOUNTING_CASE_ATTENTION_OPERATION_STATES.includes(operation.state));
+      if (record.state !== "RECOVERY_REQUIRED" && attentionOperations.length === 0) continue;
+      assertAccountingCasePreflightIntegrity(record);
+      matches.push({ record: clone(record), attentionOperations: attentionOperations.map(clone) });
+    }
+    matches.sort((left, right) => right.record.updatedAt.getTime() - left.record.updatedAt.getTime());
+    const hasMore = matches.length > input.limit;
+    return {
+      cases: matches.slice(0, input.limit).map(({ record, attentionOperations }) => ({
+        caseId: record.compiled.caseId,
+        caseVersion: record.compiled.version,
+        state: record.state,
+        operations: attentionOperations.map((operation) => ({
+          operationId: operation.operation.operationId,
+          state: operation.state,
+          ...(operation.xeroObjectId ? { xeroObjectId: operation.xeroObjectId } : {}),
+        })),
+      })),
+      hasMore,
+    };
   }
 
   async recordAccountingCasePreflight(

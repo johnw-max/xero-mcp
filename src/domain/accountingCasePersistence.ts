@@ -262,6 +262,55 @@ export interface GetAccessibleAccountingCaseInput {
   now: Date;
 }
 
+/**
+ * Current-version operation states that make a Case worth a human's
+ * attention: an uncertain or unread-back write, or residual work abandoned
+ * when its target session expired mid-execution. Kept separate from
+ * accountingCaseTerminalSummary's broader "uncertain"/"residual" groupings
+ * below, which serve the terminal-projection receipt, not discovery.
+ */
+export const ACCOUNTING_CASE_ATTENTION_OPERATION_STATES: readonly AccountingCaseOperationState[] = [
+  "WRITE_UNCERTAIN",
+  "WRITE_IN_FLIGHT",
+  "READBACK_MISMATCH",
+  "NOT_EXECUTED_AFTER_TARGET_EXPIRY",
+];
+
+export interface AccountingCaseAttentionOperationSummary {
+  operationId: string;
+  state: AccountingCaseOperationState;
+  xeroObjectId?: string;
+}
+
+export interface AccountingCaseAttentionSummary {
+  caseId: string;
+  caseVersion: number;
+  state: AccountingCaseVersionState;
+  /** Only the operations in ACCOUNTING_CASE_ATTENTION_OPERATION_STATES, not every operation on the case. */
+  operations: AccountingCaseAttentionOperationSummary[];
+}
+
+/**
+ * Discovery-only enumeration for a caller that has lost track of a Case:
+ * every case_id, past or present, still needing a human or a follow-up
+ * execute() call. Scoped by the same durable access identity as
+ * getAccessibleAccountingCase (target-session evidence intentionally
+ * excluded, exactly like GetAccessibleAccountingCaseInput above) so a caller
+ * only ever sees its own workspace/agent/tenant binding's work.
+ */
+export interface ListAttentionAccountingCasesInput {
+  currentAccessBinding: AccountingCaseBinding;
+  /** Positive integer; the repository returns at most this many cases. */
+  limit: number;
+}
+
+export interface ListAttentionAccountingCasesResult {
+  /** Newest (by version updated_at) first. */
+  cases: AccountingCaseAttentionSummary[];
+  /** True when more matching cases exist beyond this page. */
+  hasMore: boolean;
+}
+
 export interface ClaimAccountingCaseExecutionInput {
   binding: AccountingCaseBinding;
   caseId: string;

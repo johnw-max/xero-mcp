@@ -41,7 +41,7 @@ describe("Xero public tool capability release contract", () => {
     expect(fileAllowlist.tools.sort()).toEqual(codeTools);
     expect(Object.keys(XERO_TOOL_CAPABILITY_ACTION_IDS).sort()).toEqual(codeTools);
     expect(Object.keys(XERO_TOOL_POLICY_BINDINGS).sort()).toEqual(codeTools);
-    expect(codeTools).toHaveLength(28);
+    expect(codeTools).toHaveLength(29);
 
     for (const toolName of TOOL_ALLOWLIST) {
       const binding = XERO_TOOL_POLICY_BINDINGS[toolName];
