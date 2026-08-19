@@ -66,11 +66,21 @@ export function resolveXeroFirmGovernanceExpectation(
         expected.authoritativeProviderField !== sealed.authoritativeProviderField) {
       invalid("The sealed firm-governance coordinate does not match the provider preparation.");
     }
-    return expected.uniquenessAuthority === "NON_UNIQUE_EXCLUSIVE_WRITER" ? sealed : undefined;
+    // The consistency check above still matters — a sealed coordinate that
+    // disagrees with the preparation means the plan and the write have drifted
+    // apart. What no longer follows from a NON_UNIQUE_EXCLUSIVE_WRITER
+    // coordinate is a demand for an externally signed authority (ADR-003).
+    return undefined;
   }
-  if (route === "SALES_INVOICE" && providerField === "INVOICE_NUMBER") return undefined;
-  if (route === "CUSTOMER_CREDIT" && providerField === "CREDIT_NOTE_NUMBER") return undefined;
-  invalid("This non-unique Xero coordinate lacks a sealed exact reference-kind authority.");
+  // ADR-003: no route requires externally signed firm governance any more.
+  // Non-unique coordinates (supplier bills, supplier credits, generic
+  // references) are protected by the same things every write is — tenant
+  // binding, standing delegation, DB-enforced coordinate reservation and the
+  // exact provider history walk. Demanding a signed exclusive-writer authority
+  // here was the last remnant of the removed governance layer, and it made
+  // every supplier bill unwritable in production once the delegation stopped
+  // carrying firmGovernanceRequired.
+  return undefined;
 }
 
 function exactDelegation(
