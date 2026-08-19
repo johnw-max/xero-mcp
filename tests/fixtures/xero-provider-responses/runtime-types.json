@@ -88,6 +88,14 @@
     "pagination": "undefined",
     "warnings": "undefined"
   },
+  "contacts_empty_filter_paged": {
+    "contacts": "array(empty)",
+    "pagination.itemCount": "number",
+    "pagination.page": "number",
+    "pagination.pageCount": "number",
+    "pagination.pageSize": "number",
+    "warnings": "undefined"
+  },
   "credit_notes": {
     "creditNotes[].allocations[].allocationID": "string",
     "creditNotes[].allocations[].amount": "number",

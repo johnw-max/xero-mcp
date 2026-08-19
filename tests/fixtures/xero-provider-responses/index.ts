@@ -27,7 +27,20 @@ const runtimeTypes = JSON.parse(
 export type XeroCapturedResponse =
   | "accounts"
   | "contact_single"
+  /**
+   * An empty result WITHOUT a page parameter. Xero leaves `pagination`
+   * undefined here. Production never calls this way - it always pages - so a
+   * mapper conclusion drawn from this shape does not transfer. Kept because the
+   * shape is real and code that reads `pagination?.pageCount` can meet it.
+   */
   | "contacts_empty_filter"
+  /**
+   * The same empty result WITH `page=1`, which is how production asks. Xero
+   * answers with the full envelope and `pageCount: 0, itemCount: 0` - the exact
+   * "exhausted, and there is nothing" signal the contact scan depends on to let
+   * a new supplier be created at all.
+   */
+  | "contacts_empty_filter_paged"
   | "credit_notes"
   | "invoice_accpay"
   | "items"
