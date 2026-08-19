@@ -1194,17 +1194,21 @@
               "obligation_id": "K-007-C02-P01",
               "invariant": "Every expected fact and event has exact source-unit coverage and generic evidence cannot cover an unrelated set or collision.",
               "target_path": "src/control-kernel/accountingCaseCompiler.ts",
-              "target_anchor": "completionClaim",
+              "target_anchor": "missingFactRequirements",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "allLedgerMutationsVerified: false as const,",
-              "replacement": "allLedgerMutationsVerified: true as const,",
+              "literal": "requirements.filter((requirement) => !facts.some((fact) =>",
+              "replacement": "requirements.filter((requirement) => false && !facts.some((fact) =>",
               "test_files": [
                 "tests/accounting-case-golden-14.test.ts",
                 "tests/accounting-case-adversarial.test.ts"
               ],
               "mutation_test_path": "tests/accounting-case-golden-14.test.ts",
               "expected_failing_test_names": [
-                "turns all supplied source units into bounded events without pretending every image is a posting"
+                "blocks supplied-set completion when doc-07:opening has no typed fact",
+                "blocks supplied-set completion when doc-07:customer-receipt has no typed fact",
+                "blocks supplied-set completion when doc-07:supplier-payment has no typed fact",
+                "blocks supplied-set completion when doc-07:bank-fee has no typed fact",
+                "blocks supplied-set completion when doc-07:prepayment has no typed fact"
               ],
               "expected_failure_message_patterns": [
                 "expected"
@@ -1234,17 +1238,17 @@
               "obligation_id": "K-007-C03-P01",
               "invariant": "Submitted-set completeness, write eligibility and residual disposition are independent dimensions and none may be inferred from another.",
               "target_path": "src/control-kernel/accountingCaseCompiler.ts",
-              "target_anchor": "completionClaim",
+              "target_anchor": "hasGlobalDocumentEligibilityBlock",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "allLedgerMutationsVerified: false as const,",
-              "replacement": "allLedgerMutationsVerified: true as const,",
+              "literal": "hasGlobalDocumentEligibilityBlock ? [] :",
+              "replacement": "false ? [] :",
               "test_files": [
                 "tests/accounting-case-golden-14.test.ts",
                 "tests/accounting-case-adversarial.test.ts"
               ],
-              "mutation_test_path": "tests/accounting-case-golden-14.test.ts",
+              "mutation_test_path": "tests/accounting-case-adversarial.test.ts",
               "expected_failing_test_names": [
-                "turns all supplied source units into bounded events without pretending every image is a posting"
+                "requires an explicit document-validity state and blocks the whole plan before any operation"
               ],
               "expected_failure_message_patterns": [
                 "expected"
@@ -1722,9 +1726,9 @@
               "obligation_id": "K-009-C02-P01",
               "invariant": "READBACK_VERIFIED requires the same provider object identifier and an exact canonical and economic projection.",
               "target_path": "src/db/inMemoryRepository.ts",
-              "target_anchor": "projectAccountingCaseOperationFromMutation",
+              "target_anchor": "economics.ok",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "if (projectedState === \"READBACK_VERIFIED\") {",
+              "literal": "if (!economics.ok) {",
               "replacement": "if (false) {",
               "test_files": [
                 "tests/accounting-case-in-memory-repository-concurrency.test.ts",
@@ -2050,17 +2054,17 @@
               "obligation_id": "K-011-C02-P01",
               "invariant": "The public failure envelope contains only allowlisted bounded fields and never provider bodies, secrets or arbitrary internal details.",
               "target_path": "src/mcp/xeroFailureEnvelope.ts",
-              "target_anchor": "xeroMcpFailureEnvelope",
+              "target_anchor": "explicitLayer",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "safe.code === \"WRITE_RESULT_UNKNOWN\" || safe.code === \"READBACK_MISMATCH\"",
-              "replacement": "false",
+              "literal": "SAFE_FAILURE_LAYERS.has(safe.details.failureLayer)",
+              "replacement": "true",
               "test_files": [
                 "tests/xero-error-taxonomy.test.ts",
                 "tests/http-oauth-edge.test.ts"
               ],
               "mutation_test_path": "tests/xero-error-taxonomy.test.ts",
               "expected_failing_test_names": [
-                "treats readback mismatch as a potentially committed provider mutation"
+                "bounds machine fields and drops unapproved detail strings"
               ],
               "expected_failure_message_patterns": [
                 "expected"
