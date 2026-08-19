@@ -27,6 +27,46 @@ const active = [{
   actionIds: ["supplier_bill.create_draft"],
 }];
 
+describe("authority content identity versus publication revision", () => {
+  // A build pins the authority it was built to honour. Folding the publication
+  // revision into that pin meant republishing the very same delegations — which
+  // is exactly what a rollback does, since the revision may never decrease —
+  // invalidated every other build's pin, so an older build restarted into a
+  // silent READ_ONLY and could not serve writes again.
+  const material = {
+    providerId: "xero",
+    writeKillSwitchEnabled: true,
+    standingDelegations: active,
+    publishedAt: new Date("2026-08-13T00:00:00.000Z"),
+  };
+
+  it("keeps the same content identity when the identical authority is republished higher", () => {
+    const published = createLedgerAuthoritySnapshot({ ...material, revision: 2 });
+    const republished = createLedgerAuthoritySnapshot({ ...material, revision: 9 });
+
+    expect(republished.contentHash).toBe(published.contentHash);
+    expect(republished.snapshotHash).not.toBe(published.snapshotHash);
+  });
+
+  it("changes the content identity when the authority itself changes", () => {
+    const published = createLedgerAuthoritySnapshot({ ...material, revision: 2 });
+    const widened = createLedgerAuthoritySnapshot({
+      ...material,
+      revision: 2,
+      standingDelegations: [{ ...active[0]!, actionIds: ["supplier_bill.create_draft", "customer_invoice.create_draft"] }],
+    });
+
+    expect(widened.contentHash).not.toBe(published.contentHash);
+  });
+
+  it("changes the content identity when the write kill switch flips", () => {
+    const open = createLedgerAuthoritySnapshot({ ...material, revision: 2 });
+    const closed = createLedgerAuthoritySnapshot({ ...material, revision: 2, writeKillSwitchEnabled: false });
+
+    expect(closed.contentHash).not.toBe(open.contentHash);
+  });
+});
+
 describe("versioned ledger authority snapshot", () => {
   it("hashes only canonical authority content, not publication time or input ordering", () => {
     const first = createLedgerAuthoritySnapshot({

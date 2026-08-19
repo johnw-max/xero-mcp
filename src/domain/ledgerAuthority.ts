@@ -9,6 +9,7 @@ import { hashObject } from "../security/hash.js";
 
 export const LEDGER_AUTHORITY_SNAPSHOT_SCHEMA_VERSION = "ledger-authority-snapshot:v2";
 export const LEGACY_LEDGER_AUTHORITY_SNAPSHOT_SCHEMA_VERSION = "ledger-authority-snapshot:v1";
+export const LEDGER_AUTHORITY_CONTENT_SCHEMA_VERSION = "ledger-authority-content:v1";
 
 export interface LedgerAuthoritySnapshotMaterial {
   readonly providerId: string;
@@ -20,6 +21,13 @@ export interface LedgerAuthoritySnapshotMaterial {
 export interface LedgerAuthoritySnapshot extends LedgerAuthoritySnapshotMaterial {
   readonly schemaVersion: typeof LEDGER_AUTHORITY_SNAPSHOT_SCHEMA_VERSION;
   readonly snapshotHash: string;
+  /**
+   * Identity of what the authority *says*, with the publication revision left
+   * out. The revision orders publications; it is not part of the grant. Two
+   * snapshots with the same content hash authorise exactly the same writes,
+   * whether they were published as revision 2 or revision 9.
+   */
+  readonly contentHash: string;
   readonly publishedAt: Date;
 }
 
@@ -297,6 +305,27 @@ export function ledgerAuthoritySnapshotHash(material: LedgerAuthoritySnapshotMat
   });
 }
 
+/**
+ * Deliberately excludes `revision`. A build pins the authority it was built to
+ * honour; folding the revision into that pin meant any later publication —
+ * including republishing the very same delegations — invalidated every other
+ * build's pin, so an older build restarted into a silent READ_ONLY and rollback
+ * was structurally impossible. Pinning content instead keeps the property that
+ * matters (a build refuses to write under an authority it does not recognise)
+ * while letting the same content be republished at a higher revision.
+ */
+export function ledgerAuthorityContentHash(material: LedgerAuthoritySnapshotMaterial): string {
+  assertValidMaterial(material);
+  return hashObject({
+    schemaVersion: LEDGER_AUTHORITY_CONTENT_SCHEMA_VERSION,
+    providerId: material.providerId,
+    writeKillSwitchEnabled: material.writeKillSwitchEnabled,
+    standingDelegations: material.standingDelegations
+      .map(canonicalDelegation)
+      .sort((left, right) => left.delegationId.localeCompare(right.delegationId, "en")),
+  });
+}
+
 /** Verification only. A v1 hash can never be returned as current authority. */
 export function legacyLedgerAuthoritySnapshotV1Hash(material: LedgerAuthoritySnapshotMaterial): string {
   if (!exactNonEmpty(material.providerId) || !Number.isSafeInteger(material.revision) || material.revision < 1) {
@@ -360,6 +389,7 @@ export function createLedgerAuthoritySnapshot(input: PublishLedgerAuthoritySnaps
     schemaVersion: LEDGER_AUTHORITY_SNAPSHOT_SCHEMA_VERSION,
     ...material,
     snapshotHash: ledgerAuthoritySnapshotHash(material),
+    contentHash: ledgerAuthorityContentHash(material),
     publishedAt: new Date(input.publishedAt),
   });
 }

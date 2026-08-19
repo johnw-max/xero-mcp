@@ -118,7 +118,13 @@ async function main() {
 
     // Print the three required lines to stdout
     process.stdout.write(`XERO_STANDING_DELEGATIONS_CONFIG_SHA256=${configSha256}\n`);
-    process.stdout.write(`XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256=${snapshot.snapshotHash}\n`);
+    // Emit the content hash, not the snapshot hash: the snapshot hash folds in
+    // the publication revision, so a pin naming it goes stale the moment the
+    // authority is republished — including a rollback, which must republish the
+    // older content at a HIGHER revision. The content hash names what the
+    // authority actually grants, so it survives that and still changes the
+    // moment the grant itself changes.
+    process.stdout.write(`XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256=${snapshot.contentHash}\n`);
     process.stdout.write(`XERO_AUTHORITY_REVISION=${revision}\n`);
 
     process.exitCode = 0;

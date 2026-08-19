@@ -180,6 +180,8 @@ export interface RepositoryReadinessEvidence {
   /** Same REPEATABLE READ transaction and repository clock as the other readiness facts. */
   authoritySnapshotRevision: number | null;
   authoritySnapshotHash: string | null;
+  /** Revision-independent identity of the live authority; see ledgerAuthorityContentHash. */
+  authorityContentHash: string | null;
   authorityWriteKillSwitchEnabled: boolean | null;
   firmGovernance: LedgerFirmGovernanceReadinessEvidence;
 }

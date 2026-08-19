@@ -721,6 +721,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       activeAccountingCaseRecoveryProjection,
       authoritySnapshotRevision: snapshot?.revision ?? null,
       authoritySnapshotHash: snapshot?.snapshotHash ?? null,
+      authorityContentHash: snapshot?.contentHash ?? null,
       authorityWriteKillSwitchEnabled: snapshot?.writeKillSwitchEnabled ?? null,
       firmGovernance,
     };

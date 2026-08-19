@@ -65,7 +65,16 @@ function expectedAuthorityIdentityProven(
   if (expectedSnapshot === undefined || expectedGovernance === undefined) {
     return config.nodeEnv !== "production";
   }
-  if (evidence.authoritySnapshotHash !== expectedSnapshot) return false;
+  // The pin may name either the revision-independent content hash (durable:
+  // survives republication of the same authority at a higher revision, which is
+  // what a rollback is) or the older snapshot hash, which folded the revision in
+  // and therefore went stale the moment anything was republished. Accepting both
+  // keeps already-deployed envs working while the content hash becomes the pin
+  // worth writing down.
+  if (evidence.authorityContentHash !== expectedSnapshot &&
+      evidence.authoritySnapshotHash !== expectedSnapshot) {
+    return false;
+  }
   return expectedGovernance === "NOT_REQUIRED"
     ? evidence.firmGovernance.status === "NOT_REQUIRED" &&
       evidence.firmGovernance.authorityAggregateHash === null
@@ -84,6 +93,7 @@ function unknownReadinessEvidence(requiredMigration: string): RepositoryReadines
       unknownActiveAccountingCaseRecoveryProjectionEvidence(),
     authoritySnapshotRevision: null,
     authoritySnapshotHash: null,
+    authorityContentHash: null,
     authorityWriteKillSwitchEnabled: null,
     firmGovernance: ledgerFirmGovernanceReadinessEvidence(undefined, new Date(Number.NaN)),
   };
@@ -648,6 +658,7 @@ export function createHttpApp(options: {
       standingDelegationsConfigSha256: config.xeroStandingDelegationsConfigSha256 ?? null,
       authoritySnapshotRevision: evidence.authoritySnapshotRevision,
       authoritySnapshotHash: evidence.authoritySnapshotHash,
+      authorityContentHash: evidence.authorityContentHash,
       authorityWriteKillSwitchEnabled: evidence.authorityWriteKillSwitchEnabled,
       firmGovernance: evidence.firmGovernance,
       buildIdentityHash: buildIdentity ? xeroBuildIdentityHash(buildIdentity) : null,
@@ -718,6 +729,7 @@ export function createHttpApp(options: {
       standingDelegationsConfigSha256: config.xeroStandingDelegationsConfigSha256 ?? null,
       authoritySnapshotRevision: evidence.authoritySnapshotRevision,
       authoritySnapshotHash: evidence.authoritySnapshotHash,
+      authorityContentHash: evidence.authorityContentHash,
       authorityWriteKillSwitchEnabled: evidence.authorityWriteKillSwitchEnabled,
       buildIdentityHash,
       acceptanceSourceSha256: buildIdentity?.acceptanceSourceSha256 ?? null,

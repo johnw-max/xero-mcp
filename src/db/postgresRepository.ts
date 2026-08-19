@@ -2057,6 +2057,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
         activeAccountingCaseRecoveryProjection,
         authoritySnapshotRevision: authoritySnapshot?.revision ?? null,
         authoritySnapshotHash: authoritySnapshot?.snapshotHash ?? null,
+        authorityContentHash: authoritySnapshot?.contentHash ?? null,
         authorityWriteKillSwitchEnabled: authoritySnapshot?.writeKillSwitchEnabled ?? null,
         firmGovernance,
       };
@@ -2081,6 +2082,7 @@ export class PostgresAccountingRepository implements AccountingRepository {
           unknownActiveAccountingCaseRecoveryProjectionEvidence(),
         authoritySnapshotRevision: null,
         authoritySnapshotHash: null,
+        authorityContentHash: null,
         authorityWriteKillSwitchEnabled: null,
         firmGovernance: ledgerFirmGovernanceReadinessEvidence(undefined, new Date(Number.NaN)),
       };
