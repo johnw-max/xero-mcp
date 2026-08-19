@@ -860,12 +860,19 @@ export function createLocalAcceptancePlan(options) {
   if (!/^[a-f0-9]{64}$/u.test(options.approvedControlCatalogSha256 ?? "")) {
     throw new Error("LOCAL_GATE_APPROVED_CONTROL_CATALOG_SHA256_REQUIRED");
   }
+  // Reviewer identity is optional here for the same reason it is optional at the
+  // runner boundary: this plan contains no independent-review step to identify.
+  // When a host does supply it, it still has to be a real digest.
+  if ([
+    options.approvedReviewCodexSha256,
+    options.approvedReviewRuntimeSha256,
+  ].some((value) => value !== undefined && !/^[a-f0-9]{64}$/u.test(value))) {
+    throw new Error("LOCAL_GATE_INDEPENDENT_REVIEW_HOST_IDENTITY_REQUIRED");
+  }
   if ([
     options.expectedSourceFingerprint,
     options.sourceSnapshotManifestSha256,
     options.liveReviewChallengeSha256,
-    options.approvedReviewCodexSha256,
-    options.approvedReviewRuntimeSha256,
   ].some((value) => !/^[a-f0-9]{64}$/u.test(value ?? "")) ||
       !/^[0-9a-f-]{36}$/u.test(options.gateRunId ?? "")) {
     throw new Error("LOCAL_GATE_INDEPENDENT_REVIEW_HOST_IDENTITY_REQUIRED");

@@ -85,14 +85,17 @@ function parseArguments(argv) {
     options[key] = resolve(value);
     index += 1;
   }
+  // The reviewer identity hashes pin which Codex build and runtime performed an
+  // independent review. This gate no longer runs one - the manifest says so
+  // outright with independent_review_authority LOCAL_EVIDENCE_UNTRUSTED - so
+  // demanding them forces an operator to invent a digest for a reviewer that was
+  // never invoked, and the receipt then carries an attestation nobody earned.
+  // A host that does run the review may still supply them and have them pinned.
   if ([
     options.approvedControlCatalogSha256,
-    options.approvedReviewCodexSha256,
-    options.approvedReviewRuntimeSha256,
   ].some((value) => value === undefined)) {
     throw new Error(
-      "--approved-control-catalog-sha256, --approved-review-codex-sha256 and " +
-      "--approved-review-runtime-sha256 are required from the host acceptance boundary",
+      "--approved-control-catalog-sha256 is required from the host acceptance boundary",
     );
   }
   return options;
@@ -497,8 +500,12 @@ async function main() {
       independent_review_authority: "LOCAL_EVIDENCE_UNTRUSTED",
       gate_run_id: gateRunId,
       live_review_challenge_sha256: liveReviewChallengeSha256,
-      approved_review_codex_sha256: options.approvedReviewCodexSha256,
-      approved_review_runtime_sha256: options.approvedReviewRuntimeSha256,
+      ...(options.approvedReviewCodexSha256
+        ? { approved_review_codex_sha256: options.approvedReviewCodexSha256 }
+        : {}),
+      ...(options.approvedReviewRuntimeSha256
+        ? { approved_review_runtime_sha256: options.approvedReviewRuntimeSha256 }
+        : {}),
       status: "RUNNING",
       started_at: new Date().toISOString(),
       finished_at: null,
@@ -734,8 +741,12 @@ async function main() {
         gate_result_sha256: sha256Buffer(unsignedGate),
         required_step_ids: REQUIRED_GATE_STEP_IDS,
         approved_control_catalog_sha256: options.approvedControlCatalogSha256,
-        approved_review_codex_sha256: options.approvedReviewCodexSha256,
-        approved_review_runtime_sha256: options.approvedReviewRuntimeSha256,
+        ...(options.approvedReviewCodexSha256
+          ? { approved_review_codex_sha256: options.approvedReviewCodexSha256 }
+          : {}),
+        ...(options.approvedReviewRuntimeSha256
+          ? { approved_review_runtime_sha256: options.approvedReviewRuntimeSha256 }
+          : {}),
         independent_review_authority: manifest.independent_review_authority,
         gate_run_id: manifest.gate_run_id,
         live_review_challenge_sha256: manifest.live_review_challenge_sha256,
