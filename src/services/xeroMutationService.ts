@@ -83,6 +83,8 @@ import {
   type XeroFirmGovernanceExpectation,
 } from "../policy/xeroFirmGovernanceClaim.js";
 
+import { XERO_WRITE_ACTIONS, type XeroWriteActionId } from "../domain/xeroWriteActions.js";
+
 const DEFAULT_CONFIRMATION_TTL_MS = 5 * 60 * 1_000;
 const MIN_CONFIRMATION_TTL_MS = 30 * 1_000;
 const MAX_CONFIRMATION_TTL_MS = 15 * 60 * 1_000;
@@ -92,18 +94,17 @@ const MAX_JSON_DEPTH = 20;
 const MAX_JSON_NODES = 50_000;
 const FORBIDDEN_JSON_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
-const PROVIDER_ADAPTER_OPERATION_BY_ACTION = Object.freeze({
-  "supplier_bill.create_draft": "XeroAccountingProvider.createDraftSupplierBill",
-  "customer_invoice.create_draft": "XeroAccountingProvider.createDraftSalesInvoice",
-  "quote.create_draft": "XeroControlledMutationProvider.createQuoteDraft",
-  "purchase_order.create_draft": "XeroControlledMutationProvider.createPurchaseOrderDraft",
-  "credit_note.create_draft": "XeroCreditNoteManualJournalProvider.createCreditNoteDraft",
-  "manual_journal.create_draft": "XeroCreditNoteManualJournalProvider.createManualJournalDraft",
-  "contact.create_basic": "XeroContactItemMutationProvider.createContact",
-  "contact.update_basic": "XeroContactItemMutationProvider.updateContact",
-  "item.create_basic_untracked": "XeroContactItemMutationProvider.createItem",
-  "item.update_basic_untracked": "XeroContactItemMutationProvider.updateItem",
-} as const satisfies Readonly<Record<XeroAutonomousWriteAction, XeroProviderWriteAdapterOperation>>);
+const PROVIDER_ADAPTER_OPERATION_BY_ACTION: Readonly<
+  Record<XeroAutonomousWriteAction, XeroProviderWriteAdapterOperation>
+> = Object.freeze(
+  // Derived from the write-action registry; the adapter an action calls is part
+  // of that action's definition, not a second list that has to agree with it.
+  Object.fromEntries(
+    (Object.keys(XERO_WRITE_ACTIONS) as XeroWriteActionId[]).map((actionId) =>
+      [actionId, XERO_WRITE_ACTIONS[actionId].providerAdapterOperation]
+    ),
+  ) as Record<XeroAutonomousWriteAction, XeroProviderWriteAdapterOperation>,
+);
 
 const confirmationSummarySchema = z.object({
   objectType: xeroMutationObjectTypeSchema,

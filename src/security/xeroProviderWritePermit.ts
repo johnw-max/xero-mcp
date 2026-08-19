@@ -21,22 +21,22 @@ export const XERO_PROVIDER_WRITE_ADAPTER_OPERATIONS = [
   "XeroContactItemMutationProvider.updateItem",
 ] as const;
 
+import { XERO_WRITE_ACTIONS, type XeroWriteActionId } from "../domain/xeroWriteActions.js";
+
 export type XeroProviderWriteAdapterOperation = typeof XERO_PROVIDER_WRITE_ADAPTER_OPERATIONS[number];
 
 const XERO_PROVIDER_PERMIT_CONTRACT = Object.freeze({
   providerId: "xero",
-  actionByAdapterOperation: Object.freeze({
-    "XeroAccountingProvider.createDraftSupplierBill": "supplier_bill.create_draft",
-    "XeroAccountingProvider.createDraftSalesInvoice": "customer_invoice.create_draft",
-    "XeroControlledMutationProvider.createQuoteDraft": "quote.create_draft",
-    "XeroControlledMutationProvider.createPurchaseOrderDraft": "purchase_order.create_draft",
-    "XeroCreditNoteManualJournalProvider.createCreditNoteDraft": "credit_note.create_draft",
-    "XeroCreditNoteManualJournalProvider.createManualJournalDraft": "manual_journal.create_draft",
-    "XeroContactItemMutationProvider.createContact": "contact.create_basic",
-    "XeroContactItemMutationProvider.updateContact": "contact.update_basic",
-    "XeroContactItemMutationProvider.createItem": "item.create_basic_untracked",
-    "XeroContactItemMutationProvider.updateItem": "item.update_basic_untracked",
-  } satisfies Readonly<Record<XeroProviderWriteAdapterOperation, XeroAutonomousWriteAction>>),
+  // Derived from the write-action registry rather than restated. A permit that
+  // named an adapter the registry does not know, or omitted one it does, used to
+  // be a silent gap; now the record type below cannot be satisfied without both.
+  actionByAdapterOperation: Object.freeze(
+    Object.fromEntries(
+      (Object.keys(XERO_WRITE_ACTIONS) as XeroWriteActionId[]).map((actionId) =>
+        [XERO_WRITE_ACTIONS[actionId].providerAdapterOperation, actionId]
+      ),
+    ) as Readonly<Record<XeroProviderWriteAdapterOperation, XeroAutonomousWriteAction>>,
+  ),
 }) satisfies LedgerProviderPermitContract;
 
 const nativeRecoveryPermits = new WeakSet<object>();
