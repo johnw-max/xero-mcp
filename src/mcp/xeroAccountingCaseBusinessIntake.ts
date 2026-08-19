@@ -43,7 +43,13 @@ const durableContactIdentitySchema = z.discriminatedUnion("kind", [
     kind: z.literal("LEGAL_REGISTRY"),
     jurisdiction: publicId.describe("Registration jurisdiction supported by the source, for example SG or US."),
     registry_scheme: publicId.describe("Issuing registry or scheme, for example ACRA_UEN or IRS_EIN."),
-    number: z.string().trim().min(1).max(128),
+    number: z.string().trim().min(1).max(128).describe(
+      "The registration number exactly as the source document shows it. Never invent, guess, or " +
+      "synthesise a placeholder in the right format to get past this field — that writes a false " +
+      "regulatory identifier into the ledger, which is worse than the missing contact it unblocks. " +
+      "When the counterparty has no registry number in the source, use kind PROVIDER_TENANT_ACCOUNT " +
+      "instead, or stop and ask.",
+    ),
   }).strict(),
   z.object({
     kind: z.literal("PROVIDER_TENANT_ACCOUNT"),
