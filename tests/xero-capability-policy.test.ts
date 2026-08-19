@@ -204,4 +204,41 @@ describe("Xero capability and risk policy", () => {
       });
     }
   });
+
+  it("reports which write actions a tool can actually reach, separately from policy", () => {
+    // proves: the catalog can no longer describe a capability as available while
+    // nothing can call it. Six actions were marked AVAILABLE_NOW with rationales
+    // describing a complete gated path, and the only exposed write tools bind to
+    // the Accounting Case, whose executor dispatches four - so a reader deciding
+    // what the agent can do was wrong about six of ten released write actions.
+    for (const actionId of [
+      "contact.create_basic",
+      "credit_note.create_draft",
+      "customer_invoice.create_draft",
+      "supplier_bill.create_draft",
+    ] as const) {
+      expect(lookupAgentFacingXeroCapabilityDecision(actionId))
+        .toMatchObject({ agentReachableWriteAction: true });
+    }
+    for (const actionId of [
+      "quote.create_draft",
+      "purchase_order.create_draft",
+      "manual_journal.create_draft",
+      "contact.update_basic",
+      "item.create_basic_untracked",
+      "item.update_basic_untracked",
+    ] as const) {
+      expect(lookupAgentFacingXeroCapabilityDecision(actionId))
+        .toMatchObject({ agentReachableWriteAction: false });
+    }
+    // Policy permission is a different fact and is unchanged: these actions are
+    // still permitted, they are simply not callable yet.
+    expect(lookupAgentFacingXeroCapabilityDecision("quote.create_draft")).toMatchObject({
+      releaseDecision: "AVAILABLE_NOW",
+      policyAllowsMutation: true,
+    });
+    // Reads are not write actions, so the field does not apply to them.
+    expect(lookupAgentFacingXeroCapabilityDecision("report.trial_balance_read"))
+      .not.toHaveProperty("agentReachableWriteAction");
+  });
 });

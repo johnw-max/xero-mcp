@@ -120,6 +120,31 @@ export function xeroWriteActionsOnSurface(surface: XeroWriteSurface): readonly X
 }
 
 /**
+ * The write actions an agent can actually invoke today.
+ *
+ * This is the fact every other layer keeps getting wrong. The capability catalog
+ * currently marks six actions AVAILABLE_NOW - with rationales describing a
+ * complete, gated, validated path - that no tool can reach, because the only
+ * exposed write tools bind to the Accounting Case and the case executor
+ * dispatches four actions. Anyone reading that catalog to decide what the agent
+ * can do is wrong about six of ten released actions.
+ *
+ * Reachability is stated here, once, and validated against the catalog.
+ */
+export const AGENT_REACHABLE_WRITE_ACTIONS = Object.freeze([
+  "contact.create_basic",
+  "credit_note.create_draft",
+  "customer_invoice.create_draft",
+  "supplier_bill.create_draft",
+] as const satisfies readonly XeroWriteActionId[]);
+
+export type AgentReachableWriteAction = typeof AGENT_REACHABLE_WRITE_ACTIONS[number];
+
+export function isAgentReachableWriteAction(id: XeroWriteActionId): boolean {
+  return (AGENT_REACHABLE_WRITE_ACTIONS as readonly XeroWriteActionId[]).includes(id);
+}
+
+/**
  * Ledger-event actions the Accounting Case executor cannot dispatch yet.
  *
  * Keeping the gap in one named list is the point: it used to be implicit in

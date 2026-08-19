@@ -6,6 +6,12 @@
  * module only; importing it does not register MCP tools or grant OAuth scopes.
  */
 
+import {
+  XERO_WRITE_ACTIONS,
+  isAgentReachableWriteAction,
+  type XeroWriteActionId,
+} from "../domain/xeroWriteActions.js";
+
 export const XERO_BUSINESS_OBJECTS = [
   "SYSTEM",
   "ORGANISATION",
@@ -811,6 +817,18 @@ export interface AgentFacingXeroCapabilityDecision {
   readonly policyAllowsExecution: boolean;
   /** Static catalog decision only; this is never sufficient authority to mutate Xero. */
   readonly policyAllowsMutation: boolean;
+  /**
+   * Whether a released tool can actually invoke this write action today. Present
+   * only for write actions.
+   *
+   * Policy permission and reachability are different facts, and conflating them
+   * is how six actions came to be described as available while nothing could
+   * call them: the only exposed write tools bind to the Accounting Case, and its
+   * executor dispatches four. `policyAllowsExecution` still answers "would policy
+   * permit this"; this answers "is there a way to ask for it". A reader deciding
+   * what the agent can do needs the second one.
+   */
+  readonly agentReachableWriteAction?: boolean;
   readonly requiredScopes: readonly ("xero.read" | "xero.draft.write")[];
   readonly requiredPermissions: readonly XeroCapabilityPermission[];
   readonly instruction: string;
@@ -879,6 +897,10 @@ function instructionFor(policy: XeroCapabilityPolicy): string {
   return "Do not execute or mutate Xero.";
 }
 
+function isKnownWriteActionId(actionId: string): actionId is XeroWriteActionId {
+  return Object.prototype.hasOwnProperty.call(XERO_WRITE_ACTIONS, actionId);
+}
+
 function toAgentFacingDecision(
   policy: XeroCapabilityPolicy,
 ): AgentFacingXeroCapabilityDecision {
@@ -902,6 +924,9 @@ function toAgentFacingDecision(
     controlRequirement: controlRequirementFor(policy.riskClass),
     policyAllowsExecution,
     policyAllowsMutation,
+    ...(isKnownWriteActionId(policy.actionId)
+      ? { agentReachableWriteAction: isAgentReachableWriteAction(policy.actionId) }
+      : {}),
     requiredScopes: requirements.requiredScopes,
     requiredPermissions: requirements.requiredPermissions,
     instruction: instructionFor(policy),
