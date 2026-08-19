@@ -26,7 +26,8 @@
     "evidence:process-crash-restart": "node scripts/release/generate-process-crash-restart-evidence.mjs",
     "release:local:gate": "node scripts/release/run-local-acceptance-gate.mjs",
     "verify:postgres:ephemeral-cleanup": "node dist/scripts/verifyPostgresEphemeralCleanup.js",
-    "verify:postgres:audit-continuity": "node dist/scripts/verifyPostgresAuditContinuity.js"
+    "verify:postgres:audit-continuity": "node dist/scripts/verifyPostgresAuditContinuity.js",
+    "test:review-subsystem": "vitest run --config vitest.review.config.ts tests/independent-review-evidence.test.ts tests/traceability-validator.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

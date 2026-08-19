@@ -486,11 +486,12 @@ describe("fail-closed local acceptance mechanism", () => {
     // folded into `complete` now because there is nothing left to distinguish.
     expect(complete.every((step) => step.cwd === undefined)).toBe(true);
     expect(complete[0]).toMatchObject({
-      id: "local-agent-evidence",
+      id: "process-crash-restart-evidence",
       precondition: true,
     });
     expect(complete.some((step) => step.id === "independent-review-live")).toBe(false);
     expect(complete.some((step) => step.id === "traceability-closed")).toBe(false);
+    expect(complete.some((step) => step.id === "local-agent-evidence")).toBe(false);
     for (const id of ["full-regression", "postgres-required", "http-required"]) {
       expect(complete.find((step) => step.id === id)?.args).toContain("--no-cache");
     }
@@ -511,8 +512,8 @@ describe("fail-closed local acceptance mechanism", () => {
     // executed. The operator learned nothing about the candidate while waiting on
     // paperwork. That step has since been removed from the gate entirely (see
     // scripts/local-acceptance-contract.mjs); this test now exercises the same
-    // fail-open-verification behavior on local-agent-evidence, one of the two
-    // preconditions that remain. Verification still runs regardless of a
+    // fail-open-verification behavior on process-crash-restart-evidence, the
+    // one precondition that remains. Verification still runs regardless of a
     // precondition failure; the gate still fails closed, and an acceptance
     // receipt is written only on an overall PASS, so nothing built under a
     // failed run can be promoted.
@@ -521,15 +522,12 @@ describe("fail-closed local acceptance mechanism", () => {
       executed.push(step.id);
       return {
         id: step.id,
-        status: step.id === "local-agent-evidence" ? "FAIL" : "PASS",
+        status: step.id === "process-crash-restart-evidence" ? "FAIL" : "PASS",
       };
     });
     expect(outcome.status).toBe("FAIL");
-    expect(outcome.failed_step_id).toBe("local-agent-evidence");
-    expect(executed.slice(0, 2)).toEqual([
-      "local-agent-evidence",
-      "process-crash-restart-evidence",
-    ]);
+    expect(outcome.failed_step_id).toBe("process-crash-restart-evidence");
+    expect(executed[0]).toBe("process-crash-restart-evidence");
     expect(executed).toContain("typecheck");
     expect(executed).toContain("full-regression");
   });
@@ -537,10 +535,20 @@ describe("fail-closed local acceptance mechanism", () => {
   it("names the failing precondition even when a later verification step also fails", async () => {
     const outcome = await runStepsFailClosed(plan(), async (step) => ({
       id: step.id,
-      status: ["local-agent-evidence", "full-regression"].includes(step.id) ? "FAIL" : "PASS",
+      status: ["process-crash-restart-evidence", "full-regression"].includes(step.id) ? "FAIL" : "PASS",
     }));
     expect(outcome.status).toBe("FAIL");
-    expect(outcome.failed_step_id).toBe("local-agent-evidence");
+    expect(outcome.failed_step_id).toBe("process-crash-restart-evidence");
+  });
+
+  it("no longer carries a step a vendor's billing can close", () => {
+    // local-agent-evidence required the Codex binary at a hardcoded path, its
+    // exact SHA-256, and an Apple Team ID checked by shelling to codesign - and
+    // the run was funded by a personal quota that answered "you've hit your usage
+    // limit". The property it checked is now covered by live acceptance against
+    // the real tenant, which the removed step never reached: its own evidence
+    // boundary was the synthetic provider.
+    expect(plan().some((step) => step.id === "local-agent-evidence")).toBe(false);
   });
 
   it("no longer carries a step that can only ever fail", () => {

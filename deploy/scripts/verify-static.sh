@@ -205,6 +205,13 @@ fi
 # defects from. Require every file in these two families to cite the fixture
 # module, so a new test cannot be added - or an existing one gutted back down
 # to hand-built bodies - without also removing this line.
+# Excluding a test file from the default suite is allowed - the review subsystem
+# is a diagnostic, not a release gate - but it may not be a way to make a failure
+# disappear. Every test file excluded in vitest.config.ts must be named by the
+# npm script that still runs it, so dropping one silently is not possible.
+node -e 'const fs=require("node:fs"); const cfg=fs.readFileSync("vitest.config.ts","utf8"); const pkg=JSON.parse(fs.readFileSync("package.json","utf8")); const block=cfg.slice(cfg.indexOf("exclude: [")); const excluded=[...block.slice(0, block.indexOf("]")).matchAll(/"([^"]*\.test\.ts)"/g)].map((m)=>m[1]); const scripts=Object.values(pkg.scripts||{}).join(" "); const orphan=excluded.filter((file)=>!scripts.includes(file)); if(excluded.length===0||orphan.length) { console.error("excluded but unrun: "+orphan.join(",")); process.exit(1); }' \
+  || fail "a test file excluded from the default suite is not run by any npm script"
+
 for fixture_wired_test in tests/xero-*-primitives.test.ts tests/provider-*.test.ts
 do
   require_text "$fixture_wired_test" "xero-provider-responses"

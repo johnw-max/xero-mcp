@@ -924,12 +924,10 @@ export function createLocalAcceptancePlan(options) {
   // exists and still runs - on demand, via `npm run validate:traceability` -
   // it just no longer decides whether this gate passes.
   const plan = [
-    {
-      id: "local-agent-evidence",
-      precondition: true,
-      evidencePath: options.localAgentEvidencePath,
-      evidenceKind: "LOCAL_AGENT",
-    },
+    // local-agent-evidence used to open this list. It is gone for the reason the
+    // contract records: the validator pinned a vendor's binary path, SHA-256 and
+    // Apple Team ID, and the run was funded by a personal quota. The validator
+    // and generator remain exported and usable on demand.
     {
       id: "process-crash-restart-evidence",
       precondition: true,
