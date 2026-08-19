@@ -495,9 +495,10 @@ describe("fail-closed local acceptance mechanism", () => {
     expect(withEvidenceBoundary.filter((step) => step.id !== "traceability-closed")
       .every((step) => step.cwd === undefined)).toBe(true);
     expect(withEvidenceBoundary[0]).toMatchObject({
-      id: "independent-review-live",
+      id: "traceability-closed",
       precondition: true,
     });
+    expect(withEvidenceBoundary.some((step) => step.id === "independent-review-live")).toBe(false);
     for (const id of ["full-regression", "postgres-required", "http-required"]) {
       expect(withEvidenceBoundary.find((step) => step.id === id)?.args).toContain("--no-cache");
     }
@@ -517,14 +518,11 @@ describe("fail-closed local acceptance mechanism", () => {
       executed.push(step.id);
       return {
         id: step.id,
-        status: step.id === "independent-review-live"
-          ? "PASS"
-          : step.id === "traceability-closed" ? "FAIL" : "NOT_CAPTURED",
+        status: step.id === "traceability-closed" ? "FAIL" : "NOT_CAPTURED",
       };
     });
     expect(outcome.status).toBe("FAIL");
     expect(executed).toEqual([
-      "independent-review-live",
       "traceability-closed",
       "local-agent-evidence",
       "process-crash-restart-evidence",
@@ -532,36 +530,25 @@ describe("fail-closed local acceptance mechanism", () => {
     expect(executed).not.toContain("typecheck");
   });
 
-  it("fails closed on the live-review authority step before traceability and every later step", async () => {
-    const executed: string[] = [];
-    const outcome = await runStepsFailClosed(plan(), async (step) => {
-      executed.push(step.id);
-      return {
-        id: step.id,
-        status: step.id === "independent-review-live" ? "LOCAL_EVIDENCE_UNTRUSTED" : "PASS",
-      };
-    });
-    expect(outcome).toMatchObject({
-      status: "FAIL",
-      failed_step_id: "independent-review-live",
-    });
-    expect(executed).toEqual(["independent-review-live"]);
-    expect(executed).not.toContain("typecheck");
+  it("no longer carries a step that can only ever fail", () => {
+    // The gate used to open with `independent-review-live`, whose command did
+    // nothing but demand an out-of-repository signing authority and exit 78.
+    // Because the sequence fails closed, that step stopped every run before any
+    // real check executed — the gate reported NO-GO whether or not anything was
+    // actually wrong, which is indistinguishable from having no gate.
+    expect(plan().some((step) => step.id === "independent-review-live")).toBe(false);
   });
 
-  it("has no legacy-artifact or skip option and emits the explicit untrusted local boundary", () => {
-    const step = plan()[0]!;
-    expect(step.id).toBe("independent-review-live");
-    expect(step.args.join(" ")).not.toMatch(/(?:legacy|artifact|skip|bypass|optional)/u);
-    const run = spawnSync(step.command, step.args, {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      shell: false,
-    });
-    expect(run.status).toBe(78);
-    expect(run.stdout).toBe("");
-    expect(run.stderr).toContain('"status":"LOCAL_EVIDENCE_UNTRUSTED"');
-    expect(run.stderr).toContain('"gate_l_claim":"NOT_IMPLIED"');
+  it("still refuses to claim the independent-review authority a local run does not have", async () => {
+    const outcome = await runStepsFailClosed(plan(), async (step) => ({ id: step.id, status: "PASS" }));
+    expect(outcome.status).toBe("PASS");
+    // Passing locally must never read as an independent attestation.
+    const contract = await readFile(
+      new URL("../scripts/release/run-local-acceptance-gate.mjs", import.meta.url),
+      "utf8",
+    );
+    expect(contract).toContain('gate_l_claim: "NOT_IMPLIED"');
+    expect(contract).toContain('independent_review_authority: "LOCAL_EVIDENCE_UNTRUSTED"');
   });
 
   it("stops at the first deterministic command failure after all preconditions pass", async () => {

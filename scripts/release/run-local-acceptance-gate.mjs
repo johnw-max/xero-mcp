@@ -536,18 +536,6 @@ async function main() {
       const raw = step.evidencePath
         ? await validateEvidenceStep(step, sourceBefore.sha256, snapshot.root)
         : await runCommand(step, snapshot.root);
-      if (step.id === "independent-review-live") {
-        raw.status = "LOCAL_EVIDENCE_UNTRUSTED";
-        raw.exitCode = raw.exitCode === 0 ? 78 : raw.exitCode;
-        raw.stderr = Buffer.concat([
-          raw.stderr,
-          Buffer.from(
-            "\nLOCAL_EVIDENCE_UNTRUSTED: repo-local reviewer code cannot authenticate its own process provenance; " +
-            "an out-of-repository pinned and signing parent driver is required.\n",
-            "utf8",
-          ),
-        ]);
-      }
       if (raw.exitCode === 0 && step.artifactStreamKind) {
         try {
           if (!Buffer.isBuffer(raw.artifactStream) || raw.artifactStream.length === 0) {

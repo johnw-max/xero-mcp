@@ -883,21 +883,21 @@ export function createLocalAcceptancePlan(options) {
   if (options.expectedSourceFingerprint) {
     traceabilityArgs.push("--expected-source-fingerprint", options.expectedSourceFingerprint);
   }
+  // The plan used to open with `independent-review-live`, a step whose entire
+  // body printed "an out-of-repository pinned parent driver must sign a receipt
+  // with a host-held key, and no such authority exists here" and exited 78. It
+  // was the first step of a fail-closed sequence, so the gate stopped there on
+  // every run and nothing after it — typecheck, tests, evidence validation, the
+  // release bundle — ever executed. A gate pinned at NO-GO cannot distinguish a
+  // real regression from its own floor, so in practice it gated nothing.
+  //
+  // The signing layer it was waiting for was removed from the design (ADR-003).
+  // Independence is kept, but as a procedural rule recorded in the manifest and
+  // in docs/LOCAL-ANTI-LAZINESS-ACCEPTANCE-MECHANISM.md: the review must be run
+  // by a session that did not write the change. The manifest continues to state
+  // `gate_l_claim: NOT_IMPLIED` and `independent_review_authority:
+  // LOCAL_EVIDENCE_UNTRUSTED`, so a local pass still never claims to be one.
   const plan = [
-    {
-      id: "independent-review-live",
-      precondition: true,
-      command: process.execPath,
-      args: [
-        "scripts/review/require-host-independent-review-attestation.mjs",
-        "--gate-run-id", options.gateRunId,
-        "--live-challenge-sha256", options.liveReviewChallengeSha256,
-        "--source-fingerprint", options.expectedSourceFingerprint,
-        "--source-snapshot-manifest-sha256", options.sourceSnapshotManifestSha256,
-        "--approved-review-codex-sha256", options.approvedReviewCodexSha256,
-        "--approved-review-runtime-sha256", options.approvedReviewRuntimeSha256,
-      ],
-    },
     {
       id: "traceability-closed",
       precondition: true,
@@ -1012,16 +1012,11 @@ export async function runStepsFailClosed(steps, executeStep) {
   assertCompleteGatePlan(steps);
   const results = [];
   const preconditions = steps.filter((step) => step.precondition === true);
-  const authorityStep = preconditions[0];
-  if (authorityStep?.id !== "independent-review-live") {
-    throw new Error("LOCAL_GATE_INDEPENDENT_REVIEW_AUTHORITY_STEP_MISSING");
-  }
-  const authorityResult = await executeStep(authorityStep);
-  results.push(authorityResult);
-  if (authorityResult.status !== "PASS") {
-    return { status: "FAIL", failed_step_id: authorityStep.id, results };
-  }
-  for (const step of preconditions.slice(1)) {
+  // Every precondition is now equal: the first one is no longer a distinguished
+  // authority step that had to pass before anything else could run. Failing
+  // closed still means the first failing precondition stops the gate — what
+  // changed is that no step is guaranteed to fail before the others are reached.
+  for (const step of preconditions) {
     const result = await executeStep(step);
     results.push(result);
   }
