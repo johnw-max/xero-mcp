@@ -4718,6 +4718,54 @@ describe("XeroAccountingCaseService", () => {
     expect(providerWrite).toHaveBeenCalledTimes(2);
   });
 
+  it("creates a new contact identified only by its durable identity, with no legacy bare number", async () => {
+    // Production failure, reproduced: a supplier the ledger had never seen was
+    // submitted with durable_identity and no company_number - the schema calls
+    // the bare fields legacy, so that is the recommended shape. Preparation sent
+    // the durable identity's number to the provider as company_number, while the
+    // expectation was derived only from the bare Case field and therefore omitted
+    // it, so the proposal disagreed with itself and every such contact failed
+    // with ACCOUNTING_CASE_PREPARATION_PAYLOAD_MISMATCH. Four cases and thirteen
+    // versions of live attempts never once got a new supplier booked.
+    const intake = publicContactDependentBusinessIntake() as {
+      new_contacts: Array<{ contact: Record<string, unknown> }>;
+    };
+    for (const entry of intake.new_contacts) delete entry.contact.company_number;
+
+    const { service, accounting } = runtime({ testTenant: true, initialContacts: [] });
+    const server = createAccountingMcpServer(accounting, context(), undefined, undefined, service);
+    const client = new Client({ name: "case-durable-identity-only", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport as unknown as Transport);
+      await client.connect(clientTransport);
+      const preparedResponse = await client.callTool({
+        name: "xero_prepare_accounting_case",
+        arguments: intake,
+      });
+      expect(preparedResponse.isError).not.toBe(true);
+      const prepared = mcpResult<{ case_id: string; case_version: number }>(preparedResponse);
+
+      const executedResponse = await client.callTool({
+        name: "xero_execute_accounting_case",
+        arguments: {
+          case_id: prepared.case_id,
+          case_version: prepared.case_version,
+          request_id: "execute-durable-identity-only",
+        },
+      });
+
+      // The contact leg must get far enough to await its continuation. Before the
+      // fix this failed outright with a persistence mismatch on target.
+      expect(executedResponse.isError).not.toBe(true);
+      const executed = mcpResult<{ state: string }>(executedResponse);
+      expect(executed.state).toBe("AWAITING_CONTINUATION");
+    } finally {
+      await client.close().catch(() => {});
+      await server.close().catch(() => {});
+    }
+  });
+
   it("runs public new-contact plus invoice through prepare, status, continuation and exactly-once execution", async () => {
     const { service, accounting, contacts } = runtime({ testTenant: true, initialContacts: [] });
     const server = createAccountingMcpServer(accounting, context(), undefined, undefined, service);

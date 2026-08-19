@@ -2562,6 +2562,7 @@ export class XeroAccountingCaseService {
           sourceUnitKey: operation.operationId,
         });
         const expectedExternalDigest = sha256(`xero-contact-external-key:v1:${externalKey}`).slice(0, 32);
+        const caseDurableIdentity = contactDurableIdentityFromPayload(casePayload.durableIdentity);
         expectedProjection = {
           route: operation.nativeRoute,
           actionId: expectedRoute.actionId,
@@ -2569,15 +2570,25 @@ export class XeroAccountingCaseService {
           operation: expectedRoute.operation,
           schemaVersion: "xero-contact-safe-v1",
           externalReferenceDigest: expectedExternalDigest,
+          // These two must mirror exactly what was sent to prepareContactCreate
+          // above, which falls back to the durable identity when the Case payload
+          // carries no bare number. Deriving the expectation only from the bare
+          // fields made every contact identified the recommended way — by
+          // durable_identity rather than the legacy bare number — disagree with
+          // its own preparation, so no such contact could ever be created.
           target: {
             name: compactCaseText(this.#stringField(casePayload, "name")),
             ...(typeof casePayload.email === "string" ? { email: casePayload.email.toLowerCase() } : {}),
             ...(typeof casePayload.companyNumber === "string"
               ? { companyNumber: compactCaseText(casePayload.companyNumber) }
-              : {}),
+              : caseDurableIdentity?.kind === "LEGAL_REGISTRY"
+                ? { companyNumber: compactCaseText(caseDurableIdentity.number) }
+                : {}),
             ...(typeof casePayload.accountNumber === "string"
               ? { accountNumber: compactCaseText(casePayload.accountNumber) }
-              : {}),
+              : caseDurableIdentity?.kind === "PROVIDER_TENANT_ACCOUNT"
+                ? { accountNumber: compactCaseText(caseDurableIdentity.number) }
+                : {}),
           },
         };
         actualProjection = {
