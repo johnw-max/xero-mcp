@@ -21,7 +21,18 @@ export const AGENT_BUNDLE_SOURCES = Object.freeze([
 ]);
 
 export const AGENT_INSTRUCTION_SOURCES = Object.freeze(AGENT_BUNDLE_SOURCES.slice(0, 3));
-export const AGENT_PROJECT_DOC_BYTE_LIMIT = 32_768;
+// A bound on the instruction bundle this harness assembles for the local agent -
+// not a production limit; nothing in src/ constrains the mounted skill docs.
+//
+// It did its job: at 32_768 the three docs came to 32_788 and stopped the
+// evidence run, which is how anyone noticed they had grown at all. The 20 bytes
+// were a new tool being documented as the public surface went from 29 to 30, so
+// the honest answer was not to delete a true sentence to fit a round number.
+//
+// Raised once, deliberately, with the reasoning recorded. Hitting it again is a
+// prompt to ask whether these docs have bloated - the agent reads every byte of
+// them before it does anything - not to raise it again by reflex.
+export const AGENT_PROJECT_DOC_BYTE_LIMIT = 40_960;
 export const AGENT_SKILL_MOUNTS = Object.freeze([
   Object.freeze({
     root: ".agents/skills/execute-approved-accounting-entry",
