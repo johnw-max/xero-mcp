@@ -1,0 +1,201 @@
+{
+  "taxRates": [
+    {
+      "canApplyToAssets": true,
+      "canApplyToEquity": true,
+      "canApplyToExpenses": false,
+      "canApplyToLiabilities": true,
+      "canApplyToRevenue": true,
+      "displayTaxRate": 0,
+      "effectiveRate": 0,
+      "name": "Exempt Sales",
+      "reportTaxType": "NONEOUTPUT",
+      "status": "ACTIVE",
+      "taxComponents": [
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "No Tax",
+          "rate": 0
+        }
+      ],
+      "taxType": "CAN030"
+    },
+    {
+      "canApplyToAssets": true,
+      "canApplyToEquity": true,
+      "canApplyToExpenses": true,
+      "canApplyToLiabilities": true,
+      "canApplyToRevenue": false,
+      "displayTaxRate": 12,
+      "effectiveRate": 12,
+      "name": "MB - GST/RST on Purchases",
+      "reportTaxType": "PURCHASESINPUT",
+      "status": "ACTIVE",
+      "taxComponents": [
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "RST",
+          "rate": 7
+        },
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "GST",
+          "rate": 5
+        }
+      ],
+      "taxType": "CAN029"
+    },
+    {
+      "canApplyToAssets": true,
+      "canApplyToEquity": true,
+      "canApplyToExpenses": false,
+      "canApplyToLiabilities": true,
+      "canApplyToRevenue": true,
+      "displayTaxRate": 12,
+      "effectiveRate": 12,
+      "name": "MB - GST/RST on Sales",
+      "reportTaxType": "SALESOUTPUT",
+      "status": "ACTIVE",
+      "taxComponents": [
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "RST",
+          "rate": 7
+        },
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "GST",
+          "rate": 5
+        }
+      ],
+      "taxType": "CAN028"
+    },
+    {
+      "canApplyToAssets": false,
+      "canApplyToEquity": false,
+      "canApplyToExpenses": false,
+      "canApplyToLiabilities": true,
+      "canApplyToRevenue": false,
+      "displayTaxRate": 0,
+      "effectiveRate": 0,
+      "name": "Sales Tax on Imports",
+      "reportTaxType": "GSTONIMPORTS",
+      "status": "ACTIVE",
+      "taxComponents": [
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "TAX",
+          "rate": 0
+        }
+      ],
+      "taxType": "GSTONIMPORTS"
+    },
+    {
+      "canApplyToAssets": true,
+      "canApplyToEquity": true,
+      "canApplyToExpenses": true,
+      "canApplyToLiabilities": true,
+      "canApplyToRevenue": true,
+      "displayTaxRate": 0,
+      "effectiveRate": 0,
+      "name": "Tax Exempt",
+      "reportTaxType": "NONE",
+      "status": "ACTIVE",
+      "taxComponents": [
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "No Tax",
+          "rate": 0
+        }
+      ],
+      "taxType": "NONE"
+    },
+    {
+      "canApplyToAssets": true,
+      "canApplyToEquity": true,
+      "canApplyToExpenses": true,
+      "canApplyToLiabilities": true,
+      "canApplyToRevenue": true,
+      "displayTaxRate": 8.25,
+      "effectiveRate": 8.25,
+      "name": "Tax on Consulting",
+      "reportTaxType": "OUTPUT",
+      "status": "ACTIVE",
+      "taxComponents": [
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "City Tax",
+          "rate": 4
+        },
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "State Tax",
+          "rate": 4.25
+        }
+      ],
+      "taxType": "OUTPUT"
+    },
+    {
+      "canApplyToAssets": true,
+      "canApplyToEquity": true,
+      "canApplyToExpenses": true,
+      "canApplyToLiabilities": true,
+      "canApplyToRevenue": true,
+      "displayTaxRate": 8.75,
+      "effectiveRate": 8.75,
+      "name": "Tax on Goods",
+      "status": "ACTIVE",
+      "taxComponents": [
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "State Tax",
+          "rate": 4.5
+        },
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "City Tax",
+          "rate": 4.25
+        }
+      ],
+      "taxType": "TAX001"
+    },
+    {
+      "canApplyToAssets": true,
+      "canApplyToEquity": true,
+      "canApplyToExpenses": true,
+      "canApplyToLiabilities": true,
+      "canApplyToRevenue": true,
+      "displayTaxRate": 8.25,
+      "effectiveRate": 8.25,
+      "name": "Tax on Purchases",
+      "reportTaxType": "INPUT",
+      "status": "ACTIVE",
+      "taxComponents": [
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "State Tax",
+          "rate": 4.25
+        },
+        {
+          "isCompound": false,
+          "isNonRecoverable": false,
+          "name": "City Tax",
+          "rate": 4
+        }
+      ],
+      "taxType": "INPUT"
+    }
+  ]
+}

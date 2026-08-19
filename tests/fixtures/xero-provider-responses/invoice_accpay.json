@@ -1,0 +1,62 @@
+{
+  "invoices": [
+    {
+      "amountCredited": 0,
+      "amountDue": 2400,
+      "amountPaid": 0,
+      "contact": {
+        "addresses": [],
+        "contactGroups": [],
+        "contactID": "23cb74b0-6e82-4d6a-af84-1e635a4fb59b",
+        "contactNumber": "ZC:zcacct:488fa0cd819e1ad10e87c7eb067c53f6",
+        "contactPersons": [],
+        "hasValidationErrors": false,
+        "name": "Northwind Logistics LLC",
+        "phones": []
+      },
+      "creditNotes": [],
+      "currencyCode": "USD",
+      "currencyRate": 1,
+      "date": "2026-08-14T00:00:00.000Z",
+      "dueDate": "2026-09-13T00:00:00.000Z",
+      "hasAttachments": false,
+      "hasErrors": false,
+      "invoiceAddresses": [],
+      "invoiceID": "483e4412-488a-405c-9115-0a6f3aacf6a6",
+      "invoiceNumber": "NW-8842",
+      "isDiscounted": false,
+      "lineAmountTypes": "Exclusive",
+      "lineItems": [
+        {
+          "accountCode": "425",
+          "accountID": "c4b1c463-9913-4672-a8b8-01a3b546126f",
+          "description": "Freight forwarding \u2014 August",
+          "lineAmount": 2400,
+          "lineItemID": "77ec3279-8bb0-441d-9728-eef4326d0185",
+          "quantity": 1,
+          "taxAmount": 0,
+          "taxType": "NONE",
+          "tracking": [],
+          "unitAmount": 2400
+        }
+      ],
+      "overpayments": [],
+      "payments": [],
+      "prepayments": [],
+      "reference": "",
+      "status": "DRAFT",
+      "subTotal": 2400,
+      "total": 2400,
+      "totalTax": 0,
+      "type": "ACCPAY",
+      "updatedDateUTC": "2026-08-19T09:11:54.120Z",
+      "updatedDateUTCString": "2026-08-19T09:11:54Z"
+    }
+  ],
+  "pagination": {
+    "itemCount": 1,
+    "page": 1,
+    "pageCount": 1,
+    "pageSize": 100
+  }
+}
