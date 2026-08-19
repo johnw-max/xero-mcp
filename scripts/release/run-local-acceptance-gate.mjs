@@ -49,13 +49,16 @@ function parseArguments(argv) {
   const roundDirectory = resolve(repoRoot, "artifacts/ledger-kernel-review/round-2026-08-13-local");
   const options = {
     evidenceDirectory: resolve(repoRoot, `artifacts/local-acceptance/${timestampSlug()}`),
-    traceabilityPath: resolve(roundDirectory, "requirements-traceability.json"),
     localAgentEvidencePath: resolve(roundDirectory, "local-agent-run.json"),
     processCrashRestartEvidencePath: resolve(roundDirectory, "process-crash-restart.json"),
   };
+  // `--traceability` was removed with the traceability-closed gate step: the
+  // requirements-traceability document it used to point at is no longer read
+  // by this command at all, and a flag that silently did nothing would be its
+  // own small dishonesty. The document is still checked - on demand, via
+  // `npm run validate:traceability -- --file <path>` - just not from here.
   const keys = new Map([
     ["--evidence-dir", "evidenceDirectory"],
-    ["--traceability", "traceabilityPath"],
     ["--local-agent-evidence", "localAgentEvidencePath"],
     ["--process-crash-restart-evidence", "processCrashRestartEvidencePath"],
   ]);
@@ -491,8 +494,15 @@ async function main() {
       sourceSnapshotManifestSha256: sha256Buffer(snapshotManifestContent),
       gateRunId,
       liveReviewChallengeSha256,
-      evidenceValidationRoot: repoRoot,
     });
+    // Both claims below predate, and are unconditioned on, any particular step
+    // list: they say this LOCAL run never implies Gate L authority and never
+    // counts as an independent review, full stop - not "unless these specific
+    // steps are present." Removing traceability-closed (this plan's last call
+    // into scripts/review/) makes that truer than before, not less true: there
+    // is now nothing in this gate that could be mistaken for review evidence in
+    // the first place. No value change is warranted here; only the reasoning
+    // in scripts/release/local-acceptance-gate-lib.mjs needed updating.
     const manifest = {
       schema_version: "1.1",
       gate: "LOCAL_RELEASE_ACCEPTANCE",

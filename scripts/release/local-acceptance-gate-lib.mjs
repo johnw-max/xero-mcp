@@ -39,6 +39,22 @@ const REQUIRED_LOCAL_AGENT_ARTIFACT_TYPES = Object.freeze([
   "SERVER_AUDIT",
   "INVOCATION",
 ]);
+// The server audit used to hard-require the single literal
+// LOCAL_SYNTHETIC_PROVIDER_SDK_BOUNDARY, which meant a run against the real
+// Xero API was structurally ineligible to ever satisfy this evidence, no
+// matter how faithfully it was captured - the schema itself excluded the
+// truth, not just the evidence on hand today. LOCAL_REAL_PROVIDER_SDK_BOUNDARY
+// is accepted for exactly that run: the same local Agent, over the same MCP
+// contract, calling the same Xero SDK client, pointed at a live tenant instead
+// of the in-process synthetic stand-in. Nothing here produces that evidence -
+// the generator (scripts/release/run-local-agent-evidence.mjs) and the server
+// code that stamps evidence_boundary are outside this file's boundary, and an
+// operator still needs live Xero OAuth to run it - this only removes the
+// validator's half of the block so a real capture is not rejected on sight.
+export const ACCEPTED_LOCAL_AGENT_EVIDENCE_BOUNDARIES = Object.freeze([
+  "LOCAL_SYNTHETIC_PROVIDER_SDK_BOUNDARY",
+  "LOCAL_REAL_PROVIDER_SDK_BOUNDARY",
+]);
 export const APPROVED_LOCAL_AGENT_CODEX_PATHS = Object.freeze([
   "/Applications/ChatGPT.app/Contents/Resources/codex",
 ]);
@@ -682,7 +698,7 @@ export function verifyLocalAgentRawSemantics(document, artifacts, options = {}) 
   }
   const targetEvidence = audit.target_session_evidence;
   if (audit.schema_version !== "1.0" || audit.release_version !== document.release_version ||
-      audit.evidence_boundary !== "LOCAL_SYNTHETIC_PROVIDER_SDK_BOUNDARY" ||
+      !ACCEPTED_LOCAL_AGENT_EVIDENCE_BOUNDARIES.includes(audit.evidence_boundary) ||
       targetEvidence?.status !== "PASS" || targetEvidence?.base_context_unpinned !== true ||
       targetEvidence?.required_by_server !== true ||
       targetEvidence?.raw_capability_persisted_in_server_audit !== false ||
@@ -879,17 +895,6 @@ export function createLocalAcceptancePlan(options) {
   }
   const releaseDirectory = resolve(options.evidenceDirectory, "release");
   const releaseBase = resolve(releaseDirectory, "xero-accounting-mcp-0.4.0-rc.1-source");
-  const traceabilityArgs = [
-    "scripts/review/validate-requirements-traceability.mjs",
-    "--file",
-    options.traceabilityPath,
-    "--require-closed",
-    "--approved-control-catalog-sha256",
-    options.approvedControlCatalogSha256,
-  ];
-  if (options.expectedSourceFingerprint) {
-    traceabilityArgs.push("--expected-source-fingerprint", options.expectedSourceFingerprint);
-  }
   // The plan used to open with `independent-review-live`, a step whose entire
   // body printed "an out-of-repository pinned parent driver must sign a receipt
   // with a host-held key, and no such authority exists here" and exited 78. It
@@ -901,17 +906,24 @@ export function createLocalAcceptancePlan(options) {
   // The signing layer it was waiting for was removed from the design (ADR-003).
   // Independence is kept, but as a procedural rule recorded in the manifest and
   // in docs/LOCAL-ANTI-LAZINESS-ACCEPTANCE-MECHANISM.md: the review must be run
-  // by a session that did not write the change. The manifest continues to state
+  // by a session that did not write the change.
+  //
+  // `traceability-closed` (a call into scripts/review/validate-requirements-
+  // traceability.mjs) was removed next, and for the same reason: not one of the
+  // 18 requirements it tracks has ever reached CLOSED in this gate's history,
+  // and it fails today on 58 errors that a human reviewer, not a script, has to
+  // resolve one claim at a time (see docs/REVIEW-SUBSYSTEM-OPEN-ITEMS-2026-08-19
+  // .md). Its removal also severs this plan's last remaining link to
+  // scripts/review/ — there is nothing left in this list that the independent-
+  // review subsystem produces or gates. The manifest continues to state
   // `gate_l_claim: NOT_IMPLIED` and `independent_review_authority:
-  // LOCAL_EVIDENCE_UNTRUSTED`, so a local pass still never claims to be one.
+  // LOCAL_EVIDENCE_UNTRUSTED` regardless: those claims were never conditioned on
+  // this step existing, so removing it does not change what the gate is
+  // entitled to say about itself - a local pass still never claims to be an
+  // independent review, and still never implies Gate L. The check itself still
+  // exists and still runs - on demand, via `npm run validate:traceability` -
+  // it just no longer decides whether this gate passes.
   const plan = [
-    {
-      id: "traceability-closed",
-      precondition: true,
-      command: process.execPath,
-      args: traceabilityArgs,
-      cwd: options.evidenceValidationRoot,
-    },
     {
       id: "local-agent-evidence",
       precondition: true,
@@ -1028,14 +1040,21 @@ export async function runStepsFailClosed(steps, executeStep) {
     results.push(result);
   }
   const failedPrecondition = results.find((result) => result.status !== "PASS");
-  // A precondition failing no longer skips verification. The preconditions
-  // validate review documentation - traceability closure, agent and crash
-  // evidence - while the steps below establish whether the candidate itself
-  // typechecks, passes its suite, and rebuilds to the same image. Those are
-  // different questions, and short-circuiting meant an incomplete review
-  // artifact left the candidate entirely unmeasured: the operator learned
-  // nothing about the code until the paperwork was finished. The gate still
-  // fails closed on either, and still reports the first failure.
+  // A precondition failing no longer skips verification. The remaining
+  // preconditions - local-agent-evidence and process-crash-restart-evidence -
+  // each bind a captured document to raw, hash-verified artifacts from an
+  // actual run (a real local Agent driving real MCP tool calls; a real server
+  // process actually killed and restarted), while the steps below establish
+  // whether the candidate itself typechecks, passes its suite, and rebuilds to
+  // the same image. Those are different questions, and short-circuiting on
+  // either meant an incomplete capture left the candidate entirely unmeasured:
+  // the operator learned nothing about the code until the missing evidence was
+  // produced. The gate still fails closed on either, and still reports the
+  // first failure. (A third precondition, traceability-closed, used to run
+  // here too; it validated a hand-authored claims document with no execution
+  // evidence behind it at all, never once passed in this gate's history, and
+  // is now a diagnostic run on demand instead - see
+  // scripts/local-acceptance-contract.mjs for why.)
   for (const step of steps.filter((candidate) => candidate.precondition !== true)) {
     const result = await executeStep(step);
     results.push(result);
@@ -1514,7 +1533,6 @@ export function requiredSuiteContainsConditionalSkip(stepId, stdout, stderr) {
 export function displayCommand(step) {
   if (step.evidencePath) return `validate-evidence ${step.evidenceKind} ${relative(process.cwd(), step.evidencePath)}`;
   return [step.command, ...step.args.map((argument) => {
-    if (step.id === "traceability-closed" && isAbsolute(argument)) return `<traceability>/${basename(argument)}`;
     if (step.id.startsWith("release-bundle-") && isAbsolute(argument)) return `<evidence>/${basename(argument)}`;
     return argument.includes(" ") ? JSON.stringify(argument) : argument;
   })].join(" ");

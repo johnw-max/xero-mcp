@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  ACCEPTED_LOCAL_AGENT_EVIDENCE_BOUNDARIES,
   REQUIRED_CRASH_SCENARIO_IDS,
   REQUIRED_GATE_STEP_IDS,
   assertAcceptanceSnapshotIntegrity,
@@ -353,9 +354,10 @@ function semanticLocalAgentFixture() {
 }
 
 function plan() {
+  // `traceabilityPath` is gone: traceability-closed no longer exists as a gate
+  // step, so createLocalAcceptancePlan never reads this option.
   return createLocalAcceptancePlan({
     evidenceDirectory: "/tmp/local-acceptance-test",
-    traceabilityPath: "/tmp/traceability.json",
     localAgentEvidencePath: "/tmp/local-agent-run.json",
     processCrashRestartEvidencePath: "/tmp/process-crash-restart.json",
     approvedControlCatalogSha256: "a".repeat(64),
@@ -476,62 +478,55 @@ describe("fail-closed local acceptance mechanism", () => {
       expect(() => assertCompleteGatePlan(incomplete)).toThrow("LOCAL_GATE_PLAN_INCOMPLETE");
     }
     expect(() => assertCompleteGatePlan([...complete].reverse())).toThrow("LOCAL_GATE_PLAN_INCOMPLETE");
-    const withEvidenceBoundary = createLocalAcceptancePlan({
-      evidenceDirectory: "/tmp/local-acceptance-test",
-      traceabilityPath: "/tmp/traceability.json",
-      localAgentEvidencePath: "/tmp/local-agent-run.json",
-      processCrashRestartEvidencePath: "/tmp/process-crash-restart.json",
-      approvedControlCatalogSha256: "a".repeat(64),
-      approvedReviewCodexSha256: "b".repeat(64),
-      approvedReviewRuntimeSha256: "c".repeat(64),
-      expectedSourceFingerprint: "d".repeat(64),
-      sourceSnapshotManifestSha256: "e".repeat(64),
-      liveReviewChallengeSha256: "f".repeat(64),
-      gateRunId: "11111111-1111-4111-8111-111111111111",
-      evidenceValidationRoot: "/reviewed/original/repository",
-    });
-    expect(withEvidenceBoundary.find((step) => step.id === "traceability-closed")?.cwd)
-      .toBe("/reviewed/original/repository");
-    expect(withEvidenceBoundary.filter((step) => step.id !== "traceability-closed")
-      .every((step) => step.cwd === undefined)).toBe(true);
-    expect(withEvidenceBoundary[0]).toMatchObject({
-      id: "traceability-closed",
+    // `evidenceValidationRoot` used to give the traceability-closed step alone a
+    // `cwd` pointed at the original (non-snapshotted) repository, because the
+    // traceability document it read lived outside the guarded source roots.
+    // That step is gone, so no step in the plan has a `cwd` at all any more -
+    // this used to be a separate plan built just to exercise that option; it is
+    // folded into `complete` now because there is nothing left to distinguish.
+    expect(complete.every((step) => step.cwd === undefined)).toBe(true);
+    expect(complete[0]).toMatchObject({
+      id: "local-agent-evidence",
       precondition: true,
     });
-    expect(withEvidenceBoundary.some((step) => step.id === "independent-review-live")).toBe(false);
+    expect(complete.some((step) => step.id === "independent-review-live")).toBe(false);
+    expect(complete.some((step) => step.id === "traceability-closed")).toBe(false);
     for (const id of ["full-regression", "postgres-required", "http-required"]) {
-      expect(withEvidenceBoundary.find((step) => step.id === id)?.args).toContain("--no-cache");
+      expect(complete.find((step) => step.id === id)?.args).toContain("--no-cache");
     }
-    expect(withEvidenceBoundary.find((step) => step.id === "release-bundle-build"))
+    expect(complete.find((step) => step.id === "release-bundle-build"))
       .toMatchObject({ artifactStreamKind: "SOURCE_BUNDLE" });
-    expect(withEvidenceBoundary.find((step) => step.id === "release-oci-build"))
+    expect(complete.find((step) => step.id === "release-oci-build"))
       .toMatchObject({ artifactStreamKind: "OCI_RELEASE" });
     for (const id of ["release-bundle-build", "release-oci-build"]) {
-      expect(withEvidenceBoundary.find((step) => step.id === id)?.args)
+      expect(complete.find((step) => step.id === id)?.args)
         .toContain("--artifact-stream-fd");
     }
   });
 
   it("reports every precondition blocker and still measures the candidate", async () => {
     // Same pathology the independent-review-live removal addressed, one level up:
-    // traceability-closed fails on every run until a reviewer re-authors the
+    // traceability-closed failed on every run until a reviewer re-authored the
     // artifact, so short-circuiting on it stopped every run before any real check
     // executed. The operator learned nothing about the candidate while waiting on
-    // paperwork. Verification now runs regardless; the gate still fails closed, and
-    // an acceptance receipt is written only on an overall PASS, so nothing built
-    // under a failed run can be promoted.
+    // paperwork. That step has since been removed from the gate entirely (see
+    // scripts/local-acceptance-contract.mjs); this test now exercises the same
+    // fail-open-verification behavior on local-agent-evidence, one of the two
+    // preconditions that remain. Verification still runs regardless of a
+    // precondition failure; the gate still fails closed, and an acceptance
+    // receipt is written only on an overall PASS, so nothing built under a
+    // failed run can be promoted.
     const executed: string[] = [];
     const outcome = await runStepsFailClosed(plan(), async (step) => {
       executed.push(step.id);
       return {
         id: step.id,
-        status: step.id === "traceability-closed" ? "FAIL" : "PASS",
+        status: step.id === "local-agent-evidence" ? "FAIL" : "PASS",
       };
     });
     expect(outcome.status).toBe("FAIL");
-    expect(outcome.failed_step_id).toBe("traceability-closed");
-    expect(executed.slice(0, 3)).toEqual([
-      "traceability-closed",
+    expect(outcome.failed_step_id).toBe("local-agent-evidence");
+    expect(executed.slice(0, 2)).toEqual([
       "local-agent-evidence",
       "process-crash-restart-evidence",
     ]);
@@ -542,10 +537,10 @@ describe("fail-closed local acceptance mechanism", () => {
   it("names the failing precondition even when a later verification step also fails", async () => {
     const outcome = await runStepsFailClosed(plan(), async (step) => ({
       id: step.id,
-      status: ["traceability-closed", "full-regression"].includes(step.id) ? "FAIL" : "PASS",
+      status: ["local-agent-evidence", "full-regression"].includes(step.id) ? "FAIL" : "PASS",
     }));
     expect(outcome.status).toBe("FAIL");
-    expect(outcome.failed_step_id).toBe("traceability-closed");
+    expect(outcome.failed_step_id).toBe("local-agent-evidence");
   });
 
   it("no longer carries a step that can only ever fail", () => {
@@ -555,6 +550,22 @@ describe("fail-closed local acceptance mechanism", () => {
     // real check executed — the gate reported NO-GO whether or not anything was
     // actually wrong, which is indistinguishable from having no gate.
     expect(plan().some((step) => step.id === "independent-review-live")).toBe(false);
+  });
+
+  it("no longer carries a step that has never once passed (traceability-closed)", () => {
+    // traceability-closed called into
+    // scripts/review/validate-requirements-traceability.mjs --require-closed.
+    // Not one of the 18 requirements it tracks has ever reached CLOSED in this
+    // gate's history, and it fails today on 58 errors (18 status + 40
+    // CROSS_CLAIM_PROBE_FINGERPRINT_REUSED) that only a human reviewer can
+    // resolve one claim at a time - no script can derive which file actually
+    // implements a given requirement. A precondition that has never once
+    // passed reports NO-GO regardless of whether the candidate under test
+    // actually regressed, which made it as uninformative as
+    // independent-review-live's guaranteed exit 78. It is still run on demand
+    // via `npm run validate:traceability`; it no longer decides PASS/FAIL for
+    // this gate.
+    expect(plan().some((step) => step.id === "traceability-closed")).toBe(false);
   });
 
   it("still refuses to claim the independent-review authority a local run does not have", async () => {
@@ -646,6 +657,31 @@ describe("fail-closed local acceptance mechanism", () => {
     fixture.audit.provider_write_count = 0;
     fixture.artifacts.set("SERVER_AUDIT", Buffer.from(JSON.stringify(fixture.audit)));
     expect(() => verifyLocalAgentRawSemantics(fixture.document, fixture.artifacts))
+      .toThrow("LOCAL_AGENT_RAW_SERVER_BOUNDARY_INVALID");
+  });
+
+  it("accepts a real-provider evidence boundary and still rejects an unrecognized one", () => {
+    // evidence_boundary used to hard-require the single literal
+    // LOCAL_SYNTHETIC_PROVIDER_SDK_BOUNDARY, which made a real Xero run
+    // structurally ineligible to ever satisfy this evidence no matter how it
+    // was captured (docs/XERO-MCP-REMEDIATION-PLAN-2026-08-19.md, section W2.1).
+    // This repository has no way to produce a genuine real-provider capture in
+    // a test - that needs a live Xero tenant and operator OAuth - so this only
+    // proves the validator's schema no longer forecloses one on sight, and
+    // still rejects a value that is neither the synthetic nor the real boundary.
+    expect(ACCEPTED_LOCAL_AGENT_EVIDENCE_BOUNDARIES).toEqual([
+      "LOCAL_SYNTHETIC_PROVIDER_SDK_BOUNDARY",
+      "LOCAL_REAL_PROVIDER_SDK_BOUNDARY",
+    ]);
+    const real = semanticLocalAgentFixture();
+    real.audit.evidence_boundary = "LOCAL_REAL_PROVIDER_SDK_BOUNDARY";
+    real.artifacts.set("SERVER_AUDIT", Buffer.from(JSON.stringify(real.audit)));
+    expect(() => verifyLocalAgentRawSemantics(real.document, real.artifacts)).not.toThrow();
+
+    const unrecognized = semanticLocalAgentFixture();
+    unrecognized.audit.evidence_boundary = "SOME_OTHER_BOUNDARY";
+    unrecognized.artifacts.set("SERVER_AUDIT", Buffer.from(JSON.stringify(unrecognized.audit)));
+    expect(() => verifyLocalAgentRawSemantics(unrecognized.document, unrecognized.artifacts))
       .toThrow("LOCAL_AGENT_RAW_SERVER_BOUNDARY_INVALID");
   });
 
