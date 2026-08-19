@@ -1613,7 +1613,11 @@ function runtime(options?: {
           page: input.page,
           pageSize: input.limit,
           returned: page.length,
-          providerPageCount: Math.max(1, Math.ceil(matching.length / input.limit)),
+          // Xero reports pageCount 0 for a status that matches nothing; the
+          // Math.max(1, ...) this replaces invented a page that the real API
+          // never reports, which hid a bug that made every organisation without
+          // ARCHIVED contacts unable to create a contact at all.
+          providerPageCount: Math.ceil(matching.length / input.limit),
           providerItemCount: matching.length,
           hasNextPage: start + input.limit < matching.length,
           hasNextPageIsEstimated: false,
@@ -4394,6 +4398,39 @@ describe("XeroAccountingCaseService", () => {
     expect(accounting.createContact).toHaveBeenCalledTimes(1);
     expect(providerWritePermit).toHaveBeenCalledTimes(1);
     expect(providerWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts Xero's exact empty answer for a contact status nothing matches", async () => {
+    // Production incident: recording a bill from a supplier that is not in the
+    // ledger requires creating the contact, which first scans ACTIVE, ARCHIVED
+    // and GDPRREQUEST contacts. Xero answers a status matching nothing with
+    // pageCount 0 / itemCount 0, and that exact answer was rejected as missing
+    // evidence — so an organisation with no archived contacts, which is most of
+    // them, could never create a contact and never record such a bill.
+    const { service, accounting } = runtime({ testTenant: true, initialContacts: [] });
+    vi.mocked(accounting.listContacts).mockImplementation(async (_requestContext, input) => ({
+      contacts: [],
+      pagination: {
+        page: input.page,
+        pageSize: input.limit,
+        returned: 0,
+        providerPageCount: 0,
+        providerItemCount: 0,
+        hasNextPage: false,
+        hasNextPageIsEstimated: false,
+        omittedInvalid: 0,
+      },
+    }));
+
+    // The scan itself must not be what stops the case. Whatever this prepare
+    // goes on to do, it must not fail with the contact-scan reason code.
+    const outcome = await service.prepare(context(), onlyUnresolvedContactSource())
+      .then(() => undefined, (error: unknown) => error as { details?: { reasonCodes?: string[] } });
+
+    expect(outcome?.details?.reasonCodes ?? []).not.toContain("XERO_CONTACT_STRONG_IDENTITY_SCAN_INCOMPLETE");
+    // All three lifecycle statuses were scanned rather than aborting on the first empty one.
+    expect(vi.mocked(accounting.listContacts).mock.calls.map((call) => call[1].status))
+      .toEqual(["ACTIVE", "ARCHIVED", "GDPRREQUEST"]);
   });
 
   it("fails closed when the ACTIVE-contact strong-key scan cannot prove its final page", async () => {

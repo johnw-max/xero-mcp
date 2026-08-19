@@ -2804,12 +2804,23 @@ export class XeroAccountingCaseService {
         const evidence = listed.pagination;
         const pageCount = evidence.providerPageCount;
         const itemCount = evidence.providerItemCount;
+        // Xero answers a status filter that matches nothing with pageCount 0 and
+        // itemCount 0. That is an exact, exhausted answer — "this organisation
+        // has no contacts in this state" — not missing evidence. Requiring
+        // pageCount >= 1 rejected it, and since most organisations have no
+        // ARCHIVED or GDPRREQUEST contacts at all, that made this scan fail for
+        // them permanently, which in turn made creating any new contact
+        // impossible: a bill from a supplier not already in the ledger could
+        // never be recorded.
+        const emptyExactScan = pageCount === 0 && itemCount === 0 &&
+          page === 1 && listed.contacts.length === 0 && evidence.hasNextPage === false;
         const evidenceInvalid = evidence.page !== page || evidence.pageSize !== 100 ||
           evidence.returned !== listed.contacts.length || evidence.hasNextPageIsEstimated ||
           evidence.omittedInvalid > 0 || (evidence.omittedOverflow ?? 0) > 0 ||
-          pageCount === undefined || !Number.isInteger(pageCount) || pageCount < 1 ||
+          pageCount === undefined || !Number.isInteger(pageCount) ||
           itemCount === undefined || !Number.isInteger(itemCount) || itemCount < 0 ||
-          page > pageCount || evidence.hasNextPage !== (page < pageCount) ||
+          (!emptyExactScan && (pageCount < 1 || page > pageCount ||
+            evidence.hasNextPage !== (page < pageCount))) ||
           (expectedPageCount !== undefined && pageCount !== expectedPageCount) ||
           (expectedItemCount !== undefined && itemCount !== expectedItemCount) ||
           listed.contacts.some((contact) =>
