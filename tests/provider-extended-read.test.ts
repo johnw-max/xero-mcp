@@ -9,6 +9,7 @@ import {
 } from "../src/domain/extendedReadSchemas.js";
 import { XeroClientManager } from "../src/providers/xeroClientManager.js";
 import { XeroAccountingProvider } from "../src/providers/xeroProvider.js";
+import { loadXeroResponse } from "./fixtures/xero-provider-responses/index.js";
 
 const quoteId = "11111111-1111-4111-8111-111111111111";
 const purchaseOrderId = "22222222-2222-4222-8222-222222222222";
@@ -268,5 +269,47 @@ describe("Xero extended provider reads", () => {
     await expect(provider.getManualJournal("actor-a", manualJournalId)).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(provider.getItem("actor-a", itemId)).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(provider.getBankTransaction("actor-a", bankTransactionId)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("Xero item reads against a captured Xero response", () => {
+  it("maps every real captured Xero item, treating an empty purchaseDetails object as absent", async () => {
+    // proves: the real BOOK item carries purchaseDetails: {} (an empty
+    // object, not a missing key). mapItemDefaults must still resolve that to
+    // "no purchase defaults" rather than emitting an empty object - a
+    // hand-built fixture would typically just omit the key and never
+    // exercise the empty-object branch.
+    const { items } = loadXeroResponse("items") as { items: Array<Record<string, unknown>> };
+    const getItems = vi.fn().mockResolvedValue({ body: { items } });
+    const provider = providerWithClient({ accountingApi: { getItems } });
+
+    const result = await provider.listItems("actor-a", listItemsSchema.parse({ page: 1, page_size: 20 }));
+
+    expect(result.items).toHaveLength(items.length);
+    expect(result.items.find((item) => item.code === "BOOK")).toEqual({
+      itemId: "8bbaf73c-5a32-4458-addf-bd30a36c8551",
+      code: "BOOK",
+      name: "Fish out of Water: Finding Your Brand",
+      description: "'Fish out of Water: Finding Your Brand",
+      purchaseDescription: "'Fish out of Water: Finding Your Brand",
+      isSold: true,
+      isPurchased: true,
+      isTrackedAsInventory: false,
+      salesDetails: { accountCode: "200", taxType: "TAX001", unitPrice: "19.9500" },
+      projectionIncomplete: false,
+      omittedFields: [],
+      updatedAt: "2026-08-07T01:34:58.243Z",
+    });
+  });
+
+  it("gets one exact real captured Xero item by ID", async () => {
+    const { items } = loadXeroResponse("items") as { items: Array<Record<string, unknown>> };
+    const getItem = vi.fn().mockResolvedValue({ body: { items } });
+    const provider = providerWithClient({ accountingApi: { getItem } });
+
+    const result = await provider.getItem("actor-a", "8bbaf73c-5a32-4458-addf-bd30a36c8551");
+
+    expect(result.code).toBe("BOOK");
+    expect(result).not.toHaveProperty("purchaseDetails");
   });
 });

@@ -6,6 +6,10 @@ import {
   SYNTHETIC_CONNECTION_ID,
   SyntheticXeroAccountingProvider,
 } from "../harness/lib/syntheticXeroAccountingProvider.js";
+import {
+  capturedEmptyArrayFields,
+  loadXeroResponse,
+} from "./fixtures/xero-provider-responses/index.js";
 
 const connection = {
   tenantId: "tenant-a",
@@ -363,6 +367,155 @@ describe("provider contact search evidence", () => {
       hasNextPage: true,
       hasNextPageIsEstimated: true,
       omittedInvalid: 0,
+    });
+  });
+});
+
+describe("provider contact reads against a captured Xero response", () => {
+  it("reads back a real contact without leaking bank details or a false email", async () => {
+    // proves: real Xero sends emailAddress/bankAccountDetails as "" rather than
+    // omitting the key. mapContact's `if (contact.emailAddress)` must treat ""
+    // as absent - a hand-built fixture that just omits the key would never
+    // exercise that branch, and a fixture using `emailAddress: undefined` would
+    // pass even if the guard used `!== undefined` instead of a truthiness check.
+    const [contact] = loadXeroResponse("contact_single").contacts as Array<Record<string, unknown>>;
+    const contactId = contact.contactID as string;
+    const getContacts = vi.fn().mockResolvedValue({ body: { contacts: [contact] } });
+    const provider = providerWithClient({ accountingApi: { getContacts } });
+
+    const result = await provider.getContact("actor-a", contactId);
+
+    expect(result).toEqual({
+      contactId,
+      name: "Halstead Cleaning Services",
+      accountNumber: "HALSTEAD_CLEANING_001",
+      contactNumber: "ZC:zcacct:51ba1cf9d7d125581bc5f5e468b1b4f3",
+      status: "ACTIVE",
+      isSupplier: true,
+      isCustomer: false,
+    });
+    expect(JSON.stringify(result)).not.toContain("bankAccountDetails");
+  });
+
+  it("returns exact, non-estimated pagination for a real single-contact Xero page", async () => {
+    // proves: the real contacts envelope carries itemCount/page/pageCount/
+    // pageSize even for a one-row result; a regression that only special-cased
+    // multi-page envelopes would slip past hand-built single-item fixtures that
+    // never included a pagination block at all.
+    const body = loadXeroResponse("contact_single") as {
+      contacts: Array<Record<string, unknown>>;
+      pagination: Record<string, number>;
+    };
+    const getContacts = vi.fn().mockResolvedValue({ body });
+    const provider = providerWithClient({ accountingApi: { getContacts } });
+
+    const result = await provider.listContacts("actor-a", {
+      status: "ACTIVE",
+      is_supplier: true,
+      page: 1,
+      limit: 100,
+    });
+
+    expect(result.contacts).toEqual([{
+      contactId: body.contacts[0]?.contactID,
+      name: "Halstead Cleaning Services",
+      accountNumber: "HALSTEAD_CLEANING_001",
+      contactNumber: "ZC:zcacct:51ba1cf9d7d125581bc5f5e468b1b4f3",
+      status: "ACTIVE",
+      isSupplier: true,
+      isCustomer: false,
+    }]);
+    expect(result.pagination).toEqual({
+      page: 1,
+      pageSize: 100,
+      returned: 1,
+      providerPageCount: 1,
+      providerItemCount: 1,
+      hasNextPage: false,
+      hasNextPageIsEstimated: false,
+      omittedInvalid: 0,
+    });
+  });
+
+  it("marks a genuinely empty Xero filter as estimated, not as an exact zero-page answer", async () => {
+    // proves (and pins today's production behaviour for the src/ defect this
+    // exposes - see the task report): the captured contacts_empty_filter body
+    // is exactly `{ "contacts": [] }` - Xero drops the whole pagination
+    // envelope rather than sending pageCount 0 / itemCount 0. xeroProvider.ts
+    // reads `response.body.pagination?.pageCount`, which is undefined here, so
+    // providerPageCount/providerItemCount end up absent and
+    // hasNextPageIsEstimated is forced true even though zero rows is a
+    // complete, certain answer. If this ever starts reporting
+    // providerPageCount: 0 instead, xeroAccountingCaseService.ts's
+    // emptyExactScan fast path (and xeroBusinessCoordinateHistory.ts's
+    // emptyExactHistory) would finally see the shape their own comments assume.
+    expect(capturedEmptyArrayFields("contacts_empty_filter")).toEqual(["contacts"]);
+    const body = loadXeroResponse("contacts_empty_filter");
+    expect(body).toEqual({ contacts: [] });
+
+    const listGetContacts = vi.fn().mockResolvedValue({ body });
+    const listProvider = providerWithClient({ accountingApi: { getContacts: listGetContacts } });
+    const listed = await listProvider.listContacts("actor-a", { status: "ARCHIVED", page: 1, limit: 100 });
+    expect(listed.contacts).toEqual([]);
+    expect(listed.pagination).toEqual({
+      page: 1,
+      pageSize: 100,
+      returned: 0,
+      hasNextPage: false,
+      hasNextPageIsEstimated: true,
+      omittedInvalid: 0,
+    });
+
+    const searchGetContacts = vi.fn().mockResolvedValue({ body });
+    const searchProvider = providerWithClient({ accountingApi: { getContacts: searchGetContacts } });
+    const searched = await searchProvider.searchContacts("actor-a", "no-such-supplier", 100);
+    expect(searched.contacts).toEqual([]);
+    expect(searched.pagination).toEqual({
+      page: 1,
+      pageSize: 100,
+      returned: 0,
+      hasNextPage: false,
+      hasNextPageIsEstimated: true,
+      omittedInvalid: 0,
+    });
+  });
+
+  it("gives a genuinely empty synthetic contact page an exact zero page count, not a floor of one", async () => {
+    // proves: harness/lib/syntheticXeroAccountingProvider.ts's page() helper
+    // used to force providerPageCount to Math.max(1, ...), so an empty
+    // synthetic result claimed to be "page 1 of 1" instead of "0 pages" - the
+    // same test-double-echoes-back shape the captured contacts_empty_filter
+    // fixture shows real Xero avoids by omitting the count instead. This pins
+    // the fixed behaviour: an empty synthetic page now reports 0/0, matching
+    // what the emptyExactScan/emptyExactHistory fast paths in src/ expect.
+    const provider = new SyntheticXeroAccountingProvider({
+      synthetic: true,
+      organisation: { organisationId: "tenant-a", name: "Tenant A" },
+      contacts: [],
+    });
+    const principal = {
+      actorId: "actor-a",
+      workspaceId: "workspace-a",
+      subjectType: "user",
+      subjectId: "subject-a",
+      agentId: "agent-a",
+      oauthInstallationId: "installation-a",
+      bindingId: "binding-a",
+      connectionId: SYNTHETIC_CONNECTION_ID,
+      scopes: ["xero.read"],
+    } as const;
+
+    const result = await provider.listContacts(principal, {
+      status: "ACTIVE",
+      page: 1,
+      limit: 100,
+    });
+
+    expect(result.contacts).toEqual([]);
+    expect(result.pagination).toMatchObject({
+      providerPageCount: 0,
+      providerItemCount: 0,
+      hasNextPage: false,
     });
   });
 });

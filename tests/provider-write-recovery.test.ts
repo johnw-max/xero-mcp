@@ -7,6 +7,7 @@ import {
   issueProviderWriteTestPermit,
   providerWriteTestContext,
 } from "./helpers/xeroProviderPermit.js";
+import { loadXeroResponse } from "./fixtures/xero-provider-responses/index.js";
 
 const invoiceId = "11111111-1111-4111-8111-111111111111";
 const connection = {
@@ -334,5 +335,76 @@ describe("provider write recovery contract", () => {
     const provider = providerWithClient({ accountingApi: { updateInvoice } });
     expect((provider as unknown as { authoriseSupplierBill?: unknown }).authoriseSupplierBill).toBeUndefined();
     expect(updateInvoice).not.toHaveBeenCalled();
+  });
+
+  it("commits an AP write and returns the exact mapped snapshot from a real Xero invoice readback", async () => {
+    // proves: every other test in this file mocks getInvoices with an empty or
+    // failing readback, so the success path - createInvoices succeeds, then
+    // #getSupplierBill's own getInvoices call maps the exact readback into the
+    // returned ProviderWriteResult - was never run against a realistic Xero
+    // invoice body (Date-typed date/dueDate/updatedDateUTC, an empty
+    // "reference", an embedded contact with its own empty phone/address
+    // arrays). A regression in mapInvoiceSnapshot's handling of any of that
+    // would not fail here as an empty/timeout case; it would fail here.
+    const [realInvoice] = loadXeroResponse("invoice_accpay").invoices as Array<Record<string, unknown>>;
+    const realInvoiceId = realInvoice.invoiceID as string;
+    const createInvoices = vi.fn().mockResolvedValue({
+      body: { invoices: [{ invoiceID: realInvoiceId, hasErrors: false }] },
+      response: { headers: {} },
+    });
+    const getInvoices = vi.fn().mockResolvedValue({ body: { invoices: [realInvoice] }, response: { headers: {} } });
+    const provider = providerWithClient({ accountingApi: { createInvoices, getInvoices } });
+
+    const result = await provider.createDraftSupplierBill(
+      principal,
+      input,
+      "idempotency-real-readback",
+      noOpWriteEvidence,
+      invoicePermit("AP"),
+      mutationRequestId("AP"),
+    );
+
+    expect(result).toEqual({
+      bill: {
+        invoiceId: realInvoiceId,
+        type: "ACCPAY",
+        status: "DRAFT",
+        contact: { contactId: "23cb74b0-6e82-4d6a-af84-1e635a4fb59b", name: "Northwind Logistics LLC" },
+        invoiceNumber: "NW-8842",
+        invoiceDate: "2026-08-14",
+        dueDate: "2026-09-13",
+        currency: "USD",
+        currencyRate: "1.0000",
+        subTotal: "2400.0000",
+        totalTax: "0.0000",
+        total: "2400.0000",
+        amountDue: "2400.0000",
+        amountPaid: "0.0000",
+        amountCredited: "0.0000",
+        attachmentsKnown: true,
+        hasAttachments: false,
+        updatedAt: "2026-08-19T09:11:54.120Z",
+        tenantId: "tenant-a",
+        lineAmountType: "Exclusive",
+        lineItemCount: 1,
+        linesTruncated: false,
+        lines: [{
+          lineItemId: "77ec3279-8bb0-441d-9728-eef4326d0185",
+          description: "Freight forwarding — August",
+          quantity: "1.0000",
+          unitAmount: "2400.0000",
+          lineAmount: "2400.0000",
+          taxAmount: "0.0000",
+          accountId: "c4b1c463-9913-4672-a8b8-01a3b546126f",
+          accountCode: "425",
+          taxType: "NONE",
+        }],
+      },
+      receipt: {
+        operation: "CREATE_DRAFT",
+        invoiceId: realInvoiceId,
+        status: "DRAFT",
+      },
+    });
   });
 });

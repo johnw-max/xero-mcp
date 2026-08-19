@@ -46,8 +46,8 @@ do
 done
 node -e 'const fs=require("node:fs"); const p=JSON.parse(fs.readFileSync("package.json","utf8")); if(p.version!=="0.4.0-rc.1") process.exit(1)' \
   || fail "package version is not the reviewed 0.4.0-rc.1 candidate"
-node -e 'const fs=require("node:fs"),crypto=require("node:crypto"); const allow=JSON.parse(fs.readFileSync("config/tool-allowlist.json","utf8")).tools; const expected=JSON.parse(fs.readFileSync("tests/contract/expected-tools.json","utf8")); const required=["xero_prepare_accounting_case","xero_execute_accounting_case","xero_get_accounting_case_status"]; const legacy=allow.filter((name)=>/^(?:xero_prepare_(?:supplier_bill|sales_invoice|credit_note|manual_journal|quote|purchase_order|contact|item)|xero_create_|xero_update_)/u.test(name)); const hash=crypto.createHash("sha256").update(JSON.stringify(allow)).digest("hex"); if(allow.length!==28 || JSON.stringify(allow)!==JSON.stringify(expected) || required.some((name)=>!allow.includes(name)) || legacy.length || hash!=="a43155caabe2f4f4ba0c23f1ad37d6abdfdb4761bad3527884d1e9969b730e87") process.exit(1)' \
-  || fail "28-tool Accounting Case allowlist or toolset hash drifted"
+node -e 'const fs=require("node:fs"),crypto=require("node:crypto"); const allow=JSON.parse(fs.readFileSync("config/tool-allowlist.json","utf8")).tools; const expected=JSON.parse(fs.readFileSync("tests/contract/expected-tools.json","utf8")); const required=["xero_prepare_accounting_case","xero_execute_accounting_case","xero_get_accounting_case_status"]; const legacy=allow.filter((name)=>/^(?:xero_prepare_(?:supplier_bill|sales_invoice|credit_note|manual_journal|quote|purchase_order|contact|item)|xero_create_|xero_update_)/u.test(name)); const hash=crypto.createHash("sha256").update(JSON.stringify(allow)).digest("hex"); if(allow.length!==30 || JSON.stringify(allow)!==JSON.stringify(expected) || required.some((name)=>!allow.includes(name)) || legacy.length || hash!=="ed6667e843ea916ad672ad260d0d7705df75ad4632c181e4e554250b82b076e5") process.exit(1)' \
+  || fail "30-tool Accounting Case allowlist or toolset hash drifted"
 
 sh -n deploy/scripts/switch-xero-upstream.sh
 sh -n deploy/scripts/admit-and-compose.sh
@@ -55,7 +55,7 @@ node --check scripts/release/production-deployment-admission.mjs
 node --check deploy/scripts/governance-cutover-contract.mjs
 grep -Fq 'readonly GREEN_VERSION="0.4.0-rc.1"' deploy/scripts/switch-xero-upstream.sh
 grep -Fq 'readonly GREEN_TOOL_COUNT="28"' deploy/scripts/switch-xero-upstream.sh
-grep -Fq 'readonly GREEN_TOOLSET_HASH="a43155caabe2f4f4ba0c23f1ad37d6abdfdb4761bad3527884d1e9969b730e87"' deploy/scripts/switch-xero-upstream.sh
+grep -Fq 'readonly GREEN_TOOLSET_HASH="ed6667e843ea916ad672ad260d0d7705df75ad4632c181e4e554250b82b076e5"' deploy/scripts/switch-xero-upstream.sh
 for required_identity_guard in \
   'APP_IMAGE_MUST_USE_IMMUTABLE_REPO_DIGEST' \
   'GREEN_IMAGE_IDENTITY_MISMATCH' \
@@ -116,7 +116,7 @@ do
   forbid_text "$current_release_file" "user_confirmation"
 done
 
-require_text docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md '当前候选：`0.4.0-rc.1` / 28 个公共工具 / Accounting Case / Standing Delegation'
+require_text docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md '当前候选：`0.4.0-rc.1` / 30 个公共工具 / Accounting Case / Standing Delegation'
 require_text docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md '尚未部署，Agent2 与 Work 的 0.4 写入验收尚未执行'
 forbid_text docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md '用户输入当前提案的一次性确认句'
 forbid_text docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md '补齐 Host 级签名确认'
@@ -199,5 +199,15 @@ done
 if find src tests migrations -type f -print | grep -Ei 'quickbooks|intuit' >/dev/null; then
   fail "excluded provider-specific source, test, or migration files remain"
 fi
+
+# A provider/mapper test that never loads a real captured Xero response is the
+# same echo-back test double this repo has already shipped five production
+# defects from. Require every file in these two families to cite the fixture
+# module, so a new test cannot be added - or an existing one gutted back down
+# to hand-built bodies - without also removing this line.
+for fixture_wired_test in tests/xero-*-primitives.test.ts tests/provider-*.test.ts
+do
+  require_text "$fixture_wired_test" "xero-provider-responses"
+done
 
 printf 'static verification passed: Xero-only repository, strict target sessions, and shared-test OAuth configuration\n'

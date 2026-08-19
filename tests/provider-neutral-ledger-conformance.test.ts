@@ -31,6 +31,7 @@ import type {
 } from "../src/domain/accountingCase.js";
 import type { PrepareAccountingCaseInput } from "../src/domain/accountingCaseSchemas.js";
 import { hashObject } from "../src/security/hash.js";
+import { loadXeroResponse } from "./fixtures/xero-provider-responses/index.js";
 
 const now = new Date("2026-08-13T06:00:00.000Z");
 const providerId = "fakebooks";
@@ -645,6 +646,101 @@ describe("provider-neutral ledger kernel conformance", () => {
       monetaryRule: {
         currency: "KWD",
         minorUnitScale: 3,
+        roundingMode: "HALF_UP",
+        taxAggregation: "PER_LINE",
+      },
+    });
+  });
+
+  it("compiles a real captured Xero invoice's own amounts through the shared, provider-neutral compiler", () => {
+    // proves: the two tests above are the only economics this shared compiler
+    // has ever been checked against, and both use numbers a test author chose
+    // (1.2345, or SGD figures from the golden-14 fixture built for this
+    // suite). This test's net/tax/gross/reference/dates/description come from
+    // a real Xero AP bill instead - NW-8842, 2400.00 USD, NO_TAX - so a
+    // regression that only broke on a genuinely real-world figure (as opposed
+    // to a round number nobody would ever pick by hand) would be caught here.
+    // Two fields cannot come from the real capture and are substituted with
+    // this suite's own fake values instead, because they name fakebooks-only
+    // vocabulary that has no real Xero counterpart: "200" (not Northwind's
+    // real account code 425 - this policy's category map is its own opaque
+    // scheme) and the contact name (swapped for one of this file's three
+    // pre-resolved fakebooks contacts, since FakeBooksAdapter only recognizes
+    // those three).
+    const [realInvoice] = loadXeroResponse("invoice_accpay").invoices as Array<{
+      invoiceNumber: string;
+      date: Date;
+      dueDate: Date;
+      currencyCode: string;
+      contact: { name: string };
+      subTotal: number;
+      totalTax: number;
+      total: number;
+      lineItems: Array<{ description: string; quantity: number; unitAmount: number; taxType: string }>;
+    }>;
+    const [realLine] = realInvoice.lineItems;
+    expect(realInvoice.currencyCode).toBe("USD");
+    expect(realLine.taxType).toBe("NONE");
+
+    const input = {
+      caseId: "fakebooks-real-xero-invoice",
+      expectedVersion: 0,
+      target: {
+        tenantId,
+        environment: "TEST",
+        baseCurrency: realInvoice.currencyCode,
+        taxJurisdiction: "NLX",
+        organisationStatus: "ACTIVE",
+      },
+      sources: [{
+        artifactId: "real-xero-invoice-source",
+        label: "Real captured Xero invoice_accpay source",
+        units: [{ unitId: "real-xero-invoice-unit", expectedFactKinds: ["NATIVE_DOCUMENT"] }],
+      }],
+      facts: [{
+        factId: "real-xero-invoice-fact",
+        lineageKey: "real-xero-invoice-lineage",
+        eventKey: "real-xero-invoice-event",
+        sourceUnitIds: ["real-xero-invoice-unit"],
+        origin: "MODEL_EXTRACTED",
+        revision: 1,
+        kind: "NATIVE_DOCUMENT",
+        documentKind: "INVOICE",
+        counterpartyRole: "SUPPLIER",
+        reference: realInvoice.invoiceNumber,
+        referenceKind: "FORMAL_DOCUMENT_NUMBER",
+        documentDate: realInvoice.date.toISOString().slice(0, 10),
+        dueDate: realInvoice.dueDate.toISOString().slice(0, 10),
+        currency: realInvoice.currencyCode,
+        contactName: "CloudHost Inc.",
+        taxPolicyBasis: "DOCUMENT_DATE_NON_TRANSITION",
+        lineAmountType: "NO_TAX",
+        lines: [{
+          lineId: "real-xero-invoice-line",
+          description: realLine.description,
+          quantity: String(realLine.quantity),
+          unitAmount: String(realLine.unitAmount),
+          sourceTax: "0",
+          accountCode: "200",
+          taxType: realLine.taxType,
+        }],
+        declaredNet: String(realInvoice.subTotal),
+        declaredTax: String(realInvoice.totalTax),
+        declaredGross: String(realInvoice.total),
+        documentValidity: "TEST_OR_NOT_VALID",
+      }],
+    } satisfies PrepareAccountingCaseInput;
+
+    const compiled = compileAccountingCase(input, fakeAccountingPolicy, fakeProviderContract);
+
+    expect(compiled.status).toBe("PLANNED_NEEDS_PREFLIGHT");
+    expect(compiled.operations[0]?.canonicalPayload).toMatchObject({
+      net: "2400.0000",
+      tax: "0.0000",
+      gross: "2400.0000",
+      monetaryRule: {
+        currency: "USD",
+        minorUnitScale: 2,
         roundingMode: "HALF_UP",
         taxAggregation: "PER_LINE",
       },

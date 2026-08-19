@@ -3,6 +3,10 @@ import type { AccountingRepository } from "../src/db/repository.js";
 import { listCreditNotesSchema, listPaymentsSchema } from "../src/domain/schemas.js";
 import { XeroClientManager } from "../src/providers/xeroClientManager.js";
 import { XeroAccountingProvider } from "../src/providers/xeroProvider.js";
+import {
+  capturedDateFields,
+  loadXeroResponse,
+} from "./fixtures/xero-provider-responses/index.js";
 
 const contactId = "22222222-2222-4222-8222-222222222222";
 const invoiceId = "33333333-3333-4333-8333-333333333333";
@@ -134,6 +138,94 @@ describe("bounded credit-note history reads", () => {
 
     expect(result.creditNotes).toHaveLength(2);
     expect(result.pagination).toMatchObject({ returned: 2, omittedOverflow: 1 });
+  });
+});
+
+describe("credit-note reads against a captured Xero response", () => {
+  it("keeps the captured credit_notes Date-field inventory the mapper already accounts for", () => {
+    // proves: a future re-capture that shows a new field coming back as a Date
+    // changes this list and forces a human to check mapCreditNoteSummary /
+    // mapCreditNoteSnapshot for it, instead of the gap staying invisible.
+    expect(capturedDateFields("credit_notes")).toEqual([
+      "creditNotes[].allocations[].date",
+      "creditNotes[].date",
+      "creditNotes[].fullyPaidOnDate",
+      "creditNotes[].updatedDateUTC",
+    ]);
+  });
+
+  it("maps all five real captured credit notes, deriving associated invoice IDs from real allocations", async () => {
+    // proves: every real row here carries a non-empty allocations array (these
+    // are settled, PAID credit notes) - a hand-built fixture rarely bothers to
+    // populate allocations at all, so associatedInvoiceIds/associatedInvoiceIdCount
+    // derived from allocations[].invoice.invoiceID was only ever exercised
+    // against data the test author invented.
+    const { creditNotes } = loadXeroResponse("credit_notes") as {
+      creditNotes: Array<Record<string, unknown>>;
+    };
+    const getCreditNotes = vi.fn().mockResolvedValue({ body: { creditNotes } });
+    const provider = providerWithClient({ accountingApi: { getCreditNotes } });
+
+    const result = await provider.listCreditNotes("actor-a", listCreditNotesSchema.parse({ page_size: 100 }));
+
+    expect(result.creditNotes).toHaveLength(5);
+    expect(result.creditNotes.find((note) => note.creditNoteNumber === "CN-0014")).toEqual({
+      creditNoteId: "602f5486-664e-492f-b4d1-e12df1d4b8ba",
+      type: "ACCRECCREDIT",
+      status: "PAID",
+      contact: { contactId: "37918a06-92f6-4edb-bfe0-1fc041c90f8b", name: "Boom FM" },
+      attachmentsKnown: true,
+      hasAttachments: false,
+      associatedInvoiceIds: ["4c4db294-3633-45cd-8706-f0b3b0079609"],
+      associatedInvoiceIdCount: 1,
+      associatedInvoiceIdsTruncated: false,
+      creditNoteNumber: "CN-0014",
+      creditNoteDate: "2026-06-25",
+      fullyPaidOnDate: "2026-06-25",
+      currency: "USD",
+      reference: "Training",
+      subTotal: "500.0000",
+      totalTax: "41.2500",
+      total: "541.2500",
+      remainingCredit: "0.0000",
+      updatedAt: "2008-12-20T17:38:32.660Z",
+    });
+    // "Refund" and "OG laptop" carry reference: "" on the wire - must be
+    // dropped, not surfaced as an empty string.
+    const refund = result.creditNotes.find((note) => note.creditNoteNumber === "Refund");
+    expect(refund).not.toHaveProperty("reference");
+    expect(result.pagination).toMatchObject({
+      returned: 5,
+      hasNextPage: false,
+      hasNextPageIsEstimated: true,
+    });
+  });
+
+  it("reads the exact real captured AP credit note, including its empty line-item array", async () => {
+    const { creditNotes } = loadXeroResponse("credit_notes") as {
+      creditNotes: Array<Record<string, unknown>>;
+    };
+    const swanston = creditNotes.find((note) => note.creditNoteNumber === "Refund");
+    const getCreditNote = vi.fn().mockResolvedValue({ body: { creditNotes: [swanston] } });
+    const provider = providerWithClient({ accountingApi: { getCreditNote } });
+
+    const result = await provider.getCreditNote("actor-a", "38b0ede6-a89d-4384-8d24-a3b3e8eaabb0", "ACCPAYCREDIT");
+
+    expect(result).toMatchObject({
+      creditNoteId: "38b0ede6-a89d-4384-8d24-a3b3e8eaabb0",
+      type: "ACCPAYCREDIT",
+      status: "PAID",
+      contact: { contactId: "78b7299c-4f1f-46d2-acc3-44a46bd361b1", name: "Swanston Security" },
+      tenantId: "tenant-a",
+      subTotal: "23.5000",
+      totalTax: "1.9400",
+      total: "25.4400",
+      lineAmountType: "Exclusive",
+      lineItemCount: 0,
+      linesTruncated: false,
+    });
+    expect(result.lines).toEqual([]);
+    expect(result).not.toHaveProperty("reference");
   });
 });
 

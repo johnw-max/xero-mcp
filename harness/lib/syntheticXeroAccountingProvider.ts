@@ -119,7 +119,12 @@ function normalized(value: string | undefined): string {
 function page<T>(items: T[], pageNumber: number, pageSize: number): { items: T[]; pagination: FixturePageEvidence } {
   const start = (pageNumber - 1) * pageSize;
   const selected = items.slice(start, start + pageSize);
-  const providerPageCount = Math.max(1, Math.ceil(items.length / pageSize));
+  // Real Xero reports pageCount 0 for a filter that matches nothing (see the
+  // captured contacts_empty_filter fixture) - an exact, exhausted answer, not
+  // "at least one page". Forcing a floor of 1 here made every empty result look
+  // like a single, non-empty page, which is the same test-double-echoes-back
+  // shape this repo has already been bitten by more than once.
+  const providerPageCount = Math.ceil(items.length / pageSize);
   return {
     items: selected,
     pagination: {

@@ -21,6 +21,7 @@ import {
   verifyContactReadback,
   verifyItemReadback,
 } from "../src/providers/xeroContactItemMapper.js";
+import { loadXeroResponse } from "./fixtures/xero-provider-responses/index.js";
 
 describe("safe Xero contact primitives", () => {
   it("prepares only reviewed contact fields and a server-owned external reference", () => {
@@ -574,6 +575,33 @@ describe("safe Xero contact primitives", () => {
     });
     expect(verifyContactReadback(withPhone, raw, options))
       .toMatchObject({ verified: false, mismatches: ["target.phones"] });
+  });
+
+  it("maps a real captured Xero contact readback, filtering its four empty phone and two empty address blocks", () => {
+    // proves: the hand-built "providerDefaults" stand-in above was never checked
+    // against a real capture. If safePhone/safeAddress ever stop recognizing a
+    // genuine Xero all-blank block as EMPTY (e.g. because a real block carries a
+    // field the hand-built stand-in never included), every contact write in
+    // production starts failing verification - the exact defect this repo
+    // already shipped once, this time against the actual wire shape.
+    const [contact] = loadXeroResponse("contact_single").contacts as unknown[];
+
+    const snapshot = mapSafeContactReadback(contact, { namespace: "zcacct" });
+
+    expect(snapshot).not.toHaveProperty("phones");
+    expect(snapshot).not.toHaveProperty("addresses");
+    expect(snapshot).toEqual({
+      contactId: "e2497490-6310-471d-b391-75293a0426ae",
+      name: "Halstead Cleaning Services",
+      accountNumber: "HALSTEAD_CLEANING_001",
+      externalReference: "ZC:zcacct:51ba1cf9d7d125581bc5f5e468b1b4f3",
+      contactNumberEvidence: { kind: "OWNED_NAMESPACE" },
+      updatedAt: "2026-08-19T08:50:58.300Z",
+    });
+    // Real Xero sends emailAddress/bankAccountDetails as "" rather than
+    // omitting them; boundedString must treat that as absent, not leak it.
+    expect(JSON.stringify(snapshot)).not.toContain("bankAccountDetails");
+    expect(snapshot).not.toHaveProperty("email");
   });
 });
 

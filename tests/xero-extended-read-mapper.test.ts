@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { Quote } from "xero-node";
 import { listBankTransactionsSchema } from "../src/domain/extendedReadSchemas.js";
 import {
+  capturedDateFields,
+  loadXeroResponse,
+} from "./fixtures/xero-provider-responses/index.js";
+import {
   buildBankTransactionReadQuery,
   buildItemReadQuery,
   buildManualJournalReadQuery,
@@ -407,6 +411,32 @@ describe("extended Xero safe projections", () => {
       updatedAt: "2026-08-01T00:00:00.000Z",
     });
     expect(JSON.stringify(summary)).not.toContain("must-not-leak");
+  });
+
+  it("maps every real captured Xero item with no projection gaps, unlike the hand-built validationErrors case above", () => {
+    // proves: capturedDateFields pins the one field (updatedDateUTC) the real
+    // API sends as a Date; if a re-capture adds another, this assertion
+    // breaks and forces a check of mapItemSummary's handling of it.
+    expect(capturedDateFields("items")).toEqual(["items[].updatedDateUTC"]);
+
+    const { items } = loadXeroResponse("items") as { items: Array<Record<string, unknown>> };
+    const mapped = items.map((item) => mapItemSummary(item));
+    expect(mapped.every((item) => item !== undefined)).toBe(true);
+    // Unlike the hand-built case above (which asserts validationErrors), no
+    // real captured item carries that key at all, so projectionEvidence must
+    // report a clean projection rather than inheriting the hand-built case's
+    // projectionIncomplete: true.
+    expect(mapped.every((item) => item?.projectionIncomplete === false && item.omittedFields.length === 0))
+      .toBe(true);
+
+    const book = mapped.find((item) => item?.code === "BOOK");
+    expect(book).toMatchObject({
+      itemId: "8bbaf73c-5a32-4458-addf-bd30a36c8551",
+      salesDetails: { accountCode: "200", taxType: "TAX001", unitPrice: "19.9500" },
+    });
+    // purchaseDetails: {} on the wire (an empty object, not a missing key or
+    // null) must resolve to "no defaults", not an empty-object leak.
+    expect(book).not.toHaveProperty("purchaseDetails");
   });
 
   it("returns reconciliation evidence without exposing a bank account number", () => {

@@ -13,6 +13,7 @@ import {
   verifyCreditNoteDraftReadback,
   verifyManualJournalDraftReadback,
 } from "../src/providers/xeroCreditNoteManualJournalDraft.js";
+import { loadXeroResponse } from "./fixtures/xero-provider-responses/index.js";
 
 const contactId = "11111111-1111-4111-8111-111111111111";
 const revenueAccountId = "22222222-2222-4222-8222-222222222222";
@@ -827,6 +828,26 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
 
   it("fails closed when a runtime caller omits the sealed credit-note provider field", () => {
     expect(mapCreditNoteDraftReadback(creditNoteReadback(), undefined as never)).toEqual({
+      ok: false,
+      reason: "MALFORMED_PROVIDER_READBACK",
+    });
+  });
+
+  it("never verifies a real, already-settled Xero credit note as a fresh unallocated DRAFT", () => {
+    // proves: every hand-built readback above sets status/allocations by
+    // hand, so the DRAFT-only, no-allocations gate was only ever tested
+    // against fields the test author remembered to include. This is a real,
+    // fully-populated PAID credit note with a genuine allocation and dozens
+    // of other real fields (contact, currency, dates) - if a future change
+    // loosened the status or allocations check, or stopped reading one of the
+    // several independent fields that reject it, this is the test that would
+    // catch a real committed note being mistaken for a draft awaiting write
+    // verification.
+    const [boomFm] = loadXeroResponse("credit_notes").creditNotes as Array<Record<string, unknown>>;
+    expect(boomFm.status).toBe("PAID");
+    expect(Array.isArray(boomFm.allocations) && (boomFm.allocations as unknown[]).length > 0).toBe(true);
+
+    expect(mapCreditNoteDraftReadback(boomFm, "REFERENCE")).toEqual({
       ok: false,
       reason: "MALFORMED_PROVIDER_READBACK",
     });

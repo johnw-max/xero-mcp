@@ -13,6 +13,7 @@ import {
   verifyPurchaseOrderDraftReadback,
   verifyQuoteDraftReadback,
 } from "../src/providers/xeroQuotePurchaseOrderDraft.js";
+import { loadXeroResponse } from "./fixtures/xero-provider-responses/index.js";
 
 const contactId = "11111111-1111-4111-8111-111111111111";
 const trackingOptionId = "22222222-2222-4222-8222-222222222222";
@@ -505,6 +506,35 @@ describe("Quote and purchase-order draft schemas", () => {
       expect(verifyPurchaseOrderDraftReadback(purchaseOrderId, purchaseOrder.canonicalPayload, candidate))
         .toMatchObject({ ok: true, readbackCanonicalPayloadHash: purchaseOrder.canonicalPayloadHash });
     }
+  });
+
+  it("normalizes a Date instance the live Xero SDK actually produced, not only a hand-typed `new Date(...)`", () => {
+    // proves: this module's own history is why xeroProviderDate.ts exists -
+    // its doc comment names xeroQuotePurchaseOrderDraft.ts's date handling as
+    // one of two call sites that "never learned the Date branch at all...
+    // turning every live CreditNote / Quote / PurchaseOrder / ManualJournal
+    // draft-write readback into MALFORMED_PROVIDER_READBACK." The test above
+    // covers the mechanism with `new Date(...)` literals a test author typed
+    // by hand; this one feeds in a Date object captured from a genuine Xero
+    // response body (organisation.periodLockDate) instead, so it cannot pass
+    // by coincidentally matching whatever shape a hand-typed Date happens to
+    // have.
+    const [organisation] = loadXeroResponse("organisation").organisations as Array<{ periodLockDate: unknown }>;
+    const realDate = organisation.periodLockDate;
+    expect(realDate).toBeInstanceOf(Date);
+
+    expect(mapQuoteDraftReadback({ ...quoteReadback(), date: realDate })).toMatchObject({
+      ok: true,
+      snapshot: { objectType: "QUOTE", quoteId, canonicalPayload: { quoteDate: "2008-09-30" } },
+    });
+    expect(mapPurchaseOrderDraftReadback({ ...purchaseOrderReadback(), date: realDate })).toMatchObject({
+      ok: true,
+      snapshot: {
+        objectType: "PURCHASE_ORDER",
+        purchaseOrderId,
+        canonicalPayload: { purchaseOrderDate: "2008-09-30" },
+      },
+    });
   });
 
   it("requires provider lineAmount while tolerating normal currency rounding", () => {
