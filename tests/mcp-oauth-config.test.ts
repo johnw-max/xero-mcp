@@ -220,6 +220,28 @@ describe("MCP OAuth Broker configuration", () => {
     expect(config.mcpOAuthBroker?.enabled).toBe(true);
   });
 
+  it("accepts a standing delegation that is not pinned to an OAuth installation", () => {
+    // Pinning to an installation ties the grant to one connection; the next
+    // Xero re-authorisation mints a new installation and the grant dies. The
+    // recommended shape omits it, so the config must accept that shape.
+    const [pinned] = JSON.parse(standingDelegations()) as Array<Record<string, unknown>>;
+    const { installation_id: _installation, ...unpinned } = pinned!;
+    const delegations = JSON.stringify([unpinned]);
+    const config = loadConfig(enabledEnv({
+      XERO_WRITE_ENABLED: "true",
+      XERO_AUTHORITY_REVISION: "1",
+      XERO_ALLOWED_TENANT_ID: "",
+      XERO_TARGET_SESSION_REQUIRED: "true",
+      XERO_STANDING_DELEGATIONS_JSON: delegations,
+      XERO_STANDING_DELEGATIONS_CONFIG_SHA256: sha256(delegations),
+      XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256: "6".repeat(64),
+      XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256: "NOT_REQUIRED",
+    }));
+
+    expect(config.xeroStandingDelegations).toHaveLength(1);
+    expect(config.xeroStandingDelegations?.[0]).not.toHaveProperty("installationId");
+  });
+
   it("enables isolated multi-user early UAT behind an explicit test-only flag", () => {
     const broker = loadConfig(enabledEnv({ SHARED_TEST_USERS: "true" })).mcpOAuthBroker;
 

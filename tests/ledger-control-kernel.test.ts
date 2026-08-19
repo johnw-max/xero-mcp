@@ -57,6 +57,28 @@ function validInput(overrides: Partial<EvaluateAutonomousLedgerWriteInput> = {})
 }
 
 describe("provider-neutral ledger control kernel", () => {
+  it("keeps authorising after the user reconnects when the delegation is not pinned to an installation", () => {
+    // Every Xero re-authorisation mints a new installation id. A grant keyed on
+    // the installation therefore dies on the next reconnect. Unpinned grants
+    // must survive that: the grantee is workspace + agent + tenant.
+    const { installationId: _pinned, ...unpinned } = delegation;
+    const reconnected = validInput({
+      standingDelegations: [unpinned],
+      principal: { ...validInput().principal, installationId: "installation-after-reconnect" },
+    });
+    expect(evaluateAutonomousLedgerWrite(reconnected).allowed).toBe(true);
+  });
+
+  it("still refuses a pinned delegation when the installation no longer matches", () => {
+    const reconnected = validInput({
+      principal: { ...validInput().principal, installationId: "installation-after-reconnect" },
+    });
+    const result = evaluateAutonomousLedgerWrite(reconnected);
+    expect(result.allowed).toBe(false);
+    if (result.allowed) throw new Error("expected a denied decision");
+    expect(result.denyReasons).toContain("STANDING_DELEGATION_MISSING");
+  });
+
   it("authorises an exact standing delegation without per-transaction confirmation", () => {
     const result = evaluateAutonomousLedgerWrite(validInput());
     expect(result.allowed).toBe(true);

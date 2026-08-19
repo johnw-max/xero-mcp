@@ -147,7 +147,12 @@ const xeroStandingDelegationRecordSchema = z.object({
   status: z.enum(["ACTIVE", "REVOKED"]).default("ACTIVE"),
   workspace_id: z.string().trim().min(1).max(255),
   agent_id: z.string().trim().min(1).max(255),
-  installation_id: z.string().trim().min(1).max(255),
+  // Optional pin. An OAuth installation is minted anew on every Xero
+  // re-authorisation, so pinning a delegation to one silently revokes the
+  // agent's authority the next time the user reconnects. The durable grantee
+  // is workspace + agent + tenant; set installation_id only when you really
+  // want the grant to die with a specific connection.
+  installation_id: z.string().trim().min(1).max(255).optional(),
   tenant_id: z.string().trim().uuid(),
   action_ids: z.array(z.enum(XERO_AUTONOMOUS_WRITE_ACTIONS)).min(1)
     .refine((values) => new Set(values).size === values.length, "must contain unique action IDs"),
@@ -185,7 +190,7 @@ const xeroStandingDelegationsJson = z.string().default("[]").transform((raw, con
     providerId: "xero",
     workspaceId: item.workspace_id,
     agentId: item.agent_id,
-    installationId: item.installation_id,
+    ...(item.installation_id ? { installationId: item.installation_id } : {}),
     tenantIds: [item.tenant_id],
     actionIds: item.action_ids as readonly XeroAutonomousWriteAction[],
     ...(item.expires_at ? { expiresAt: new Date(item.expires_at) } : {}),
