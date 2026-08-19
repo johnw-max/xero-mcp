@@ -272,6 +272,35 @@ const TAX_RATE: TaxRateSummary = Object.freeze({
   canApplyToRevenue: true,
 });
 
+/**
+ * Supplier bills are a first-class write action, but a tenant that only
+ * publishes a revenue-applicable rate cannot express one at all: there is no
+ * legal tax_type for an ACCPAY line. The harness used to expose exactly that,
+ * so every local supplier-bill scenario died on the fixture rather than on the
+ * behaviour under test. These two are the purchase-side counterparts a real SG
+ * organisation carries.
+ */
+const INPUT_TAX_RATE: TaxRateSummary = Object.freeze({
+  taxType: "INPUTY24",
+  name: "GST on Expenses",
+  status: "ACTIVE",
+  displayTaxRate: "9.0000",
+  effectiveRate: "9.0000",
+  canApplyToExpenses: true,
+});
+
+const NO_TAX_RATE: TaxRateSummary = Object.freeze({
+  taxType: "NONE",
+  name: "Tax Exempt",
+  status: "ACTIVE",
+  displayTaxRate: "0.0000",
+  effectiveRate: "0.0000",
+  canApplyToExpenses: true,
+  canApplyToRevenue: true,
+});
+
+const TAX_RATES: readonly TaxRateSummary[] = Object.freeze([TAX_RATE, INPUT_TAX_RATE, NO_TAX_RATE]);
+
 function fixedFour(value: number): string {
   return value.toFixed(4);
 }
@@ -336,7 +365,7 @@ class P0XeroProviderFake implements AccountingProvider {
   });
 
   readonly listAccounts: AccountingProvider["listAccounts"] = async () => structuredClone(ACCOUNTS);
-  readonly listTaxRates: AccountingProvider["listTaxRates"] = async () => [structuredClone(TAX_RATE)];
+  readonly listTaxRates: AccountingProvider["listTaxRates"] = async () => TAX_RATES.map((rate) => structuredClone(rate));
   readonly listContacts: AccountingProvider["listContacts"] = async () => ({
     contacts: [structuredClone(CONTACT)],
     pagination: this.#singlePage(1),
@@ -352,7 +381,7 @@ class P0XeroProviderFake implements AccountingProvider {
     contacts: [structuredClone(CONTACT)],
     contactsComplete: true,
     accounts: structuredClone(ACCOUNTS),
-    taxRates: [structuredClone(TAX_RATE)],
+    taxRates: TAX_RATES.map((rate) => structuredClone(rate)),
   });
   readonly getContact: AccountingProvider["getContact"] = async (_principal, contactId) =>
     contactId === CONTACT_ID ? structuredClone(CONTACT) : undefined;
