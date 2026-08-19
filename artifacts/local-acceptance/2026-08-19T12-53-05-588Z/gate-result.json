@@ -1,0 +1,282 @@
+{
+  "schema_version": "1.1",
+  "gate": "LOCAL_RELEASE_ACCEPTANCE",
+  "gate_l_claim": "NOT_IMPLIED",
+  "independent_review_authority": "LOCAL_EVIDENCE_UNTRUSTED",
+  "gate_run_id": "5f0d7b56-0bcb-4d06-b8fc-a3864cb95f66",
+  "live_review_challenge_sha256": "6c8f2b17871ab751b389fc865ff1cd74eeca70156262110dd2c5276802ab710d",
+  "status": "FAIL",
+  "started_at": "2026-08-19T12:53:10.208Z",
+  "finished_at": "2026-08-19T12:57:28.470Z",
+  "test_database": {
+    "database_name": "xero_mcp_test",
+    "protocol": "postgres:",
+    "host_hash": "04d4713d6d99f0d333cc52ee28e6076752b6d9f07d25fc4a3af7ead170044543"
+  },
+  "execution_boundary": "DIGEST_NAMED_READ_ONLY_SOURCE_SNAPSHOT",
+  "approved_control_catalog_sha256": "e488e6ed4cdbe665f214a65ce9d55d42ce1ac3adf54e77317078bb0ec7209fbe",
+  "source_snapshot": {
+    "fingerprint": {
+      "algorithm": "sha256-path-size-executable-content-v2",
+      "file_count": 590,
+      "sha256": "b8c5594365d9ee1ad556742e7a8781d6947ba2d293656cc55f9225d9ed7604fe",
+      "roots": [
+        ".dockerignore",
+        ".gitignore",
+        "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+        "README.md",
+        "package.json",
+        "package-lock.json",
+        "tsconfig.json",
+        "tsconfig.build.json",
+        "agent-skills",
+        "config",
+        "deploy",
+        "docs",
+        "handoff",
+        "harness",
+        "migrations",
+        "schemas",
+        "scripts",
+        "src",
+        "tests"
+      ]
+    },
+    "original_mutation_guard": {
+      "algorithm": "sha256-path-type-device-inode-mode-size-ctime-mtime-v1",
+      "entry_count": 680,
+      "sha256": "cf77627df45cd5cd3326fb92a6f39f9c25ff8aee21132876b26e8b8d9a6616b5"
+    },
+    "immutable_snapshot_mutation_guard": {
+      "algorithm": "sha256-path-type-device-inode-mode-size-ctime-mtime-v1",
+      "entry_count": 680,
+      "sha256": "b6cf32e5ec887d20d2a1dc43379d4f11f0ef0bf19e78c191dd79cd0970ea06e8"
+    },
+    "manifest_file": "source-snapshot.manifest.json",
+    "manifest_sha256": "a8f54d32d6466d81804315a336b6062ecce854d266a78c90e4d7c5a61bb2ffb6",
+    "file_count": 590,
+    "dependencies_copied_not_linked": true,
+    "git_metadata_copied_not_linked": true
+  },
+  "source_fingerprint_before": {
+    "algorithm": "sha256-path-size-executable-content-v2",
+    "file_count": 590,
+    "sha256": "b8c5594365d9ee1ad556742e7a8781d6947ba2d293656cc55f9225d9ed7604fe",
+    "roots": [
+      ".dockerignore",
+      ".gitignore",
+      "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+      "README.md",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "tsconfig.build.json",
+      "agent-skills",
+      "config",
+      "deploy",
+      "docs",
+      "handoff",
+      "harness",
+      "migrations",
+      "schemas",
+      "scripts",
+      "src",
+      "tests"
+    ]
+  },
+  "source_fingerprint_after": {
+    "algorithm": "sha256-path-size-executable-content-v2",
+    "file_count": 590,
+    "sha256": "b8c5594365d9ee1ad556742e7a8781d6947ba2d293656cc55f9225d9ed7604fe",
+    "roots": [
+      ".dockerignore",
+      ".gitignore",
+      "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+      "README.md",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "tsconfig.build.json",
+      "agent-skills",
+      "config",
+      "deploy",
+      "docs",
+      "handoff",
+      "harness",
+      "migrations",
+      "schemas",
+      "scripts",
+      "src",
+      "tests"
+    ]
+  },
+  "snapshot_fingerprint_after": {
+    "algorithm": "sha256-path-size-executable-content-v2",
+    "file_count": 590,
+    "sha256": "b8c5594365d9ee1ad556742e7a8781d6947ba2d293656cc55f9225d9ed7604fe",
+    "roots": [
+      ".dockerignore",
+      ".gitignore",
+      "PRD-XERO-ACCOUNTING-AGENT-MCP.md",
+      "README.md",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "tsconfig.build.json",
+      "agent-skills",
+      "config",
+      "deploy",
+      "docs",
+      "handoff",
+      "harness",
+      "migrations",
+      "schemas",
+      "scripts",
+      "src",
+      "tests"
+    ]
+  },
+  "source_mutation_events": [],
+  "snapshot_mutation_events": [],
+  "source_watcher_errors": [],
+  "snapshot_watcher_errors": [],
+  "generated_artifact_snapshots": [],
+  "final_integrity_error": null,
+  "source_stable": true,
+  "release_artifact_identity": null,
+  "failed_step_id": "traceability-closed",
+  "steps": [
+    {
+      "id": "traceability-closed",
+      "status": "FAIL",
+      "command": "/Users/jiayuanwang/.hermes/node/bin/node scripts/review/validate-requirements-traceability.mjs --file <traceability>/requirements-traceability.json --require-closed --approved-control-catalog-sha256 e488e6ed4cdbe665f214a65ce9d55d42ce1ac3adf54e77317078bb0ec7209fbe --expected-source-fingerprint b8c5594365d9ee1ad556742e7a8781d6947ba2d293656cc55f9225d9ed7604fe",
+      "execution_cwd": "MUTATION_GUARDED_ORIGINAL_EVIDENCE_BOUNDARY",
+      "started_at": "2026-08-19T12:53:10.211Z",
+      "finished_at": "2026-08-19T12:53:10.381Z",
+      "exit_code": 1,
+      "signal": null,
+      "spawn_error": null,
+      "evidence_sha256": null,
+      "stdout": {
+        "file": "traceability-closed.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0
+      },
+      "stderr": {
+        "file": "traceability-closed.stderr.log",
+        "sha256": "175f788347a38fa4a4f1713fa0feec5282cee21ca1f26444115f859bd8afc989",
+        "size_bytes": 9891
+      }
+    },
+    {
+      "id": "local-agent-evidence",
+      "status": "NOT_CAPTURED",
+      "command": "validate-evidence LOCAL_AGENT artifacts/ledger-kernel-review/round-2026-08-13-local/local-agent-run.json",
+      "execution_cwd": "IMMUTABLE_SOURCE_PLUS_HASH_BOUND_EXTERNAL_EVIDENCE",
+      "started_at": "2026-08-19T12:53:10.453Z",
+      "finished_at": "2026-08-19T12:53:10.453Z",
+      "exit_code": null,
+      "signal": null,
+      "spawn_error": null,
+      "evidence_sha256": null,
+      "stdout": {
+        "file": "local-agent-evidence.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0
+      },
+      "stderr": {
+        "file": "local-agent-evidence.stderr.log",
+        "sha256": "c835035d769af170c777c365aab8a48fa9c3ec689d7e39b4a3e21f32b77d2030",
+        "size_bytes": 70
+      }
+    },
+    {
+      "id": "process-crash-restart-evidence",
+      "status": "NOT_CAPTURED",
+      "command": "validate-evidence PROCESS_CRASH_RESTART artifacts/ledger-kernel-review/round-2026-08-13-local/process-crash-restart.json",
+      "execution_cwd": "IMMUTABLE_SOURCE_PLUS_HASH_BOUND_EXTERNAL_EVIDENCE",
+      "started_at": "2026-08-19T12:53:10.516Z",
+      "finished_at": "2026-08-19T12:53:10.517Z",
+      "exit_code": null,
+      "signal": null,
+      "spawn_error": null,
+      "evidence_sha256": null,
+      "stdout": {
+        "file": "process-crash-restart-evidence.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0
+      },
+      "stderr": {
+        "file": "process-crash-restart-evidence.stderr.log",
+        "sha256": "5d62db23a36a80a2b1cd22b549f8c1e41b748b0c26e4333055970ee6ae805111",
+        "size_bytes": 122
+      }
+    },
+    {
+      "id": "typecheck",
+      "status": "PASS",
+      "command": "npm run typecheck",
+      "execution_cwd": "CONTENT_ADDRESSED_SOURCE_SNAPSHOT",
+      "started_at": "2026-08-19T12:53:10.588Z",
+      "finished_at": "2026-08-19T12:53:13.693Z",
+      "exit_code": 0,
+      "signal": null,
+      "spawn_error": null,
+      "evidence_sha256": null,
+      "stdout": {
+        "file": "typecheck.stdout.log",
+        "sha256": "f19b9fe589b84260a297b17021685573e12667970bc42dabe82ebbcfd32679b6",
+        "size_bytes": 90
+      },
+      "stderr": {
+        "file": "typecheck.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0
+      }
+    },
+    {
+      "id": "build",
+      "status": "PASS",
+      "command": "npm run build",
+      "execution_cwd": "CONTENT_ADDRESSED_SOURCE_SNAPSHOT",
+      "started_at": "2026-08-19T12:53:13.763Z",
+      "finished_at": "2026-08-19T12:53:16.059Z",
+      "exit_code": 0,
+      "signal": null,
+      "spawn_error": null,
+      "evidence_sha256": null,
+      "stdout": {
+        "file": "build.stdout.log",
+        "sha256": "10127d4c12b7bfbf5c0d3ce220354dfced544ee2836f3bdb6393ff45aa93b442",
+        "size_bytes": 121
+      },
+      "stderr": {
+        "file": "build.stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": 0
+      }
+    },
+    {
+      "id": "full-regression",
+      "status": "FAIL",
+      "command": "npm test -- --maxWorkers=1 --no-cache",
+      "execution_cwd": "CONTENT_ADDRESSED_SOURCE_SNAPSHOT",
+      "started_at": "2026-08-19T12:53:16.128Z",
+      "finished_at": "2026-08-19T12:57:28.265Z",
+      "exit_code": 1,
+      "signal": null,
+      "spawn_error": null,
+      "evidence_sha256": null,
+      "stdout": {
+        "file": "full-regression.stdout.log",
+        "sha256": "03b998962b018b3c49093aaff09d196dc049aabc911809099f0df2df3426e64f",
+        "size_bytes": 28751
+      },
+      "stderr": {
+        "file": "full-regression.stderr.log",
+        "sha256": "131ef0168680fb089edaaa6dfc4bf7b55ae2c8a9c99d19ebf1bd2a0580216c2d",
+        "size_bytes": 48669
+      }
+    }
+  ]
+}
