@@ -101,19 +101,24 @@ API 不会给的形状而长期未被发现：
 
 全量 1563 项：**1427 通过，112 跳过，24 失败**。
 
-24 项失败全部集中在两个文件，且与本轮改动无关（改动前后逐项一致）：
+24 项失败全部集中在两个文件，且与本轮改动无关（改动前后逐项一致）。
 
-- `tests/independent-review-evidence.test.ts`（23 项）——需要仓库外的
-  Codex 可执行体与签名主体，环境不具备。
-- `tests/traceability-validator.test.ts`（1 项）——追溯工件需按当前需求集
-  重新生成。
+**更正**：先前版本说这些失败是"需要仓库外的 Codex 可执行体与签名主体"，
+这是错的。实际错误码里没有任何一条与签名或 Codex 有关：
+
+- `tests/independent-review-evidence.test.ts`（23 项）——`RUNTIME_PACKAGE_ID`
+  6 条、期望抛出未抛出 6 条、冻结副本里解析不到 typescript 3 条、
+  路径越界 3 条、**单个语义单元超过分片容量上限** 2 条、超时 2 条。
+  最后一类是实质问题：仓库长大之后，评审分片装不下单个文件了。
+- `tests/traceability-validator.test.ts`（1 项）——断言当前追溯工件零校验
+  错误，实际有 57 条（见下）。
 
 ## 遗留事项
 
 | 事项 | 性质 | 处理建议 |
 |---|---|---|
-| Gate L 独立评审 | 结构性不可达：`independent-review-live` 拒绝自证，需仓库外签名主体 | 发布前由人指定评审方，非代码问题 |
-| 追溯工件 18/90 断言 | 工件待重生成 | 一次性重跑生成脚本 |
+| 内核评审轮次未完成 | 90 个 probe 里 57 个借用了别的 claim 的证据；18 个需求全部自标 `OPEN`，工件没有说谎，是这轮评审没做完 | 逐条补齐可实证的证伪 probe（改一行、跑指定测试、看它失败），不能靠手写 |
+| 评审分片容量上限 | 仓库长大后单个语义单元装不下分片 | 提高上限或按语义再切分 |
 | Drive（accountingv2）联动 | UAT agent 未挂 Drive MCP，agent 自述无该工具 | 需把 Drive MCP 挂到同一 agent 才能端到端测；本 MCP 侧的边界（上游 case 绑定）已单独验证通过 |
 | 本地 harness 无 OAuth broker | 保真度差异，非缺陷 | `xero_start_organisation_switch` 本地返回 `CONFIGURATION_ERROR`，线上可用；已写入剧本备注 |
 | 公开远程仓库已含真实 Xero client id | 未决 | 轮换或接受，需人决策 |
@@ -129,6 +134,20 @@ API 不会给的形状而长期未被发现：
 ## 部署与回滚
 
 - 线上：容器 `xero-accounting-mcp-067`（18022），nginx 指向该端口。
-- 授权快照 revision 单调递增，**旧构建直接重启会静默变成 READ_ONLY**。
-  回滚 = 以更高 revision 重新发布旧内容，步骤见
-  `docs/AUTHORITY-PIN-OPERATIONS.md`。
+- 授权快照 revision 单调递增。**已修复**：构建 pin 现在绑定的是不含 revision
+  的内容哈希，同一份授权以更高 revision 重发不再让旧构建失效，回滚可用；
+  授权内容真变了仍然正确地拒绝写入。步骤见 `docs/AUTHORITY-PIN-OPERATIONS.md`。
+
+## 发布闸门（2026-08-19 改动）
+
+`release:local:gate` 的第一步 `independent-review-live` 执行的脚本没有任何
+逻辑，整个内容就是打印"必须由仓库外被钉住的父驱动用主机密钥签回执，而本仓库
+拿不到这个授权"然后 `exit 78`。序列 fail-closed，所以**每一次运行都停在第一
+步**，typecheck、测试、证据校验、打包一个都跑不到——一个恒定 NO-GO 的闸门无法
+把真回归和自己的地板区分开，等于没有闸门。
+
+它等的那层签名已按 ADR-003 从设计里移除，因此该步骤被摘掉。独立性保留为这个
+阶段真正能成立的形式：**评审必须由没有写这段改动的会话来跑**，结果记为证据而
+非签名背书。清单继续记录 `gate_l_claim: NOT_IMPLIED` 与
+`independent_review_authority: LOCAL_EVIDENCE_UNTRUSTED`，本地跑过永远不会被
+读成独立背书，并有测试钉住这一点。
