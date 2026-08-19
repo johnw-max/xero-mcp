@@ -203,6 +203,16 @@ export interface AccountingCaseSummary {
     original_file_verified: false;
     fact_origins: Array<"MODEL_EXTRACTED" | "AGENT_ASSERTED" | "SERVER_RESOLVED_PROVIDER_EVIDENCE">;
     document_validity_basis: "SUBMITTED_ASSERTION";
+    /**
+     * A sentence the caller can repeat to a person verbatim. Every state name
+     * around a successful write says VERIFIED — READBACK_VERIFIED,
+     * ALL_READBACK_VERIFIED — and an agent relaying that naturally reports the
+     * figures as "verified", which an accountant reads as checked against the
+     * original document. It was not: the readback proves only that the ledger
+     * stored what we sent. Saying so in a ready-made sentence is more reliable
+     * than asking every caller to compose the caveat correctly each time.
+     */
+    verification_scope_note: string;
   };
   completion_claim: {
     supplied_set_coverage: "COMPLETE" | "INCOMPLETE";
@@ -590,6 +600,9 @@ function summary(record: AccountingCaseVersionRecord, continuationSecret: Buffer
       original_file_verified: false,
       fact_origins: factOrigins,
       document_validity_basis: "SUBMITTED_ASSERTION",
+      verification_scope_note: "Readback confirms the ledger stored exactly what was sent. " +
+        "It does not check those figures against the original document, which was not independently verified. " +
+        "Do not describe this write as verified without saying which of the two you mean.",
     },
     completion_claim: {
       supplied_set_coverage: record.compiled.completionClaim.suppliedSetCoverage,

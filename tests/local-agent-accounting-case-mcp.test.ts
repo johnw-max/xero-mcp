@@ -139,6 +139,9 @@ describe("local Agent Accounting Case MCP transport", () => {
         original_file_verified: false,
         fact_origins: ["MODEL_EXTRACTED"],
         document_validity_basis: "SUBMITTED_ASSERTION",
+        // A sentence the caller can repeat verbatim, so a Xero readback is not
+        // relayed to an accountant as if the original document had been checked.
+        verification_scope_note: expect.stringContaining("does not check those figures against the original document"),
       };
       expect(prepared.source_claim).toEqual(expectedSourceClaim);
 

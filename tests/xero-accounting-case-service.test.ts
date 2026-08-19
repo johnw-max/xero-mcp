@@ -2192,6 +2192,22 @@ describe("XeroAccountingCaseService", () => {
     expect(harness.providerWrite).toHaveBeenCalledTimes(2);
   });
 
+  it("hands the caller a sentence that keeps readback apart from checking the original document", async () => {
+    // Observed live: the agent relayed a successful write as "已成功创建并核对验证",
+    // which an accountant reads as checked against the source invoice. It was not —
+    // readback only proves the ledger stored what we sent, and the same response
+    // says original_file_verified: false. Every surrounding state name contains
+    // VERIFIED, so the caller needs a ready-made sentence rather than having to
+    // compose the distinction itself.
+    const { service } = runtime();
+    const summary = await service.prepare(context(), source());
+
+    expect(summary.source_claim.original_file_verified).toBe(false);
+    const note = summary.source_claim.verification_scope_note;
+    expect(note).toContain("Readback confirms the ledger stored exactly what was sent");
+    expect(note).toContain("does not check those figures against the original document");
+  });
+
   it("derives target and policy server-side, persists the plan, and never claims a prepare as a write", async () => {
     const { service, provider } = runtime();
     const requestContext = context();
