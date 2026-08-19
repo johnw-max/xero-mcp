@@ -2204,20 +2204,23 @@
               "obligation_id": "K-012-C03-P01",
               "invariant": "An invalid, missing or consumed permit causes zero provider network and SDK mutation calls, while a valid permit authorizes one exact adapter, action and payload.",
               "target_path": "src/providers/xeroClientManager.ts",
-              "target_anchor": "#withFullClient",
+              "target_anchor": "consumeXeroProviderWritePermitAtMutationBoundary",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "if (writeAuthorization) {",
-              "replacement": "if (false) {",
+              "literal": "adapterOperation: writeAuthorization.adapterOperation,",
+              "replacement": "adapterOperation: \"MUTATED_ADAPTER_OPERATION\" as typeof writeAuthorization.adapterOperation,",
               "test_files": [
                 "tests/xero-provider-write-permit-boundary.test.ts",
                 "tests/xero-accounting-case-tool-contract.test.ts"
               ],
               "mutation_test_path": "tests/xero-provider-write-permit-boundary.test.ts",
               "expected_failing_test_names": [
-                "rejects a missing permit before client initialization, token decrypt, refresh, state mutation, or SDK write"
+                "rejects every wrong bound claim before client initialization, token decrypt, refresh, state mutation, or SDK write",
+                "preserves a valid permitted write through client initialization, decrypt, and the exact SDK mutation",
+                "fails closed when successful refresh returns a token with downgraded Xero scopes",
+                "fails closed when refresh-race recovery returns a token with downgraded Xero scopes"
               ],
               "expected_failure_message_patterns": [
-                "expected"
+                "ADAPTER_OPERATION_MISMATCH"
               ]
             }
           ]
@@ -2244,9 +2247,9 @@
               "obligation_id": "K-012-C04-P01",
               "invariant": "A read-only provider client exposes no mutation-capable SDK method.",
               "target_path": "src/providers/xeroClientManager.ts",
-              "target_anchor": "#withFullClient",
+              "target_anchor": "readonlyClient",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "if (writeAuthorization) {",
+              "literal": "if (!XERO_READ_ACCOUNTING_API_METHOD_SET.has(property)) {",
               "replacement": "if (false) {",
               "test_files": [
                 "tests/xero-provider-write-permit-boundary.test.ts",
@@ -2254,10 +2257,10 @@
               ],
               "mutation_test_path": "tests/xero-provider-write-permit-boundary.test.ts",
               "expected_failing_test_names": [
-                "rejects a missing permit before client initialization, token decrypt, refresh, state mutation, or SDK write"
+                "preserves an ordinary read while exposing no mutation-capable SDK method"
               ],
               "expected_failure_message_patterns": [
-                "expected"
+                "promise resolved"
               ]
             }
           ]
@@ -3580,20 +3583,20 @@
               "obligation_id": "K-016-C02-P01",
               "invariant": "The same ordinary business input deterministically produces the same artifact, unit, fact and event identities independent of field order.",
               "target_path": "src/mcp/xeroAccountingCaseBusinessIntake.ts",
-              "target_anchor": "xeroAccountingCaseBusinessIntakeSchema",
+              "target_anchor": "normalizeXeroAccountingCaseBusinessIntake",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "source_set_complete: z.literal(true).describe(",
-              "replacement": "source_set_complete: z.literal(false).describe(",
+              "literal": "])].sort((left, right) => left.localeCompare(right)) as Array<\"CUSTOMER\" | \"SUPPLIER\">;",
+              "replacement": "])] as Array<\"CUSTOMER\" | \"SUPPLIER\">;",
               "test_files": [
                 "tests/xero-accounting-case-business-intake.test.ts",
                 "tests/xero-accounting-case-tool-contract.test.ts"
               ],
               "mutation_test_path": "tests/xero-accounting-case-business-intake.test.ts",
               "expected_failing_test_names": [
-                "normalizes every published document/category/tax enum combination into the shared public Case schema"
+                "merges AR/AP usage candidates for one typed legal identity and rejects one name with different tuples"
               ],
               "expected_failure_message_patterns": [
-                "expected"
+                "usage roles must be sorted"
               ]
             }
           ]
@@ -3804,20 +3807,20 @@
               "obligation_id": "K-017-C04-P01",
               "invariant": "The shared transitive dependency closure contains no Xero, Singapore, tax-code, tax-rate or tenant chart literal or provider import.",
               "target_path": "src/control-kernel/accountingCaseCompiler.ts",
-              "target_anchor": "compileAccountingCase",
+              "target_anchor": "export function compileAccountingCase(",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "policyVersion: policy.policyVersion,",
-              "replacement": "policyVersion: \"xero-policy\",",
+              "literal": "export function compileAccountingCase(",
+              "replacement": "export function compileAccountingCase( // xero",
               "test_files": [
                 "tests/provider-neutral-ledger-conformance.test.ts",
                 "tests/accounting-case-golden-14.test.ts"
               ],
               "mutation_test_path": "tests/provider-neutral-ledger-conformance.test.ts",
               "expected_failing_test_names": [
-                "runs a non-Xero adapter through compile, preflight, kernel authority, one-shot commit, receipt and exact readback"
+                "keeps the complete shared transitive boundary free of provider-specific imports and literals"
               ],
               "expected_failure_message_patterns": [
-                "expected"
+                "accountingCaseCompiler.ts"
               ]
             }
           ]
@@ -3844,20 +3847,20 @@
               "obligation_id": "K-017-C05-P01",
               "invariant": "Provider route and capability bounds are interpreted only by the injected adapter contract and the shared kernel has no provider-specific fallback.",
               "target_path": "src/control-kernel/accountingCaseCompiler.ts",
-              "target_anchor": "compileAccountingCase",
+              "target_anchor": "route = provider.evaluateNativeRoute(primary, input.target).route;",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "policyVersion: policy.policyVersion,",
-              "replacement": "policyVersion: \"xero-policy\",",
+              "literal": "route = provider.evaluateNativeRoute(primary, input.target).route;",
+              "replacement": "route = provider.evaluateNativeRoute(primary, input.target).route; // xero",
               "test_files": [
                 "tests/provider-neutral-ledger-conformance.test.ts",
                 "tests/accounting-case-golden-14.test.ts"
               ],
               "mutation_test_path": "tests/provider-neutral-ledger-conformance.test.ts",
               "expected_failing_test_names": [
-                "runs a non-Xero adapter through compile, preflight, kernel authority, one-shot commit, receipt and exact readback"
+                "keeps the complete shared transitive boundary free of provider-specific imports and literals"
               ],
               "expected_failure_message_patterns": [
-                "expected"
+                "accountingCaseCompiler.ts"
               ]
             }
           ]
@@ -3988,20 +3991,20 @@
               "obligation_id": "K-018-C03-P01",
               "invariant": "Tax aggregation follows the sealed per-line rule and document-total rounding cannot replace line aggregation.",
               "target_path": "src/control-kernel/accountingMonetary.ts",
-              "target_anchor": "roundHalfUp",
+              "target_anchor": "resolveSupportedAccountingMonetaryRule",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "remainder * 2n >= divisor",
-              "replacement": "remainder * 2n > divisor",
+              "literal": "if (candidate.taxAggregation !== \"PER_LINE\") reasons.push(\"ACCOUNTING_TAX_AGGREGATION_UNSUPPORTED\");",
+              "replacement": "if (false) reasons.push(\"ACCOUNTING_TAX_AGGREGATION_UNSUPPORTED\");",
               "test_files": [
                 "tests/accounting-case-monetary-rounding.test.ts",
                 "tests/accounting-case-tax-semantics.test.ts"
               ],
               "mutation_test_path": "tests/accounting-case-monetary-rounding.test.ts",
               "expected_failing_test_names": [
-                "rounds a scale-four unit-price product to the currency minor unit using integer HALF_UP"
+                "seals monetary rules into the policy projection/source hash and blocks unsupported aggregation"
               ],
               "expected_failure_message_patterns": [
-                "expected"
+                "BLOCKED_VALIDATION"
               ]
             }
           ]
@@ -4028,20 +4031,20 @@
               "obligation_id": "K-018-C04-P01",
               "invariant": "Compiler, service preparation and readback use the same sealed quantizer, scale and aggregation rule.",
               "target_path": "src/control-kernel/accountingMonetary.ts",
-              "target_anchor": "roundHalfUp",
+              "target_anchor": "quantizeAccountingScaleEight",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "remainder * 2n >= divisor",
-              "replacement": "remainder * 2n > divisor",
+              "literal": "const divisor = 10n ** BigInt(8 - rule.minorUnitScale);",
+              "replacement": "const divisor = 10n ** BigInt(8 - 2);",
               "test_files": [
                 "tests/accounting-case-monetary-rounding.test.ts",
                 "tests/accounting-case-tax-semantics.test.ts"
               ],
               "mutation_test_path": "tests/accounting-case-monetary-rounding.test.ts",
               "expected_failing_test_names": [
-                "rounds a scale-four unit-price product to the currency minor unit using integer HALF_UP"
+                "uses JPY scale zero, accepts the rounded integer, and rejects a fractional source total"
               ],
               "expected_failure_message_patterns": [
-                "expected"
+                "BLOCKED_VALIDATION"
               ]
             }
           ]
