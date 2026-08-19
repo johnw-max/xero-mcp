@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-08-19T16:42:25.038Z",
+  "captured_at": "2026-08-19T17:01:41.169Z",
   "generator": {
     "command": "node scripts/release/generate-process-crash-restart-evidence.mjs",
     "executable_path": "scripts/release/generate-process-crash-restart-evidence.mjs",
@@ -12,33 +12,33 @@
       "artifact_type": "CRASH_SCENARIO_JSONL",
       "path": "process-crash-restart.raw/AFTER_PREFLIGHT_PREPARED.jsonl",
       "scenario_id": "AFTER_PREFLIGHT_PREPARED",
-      "sha256": "d4bf847c5ff2e14c296e294a84de7be6da8ff227181f9f43f3a971a26472c37f",
+      "sha256": "e61bc30e22d641441ca8ce52ea4891cf82cb6ed3bb03c4fbe0a69e0f18ac71ab",
       "size_bytes": 18487
     },
     {
       "artifact_type": "CRASH_SCENARIO_JSONL",
       "path": "process-crash-restart.raw/AFTER_WRITE_CLAIM_BEFORE_PROVIDER.jsonl",
       "scenario_id": "AFTER_WRITE_CLAIM_BEFORE_PROVIDER",
-      "sha256": "8e0100b94c16cba20e97a896393db636f79ccd7c3db924dc2ab14197fcce80e8",
+      "sha256": "09411ba8ed42bc26536188d92b121c14b17cb947a8daf079e17c20b927c35f19",
       "size_bytes": 16861
     },
     {
       "artifact_type": "CRASH_SCENARIO_JSONL",
       "path": "process-crash-restart.raw/AFTER_PROVIDER_ACCEPT_BEFORE_DURABLE_COMPLETION.jsonl",
       "scenario_id": "AFTER_PROVIDER_ACCEPT_BEFORE_DURABLE_COMPLETION",
-      "sha256": "5417a5731805512798cc1ff72314f58c76ef09f85b601adb3031dc0d9222d53e",
+      "sha256": "f6316d0e1bac2803ace64b5eda5d6bcc54cb5a6f8cb757d33b9265a6154165fe",
       "size_bytes": 20068
     },
     {
       "artifact_type": "CRASH_SCENARIO_JSONL",
       "path": "process-crash-restart.raw/AFTER_DURABLE_COMPLETION_BEFORE_RESPONSE.jsonl",
       "scenario_id": "AFTER_DURABLE_COMPLETION_BEFORE_RESPONSE",
-      "sha256": "439c647096ea8e74227c5c4566bc4dc0141ac4ceb56709f74ef93341f68634b8",
+      "sha256": "487d4804a67ef7d3e969ff28f9ce0ed026cb7995cd1f8cefc130c83638d25e2d",
       "size_bytes": 19917
     }
   ],
   "release_version": "0.4.0-rc.1",
-  "runtime_attestation_hash": "6a3570ed01ec463bc2f5d296a3e622c0d6d058c6010a8b129a9e71159bfcbfda",
+  "runtime_attestation_hash": "15eb90af42f00ddb5e5657356328e996c2d3b4f13c7b7db69bb6e00c8fa341be",
   "scenarios": [
     {
       "command": "node --import tsx harness/lifecycle/process-crash-worker.ts",
@@ -49,8 +49,8 @@
       "recovery_outcome": "RECOVERED_READBACK_VERIFIED",
       "restart_observed": true,
       "scenario_id": "AFTER_PREFLIGHT_PREPARED",
-      "server_pid_after": 29720,
-      "server_pid_before": 29713,
+      "server_pid_after": 35648,
+      "server_pid_before": 35647,
       "status": "PASS",
       "termination": "PROCESS_KILL",
       "termination_signal": "SIGKILL"
@@ -64,8 +64,8 @@
       "recovery_outcome": "BLOCKED_SAFE_UNKNOWN",
       "restart_observed": true,
       "scenario_id": "AFTER_WRITE_CLAIM_BEFORE_PROVIDER",
-      "server_pid_after": 29723,
-      "server_pid_before": 29722,
+      "server_pid_after": 35676,
+      "server_pid_before": 35662,
       "status": "PASS",
       "termination": "PROCESS_KILL",
       "termination_signal": "SIGKILL"
@@ -79,8 +79,8 @@
       "recovery_outcome": "RECOVERED_READBACK_VERIFIED",
       "restart_observed": true,
       "scenario_id": "AFTER_PROVIDER_ACCEPT_BEFORE_DURABLE_COMPLETION",
-      "server_pid_after": 29816,
-      "server_pid_before": 29811,
+      "server_pid_after": 35967,
+      "server_pid_before": 35955,
       "status": "PASS",
       "termination": "PROCESS_KILL",
       "termination_signal": "SIGKILL"
@@ -94,14 +94,14 @@
       "recovery_outcome": "IDEMPOTENT_REPLAY",
       "restart_observed": true,
       "scenario_id": "AFTER_DURABLE_COMPLETION_BEFORE_RESPONSE",
-      "server_pid_after": 29825,
-      "server_pid_before": 29819,
+      "server_pid_after": 35991,
+      "server_pid_before": 35974,
       "status": "PASS",
       "termination": "PROCESS_KILL",
       "termination_signal": "SIGKILL"
     }
   ],
   "schema_version": "1.0",
-  "source_fingerprint": "7f3178663797c05aa22aa165e652fb8babbc604f194494d549215936b6e3f1ca",
+  "source_fingerprint": "b253fa18f68eb82e31eb1afb0e74ece4ada2bee60870c8f996b7a089673f0022",
   "status": "PASS"
 }
