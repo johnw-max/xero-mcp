@@ -99,3 +99,29 @@ MCP 只写 DRAFT。过账、审批永远由人在 Xero 内完成。这是边界�
 - 错误科目代码 / 不存在税码 / 税率与金额不符，均以明确 reason code 拒绝且零写入;
 - 现有 SG 验收场景（金额矛盾、重复、注入、崩溃恢复）全部保持通过；
 - agent-skills 中出现承载 SG 记账规则的 skill 版本，与 MCP 部署解耦。
+
+## 跨 MCP 交接：上游 case 与 Xero 组织的绑定（2026-08-19 实测）
+
+Drive MCP（accountingv2）与本 MCP 是两套独立系统，各自有 case 概念。本 MCP
+无法改动上游，能守住的边界只有一条：**同一个上游 case ref 不得落到两个 Xero
+组织**。这条在 `accounting_case_source_case_bindings` 上以
+`PRIMARY KEY (workspace_id, source_system, source_case_ref_hash)` 实现，
+写入是单条原子 upsert——仲裁者是数据库约束本身，应用层没有"先查再写"的
+竞态窗口。
+
+对部署在线的 067 构建实测（仓库层直调，未执行任何 Xero 写入）：
+
+| 动作 | 结果 |
+|---|---|
+| ref `HWB-2026-08-BILLS-03` → Demo Company (Global) | `BOUND_FIRST_USE` |
+| 同一 ref → zcloak | `TENANT_CONFLICT`（拒绝） |
+| 同一 ref → Demo Company 再来一次 | `BOUND_CONFIRMED`（幂等） |
+
+冲突被拒时，返回值与 agent 看到的错误信封里都**不含**另一个租户的 id 或
+名称——只有 `SOURCE_CASE_TENANT_CONFLICT` 与
+`ACCOUNTING_CASE_SOURCE_CASE_BINDING`。冲突在 case 版本落库之前抛出，不留
+半写状态。`case_ref` 本身只以 SHA-256 摘要存储，原文不落库也不回传。
+
+范围说明（非缺陷）：绑定按 `workspace_id` 分域。这防的是**一个工作区内**
+同一份上游材料被记进两家 Xero 组织，也就是串帐本身；两个不同工作区各自引用
+同一个 ref 不在此约束内，那属于工作区隔离，是另一个问题。
