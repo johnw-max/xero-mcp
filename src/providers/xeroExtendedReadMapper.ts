@@ -12,6 +12,7 @@ import {
   type QuoteSort,
 } from "../domain/extendedReadSchemas.js";
 import type { ReadPageEvidence } from "./types.js";
+import { xeroProviderDate as xeroDate, xeroProviderInstant } from "./xeroProviderDate.js";
 
 export const MAX_EXTENDED_READ_LINES = 100;
 export const MAX_EXTENDED_READ_TRACKING = 2;
@@ -324,22 +325,10 @@ function boundedTracking(value: unknown): Pick<
   };
 }
 
-function xeroDate(value: unknown): string | undefined {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
-  }
-  if (typeof value !== "string") return undefined;
-  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
-  const match = /^\/Date\((-?\d+)/.exec(value);
-  if (!match?.[1]) return undefined;
-  const parsed = new Date(Number(match[1]));
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString().slice(0, 10);
-}
-
 function xeroUpdatedAt(value: ProviderObject): string | undefined {
-  const direct = value.updatedDateUTC;
-  if (direct instanceof Date && !Number.isNaN(direct.getTime())) return direct.toISOString();
-  const candidate = direct ?? value.updatedDateUTCString;
+  const candidate = value.updatedDateUTC ?? value.updatedDateUTCString;
+  const instant = xeroProviderInstant(candidate);
+  if (instant) return instant.toISOString();
   if (typeof candidate !== "string" || candidate.length === 0) return undefined;
   const parsed = new Date(candidate);
   return Number.isNaN(parsed.getTime()) ? boundedText(candidate, 64) : parsed.toISOString();

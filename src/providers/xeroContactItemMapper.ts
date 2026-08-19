@@ -18,6 +18,7 @@ import {
   safeItemSnapshotSchema,
 } from "../domain/xeroContactItemPrimitives.js";
 import { sha256, stableStringify } from "../security/hash.js";
+import { xeroProviderInstant } from "./xeroProviderDate.js";
 
 type ProviderObject = Record<string, unknown>;
 
@@ -108,10 +109,10 @@ function boundedString(value: unknown, maximum: number): string | undefined {
 
 function providerTimestamp(value: ProviderObject): string | undefined {
   const candidate = value.updatedDateUTC ?? value.updatedDateUTCString;
-  if (candidate instanceof Date && Number.isFinite(candidate.getTime())) return candidate.toISOString();
+  const instant = xeroProviderInstant(candidate);
+  if (instant) return instant.toISOString();
   if (typeof candidate !== "string" || candidate.length === 0) return undefined;
-  const dotNet = /^\/Date\((-?\d+)/.exec(candidate)?.[1];
-  const parsed = new Date(dotNet ? Number(dotNet) : candidate);
+  const parsed = new Date(candidate);
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : undefined;
 }
 
