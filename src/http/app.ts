@@ -56,7 +56,12 @@ function runtimeWriteMode(enabled: boolean): XeroRuntimeWriteMode {
   return enabled ? "WRITE_ENABLED" : "READ_ONLY";
 }
 
-function expectedAuthorityIdentityProven(
+/**
+ * Decides whether this build recognises the authority currently published, and
+ * therefore whether it may write at all. Exported so the decision itself is
+ * testable rather than only reachable through a live HTTP surface.
+ */
+export function expectedAuthorityIdentityProven(
   config: AppConfig,
   evidence: RepositoryReadinessEvidence,
 ): boolean {

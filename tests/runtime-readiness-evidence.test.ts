@@ -23,6 +23,7 @@ const repositories: PostgresAccountingRepository[] = [];
 const unknownAuthorityReadiness = {
   authoritySnapshotRevision: null,
   authoritySnapshotHash: null,
+  authorityContentHash: null,
   authorityWriteKillSwitchEnabled: null,
   firmGovernance: {
     status: "UNKNOWN",
@@ -238,6 +239,7 @@ describe("repository runtime readiness evidence", () => {
       },
       authoritySnapshotRevision: null,
       authoritySnapshotHash: null,
+      authorityContentHash: null,
       authorityWriteKillSwitchEnabled: null,
       firmGovernance: {
         ...unknownAuthorityReadiness.firmGovernance,
