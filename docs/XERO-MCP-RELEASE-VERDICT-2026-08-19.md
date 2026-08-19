@@ -95,6 +95,14 @@ API 不会给的形状而长期未被发现：
 | 本地 harness 无 OAuth broker | 保真度差异，非缺陷 | `xero_start_organisation_switch` 本地返回 `CONFIGURATION_ERROR`，线上可用；已写入剧本备注 |
 | 公开远程仓库已含真实 Xero client id | 未决 | 轮换或接受，需人决策 |
 
+## 次要打磨项（不阻塞发布）
+
+工具入参在进入 handler 之前由 MCP SDK 校验，这类失败返回的是 SDK 原始文本
+（`MCP error -32602: Input validation error: ... at target_session_ref`），
+绕过本项目的错误信封：没有 `code`、`reason_codes`、`invalid_fields`。
+好在它点名了字段，agent 可据此自纠——本地验收会话里就是这样恢复的。
+但对已经学会信封形状的 agent 来说，这是两种不一致的错误形态，值得后续统一。
+
 ## 部署与回滚
 
 - 线上：容器 `xero-accounting-mcp-067`（18022），nginx 指向该端口。
