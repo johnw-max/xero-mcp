@@ -7081,10 +7081,76 @@ export class PostgresAccountingRepository implements AccountingRepository {
       return { mode: "CREATED", record };
     } catch (error) {
       await this.#safeRollback(client);
+      await this.#throwReservationHolderConflict(client, input, error);
       this.#throwAccountingCaseConstraint(error);
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * A coordinate refusal that hides who holds the coordinate is a dead end:
+   * the caller cannot resume the holding Case, cannot know when it frees, and
+   * ends up guessing Case ids. The holder is always another Case on the same
+   * tenant that this same binding could see through get_status, so naming it
+   * and its release time reveals nothing new — it just makes the refusal
+   * actionable. Runs after rollback on the same client.
+   */
+  async #throwReservationHolderConflict(
+    client: PoolClient,
+    input: CreateOrAdvanceAccountingCaseInput,
+    error: unknown,
+  ): Promise<void> {
+    if (!isPostgresConstraintViolation(error)) return;
+    if (String((error as { constraint?: unknown }).constraint) !== "accounting_case_active_business_reservation_overlap") {
+      return;
+    }
+    const hashes = [...new Set(input.compiled.operations
+      .map((operation) => operation.businessReservation.coordinateHash)
+      .filter((hash): hash is string => typeof hash === "string" && hash.length > 0))];
+    if (hashes.length === 0) return;
+    let holder: { case_id: string; case_version: unknown; target_session_expires_at: unknown } | undefined;
+    try {
+      const rows = await client.query(
+        `SELECT o.case_id, o.case_version, h.target_session_expires_at
+           FROM accounting_case_operations o
+           JOIN accounting_cases h
+             ON h.case_id = o.case_id AND h.current_version = o.case_version
+          WHERE o.tenant_id = $1
+            AND o.business_reservation_coordinate_hash = ANY($2::text[])
+            AND o.case_id <> $3
+            AND o.state IN ('PENDING', 'PREPARED', 'WRITE_IN_FLIGHT', 'READBACK_VERIFIED',
+                            'WRITE_UNCERTAIN', 'READBACK_MISMATCH', 'NOT_EXECUTED_AFTER_TARGET_EXPIRY')
+          ORDER BY h.target_session_expires_at DESC NULLS LAST
+          LIMIT 1`,
+        [input.binding.tenantId, hashes, input.compiled.caseId],
+      );
+      holder = rows.rows[0] as typeof holder;
+    } catch {
+      return; // fall through to the plain conflict; never mask the original error
+    }
+    if (!holder) return;
+    const expiresAt = holder.target_session_expires_at instanceof Date
+      ? holder.target_session_expires_at.toISOString()
+      : typeof holder.target_session_expires_at === "string"
+      ? holder.target_session_expires_at
+      : undefined;
+    throw new AppError(
+      "CONFLICT",
+      "This tenant already has an active Accounting Case claim for the provider business coordinate.",
+      {
+        httpStatus: 409,
+        details: {
+          reasonCodes: ["ACCOUNTING_CASE_BUSINESS_COORDINATE_ALREADY_RESERVED"],
+          providerMutationPossible: false,
+          holdingCaseId: holder.case_id,
+          ...(Number.isSafeInteger(Number(holder.case_version)) ? { holdingCaseVersion: Number(holder.case_version) } : {}),
+          ...(expiresAt ? { holdReleasesAt: expiresAt } : {}),
+          recoveryAction: "GET_CURRENT_CASE_STATUS",
+        },
+        cause: error,
+      },
+    );
   }
 
   async findVerifiedAccountingCaseContactIdentity(

@@ -66,16 +66,54 @@ function isSchemaValidationError(error: unknown): boolean {
   return candidate.name === "ZodError" && Array.isArray(candidate.issues);
 }
 
+/**
+ * A caller that is told only "something is invalid" cannot correct itself; it
+ * can only guess, and an agent guessing at a document shape burns turns while
+ * the ledger stays empty. The field paths are the caller's own request
+ * structure, so naming them leaks nothing the caller did not send. Values and
+ * Zod messages stay out: those can echo document contents back into a
+ * conversation transcript.
+ */
+function invalidRequestFields(error: unknown): string[] {
+  const issues = (error as { issues?: unknown }).issues;
+  if (!Array.isArray(issues)) return [];
+  const fields = new Set<string>();
+  for (const issue of issues) {
+    const path = (issue as { path?: unknown }).path;
+    if (!Array.isArray(path) || path.length === 0) continue;
+    let rendered = "";
+    let renderable = true;
+    for (const segment of path) {
+      if (typeof segment === "number" && Number.isSafeInteger(segment) && segment >= 0) {
+        rendered += `[${segment}]`;
+      } else if (typeof segment === "string" && /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u.test(segment)) {
+        rendered += rendered === "" ? segment : `.${segment}`;
+      } else {
+        renderable = false;
+        break;
+      }
+    }
+    if (renderable && rendered.length > 0 && rendered.length <= 128) fields.add(rendered);
+    if (fields.size >= 16) break;
+  }
+  return [...fields];
+}
+
 export function toSafeError(error: unknown): AppError {
   if (error instanceof AppError) {
     return error;
   }
 
   if (isSchemaValidationError(error)) {
+    const invalidFields = invalidRequestFields(error);
     return new AppError("VALIDATION_FAILED", "The accounting request failed deterministic validation.", {
       httpStatus: 422,
       retryable: false,
-      details: { reasonCodes: ["REQUEST_SCHEMA_INVALID"], providerMutationPossible: false },
+      details: {
+        reasonCodes: ["REQUEST_SCHEMA_INVALID"],
+        providerMutationPossible: false,
+        ...(invalidFields.length > 0 ? { invalidFields } : {}),
+      },
       cause: error,
     });
   }

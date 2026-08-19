@@ -10,6 +10,10 @@ export interface XeroMcpFailureEnvelope {
     provider_mutation_possible: boolean;
     recovery_action: string;
     reason_codes?: string[];
+    invalid_fields?: string[];
+    holding_case_id?: string;
+    holding_case_version?: number;
+    hold_releases_at?: string;
     operation_id?: string;
     case_id?: string;
     case_version?: number;
@@ -105,6 +109,7 @@ const SAFE_REASON_PREFIXES = [
   "PLANNED_",
   "PAYMENT_",
   "PROVIDER_",
+  "REQUEST_",
   "SOURCE_",
   "STANDING_DELEGATION_",
   "MULTIPLE_",
@@ -145,6 +150,20 @@ function safeOperationId(error: AppError): string | undefined {
   return typeof value === "string" && /^[A-Za-z0-9:_-]{1,256}$/u.test(value) ? value : undefined;
 }
 
+/**
+ * Field paths describe the caller's own request structure, so they are safe to
+ * echo back; anything that does not look like a plain path is dropped rather
+ * than trusted, keeping provider bodies and document values out of the reply.
+ */
+function safeRequestFields(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) =>
+    typeof item === "string" && /^[A-Za-z_][A-Za-z0-9_]*(?:\[[0-9]{1,6}\]|\.[A-Za-z_][A-Za-z0-9_]*)*$/u.test(item) &&
+      item.length <= 128
+      ? [item]
+      : []).slice(0, 16);
+}
+
 function safeIdentifier(value: unknown): string | undefined {
   return typeof value === "string" && /^[A-Za-z0-9:._/-]{1,256}$/u.test(value) ? value : undefined;
 }
@@ -180,6 +199,16 @@ export function xeroMcpFailureEnvelope(error: unknown): XeroMcpFailureEnvelope {
     ? "UNKNOWN" as const
     : undefined;
   const codes = reasonCodes(safe);
+  const invalidFields = safeRequestFields(safe.details?.invalidFields);
+  const holdingCaseId = safeIdentifier(safe.details?.holdingCaseId);
+  const holdingCaseVersion = typeof safe.details?.holdingCaseVersion === "number" &&
+    Number.isSafeInteger(safe.details.holdingCaseVersion) && safe.details.holdingCaseVersion > 0
+    ? safe.details.holdingCaseVersion
+    : undefined;
+  const holdReleasesAt = typeof safe.details?.holdReleasesAt === "string" &&
+    /^\d{4}-\d{2}-\d{2}T[0-9:.]+Z$/u.test(safe.details.holdReleasesAt)
+    ? safe.details.holdReleasesAt
+    : undefined;
   const operationId = safeOperationId(safe);
   const caseId = safeIdentifier(safe.details?.caseId);
   const caseVersion = typeof safe.details?.caseVersion === "number" &&
@@ -204,6 +233,10 @@ export function xeroMcpFailureEnvelope(error: unknown): XeroMcpFailureEnvelope {
       provider_mutation_possible: providerMutationPossible,
       recovery_action: explicitRecovery ?? fallback.recovery,
       ...(codes.length > 0 ? { reason_codes: codes } : {}),
+      ...(invalidFields.length > 0 ? { invalid_fields: invalidFields } : {}),
+      ...(holdingCaseId ? { holding_case_id: holdingCaseId } : {}),
+      ...(holdingCaseVersion ? { holding_case_version: holdingCaseVersion } : {}),
+      ...(holdReleasesAt ? { hold_releases_at: holdReleasesAt } : {}),
       ...(operationId ? { operation_id: operationId } : {}),
       ...(caseId ? { case_id: caseId } : {}),
       ...(caseVersion ? { case_version: caseVersion } : {}),
