@@ -63,3 +63,26 @@ XERO_AUTHORITY_REVISION=<paste here>
 ```
 
 Then restart your MCP container to load the new configuration.
+
+## Why the pin names the content hash (verified in production, 2026-08-19)
+
+The snapshot hash folds the publication revision into itself. A build pins the
+authority it was built to honour, so pinning the snapshot hash meant that any
+later publication invalidated every build's pin — including a republication of
+the *identical* authority. Since the revision may never decrease, a rollback has
+to republish the older content under a **higher** revision, which changed the
+hash, which left the rolled-back build serving `READ_ONLY` without saying why.
+Rollback was therefore not merely awkward but structurally impossible.
+
+The pin now names `contentHash`, which covers what the authority grants —
+provider, kill switch, canonical delegations — and nothing about when it was
+published. `readyz` exposes it as `authorityContentHash`.
+
+Verified against the live deployment: with the authority content unchanged and
+only the revision moved from 6 to 7, the server stayed `ready` /
+`WRITE_ENABLED` and reported the same `authorityContentHash`
+(`38490ba61f52…`). Under the old rule that same step would have failed the pin
+and dropped the server to read-only.
+
+Changing what the authority actually grants still changes the content hash, and
+still fails the pin closed — that protection is unchanged.
