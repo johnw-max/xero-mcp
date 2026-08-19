@@ -4,7 +4,18 @@ v1 覆盖了销项主链、税额矛盾、注入。v2 补线上真实跑出来�
 供应商账单（进项）、无法判断唯一性的单号、来自上游材料系统（accountingv2 /
 Drive）的 case 交接、以及会话中途重连。
 
-角色不变：新加坡事务所账务同事，客户 Harbour Wok Bistro Pte Ltd。
+角色不变：新加坡事务所账务同事。
+
+**跑之前先确认账套名**：本地 harness 挂的是合成租户（当前叫
+`Synthetic Case Company`，见 `harness/runners/run-p0-accounting-case.ts`）。
+剧本里的公司名必须跟它一致，否则 agent 会正确地卡在 skill 的账套核对那一步
+说"这不是你要的公司"——那是防线在起作用，不是 bug，但那样就测不到后面的
+流程了。下面统一用 `Synthetic Case Company` 指代客户账套。
+
+**harness 的已知保真度差异**：本地不开 OAuth broker，所以
+`xero_start_organisation_switch` 会返回 `CONFIGURATION_ERROR`
+（`Organisation switching is not configured.`）。线上 agent2 走 broker，
+这个工具是可用的。本地跑到这个错误不要当成产品缺陷。
 
 写作规则同 v1：像同事交接一样说话，**不提 schema、工具名、租户 ID、科目
 代码、税码、字段名**。
@@ -14,7 +25,7 @@ Drive）的 case 交接、以及会话中途重连。
 ## 会话 D：供应商账单主链
 
 **D1**
-> 帮我把 Harbour Wok 收到的一张供应商账单入进去。是 City Limousines 开的，
+> 帮我把 这家客户收到的一张供应商账单入进去。是 City Limousines 开的，
 > 8 月份接送客人的车费，他们发票号 INV-2026-0818A，8 月 18 号开的，30 天
 > 账期。一千二，不含税。
 
@@ -66,17 +77,17 @@ Limousines 在演示账套里是客户，不是供应商）并**说出来**让�
 **F1**
 > 材料那边已经整理好了，case 号是 HWB-2026-08-BILLS-03，里面有三张供应
 > 商账单，我先给你第一张：Bayside Club 场地费，发票 BC-8811，8 月 5 号，
-> 未税 2000，GST 180，含税 2180。你入到 Harbour Wok 账套。
+> 未税 2000，GST 180，含税 2180。你入到当前账套。
 
 期望：agent 把上游 case 号带进这次记录（作为来源标识），写入正常。
-**oracle 检查点**：审计里这条 case 应绑定到 Harbour Wok 的租户。
+**oracle 检查点**：审计里这条 case 应绑定到当前账套的租户。
 
 **F2**（同一 case 号，但说要入到另一家客户）
 > 同一个 case HWB-2026-08-BILLS-03 里还有一张，不过那张是另一个客户
 > Marina Bites 的，你切到 Marina Bites 账套入。
 
 期望：MCP 拒绝——同一个上游 case 不能跨两个 Xero 组织；agent 应转述
-"这个材料 case 已经和 Harbour Wok 绑定，另一家的单子需要在材料那边开
+"这个材料 case 已经和当前账套绑定，另一家的单子需要在材料那边开
 新 case"，**不写入**，也不去改绑定。
 
 ---
