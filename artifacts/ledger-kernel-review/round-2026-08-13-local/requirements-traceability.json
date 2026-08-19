@@ -1342,17 +1342,17 @@
               "obligation_id": "K-008-C02-P01",
               "invariant": "The repository atomically grants one request owner; the same request is resumable and a different request conflicts.",
               "target_path": "src/control-kernel/ledgerProviderWritePermit.ts",
-              "target_anchor": "consumeLedgerProviderWritePermit",
+              "target_anchor": "issueLedgerProviderWritePermit",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "state.consumed = true;",
-              "replacement": "state.consumed = false;",
+              "literal": "if (receipt.canonicalPayloadHash !== input.request.canonicalPayloadHash) {",
+              "replacement": "if (false) {",
               "test_files": [
                 "tests/ledger-provider-write-permit.test.ts",
                 "tests/provider-write-recovery.test.ts"
               ],
               "mutation_test_path": "tests/ledger-provider-write-permit.test.ts",
               "expected_failing_test_names": [
-                "allows only one synchronous presentation"
+                "rejects a tampered receipt, a request-payload mismatch and an adapter/action mismatch"
               ],
               "expected_failure_message_patterns": [
                 "expected"
@@ -1384,15 +1384,21 @@
               "target_path": "src/control-kernel/ledgerProviderWritePermit.ts",
               "target_anchor": "consumeLedgerProviderWritePermit",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "state.consumed = true;",
-              "replacement": "state.consumed = false;",
+              "literal": "if (state.consumed) throw permitDenied(\"CONSUMED\");",
+              "replacement": "if (false) throw permitDenied(\"CONSUMED\");",
               "test_files": [
                 "tests/ledger-provider-write-permit.test.ts",
                 "tests/provider-write-recovery.test.ts"
               ],
               "mutation_test_path": "tests/ledger-provider-write-permit.test.ts",
               "expected_failing_test_names": [
-                "allows only one synchronous presentation"
+                "poisons the permit after a wrong adapter operation claim",
+                "poisons the permit after a wrong payload claim",
+                "poisons the permit after a wrong tenant claim",
+                "poisons the permit after a wrong connection claim",
+                "poisons the permit after a wrong target session claim",
+                "allows only one synchronous presentation",
+                "allows only one consumer when two microtasks race"
               ],
               "expected_failure_message_patterns": [
                 "expected"
@@ -1790,17 +1796,17 @@
               "obligation_id": "K-010-C01-P01",
               "invariant": "The compiled-plan hash exactly binds access binding, Case, version and every compiled operation.",
               "target_path": "src/db/inMemoryRepository.ts",
-              "target_anchor": "sameAccountingCaseBinding",
+              "target_anchor": "async createOrAdvanceAccountingCase(",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "left.targetSessionHash === right.targetSessionHash &&",
-              "replacement": "true &&",
+              "literal": "input.compiledPlanHash !== accountingCasePlanHash(input.binding, input.compiled)",
+              "replacement": "false",
               "test_files": [
                 "tests/accounting-case-in-memory-repository-concurrency.test.ts",
                 "tests/xero-provider-write-permit-boundary.test.ts"
               ],
               "mutation_test_path": "tests/accounting-case-in-memory-repository-concurrency.test.ts",
               "expected_failing_test_names": [
-                "isolates the complete binding tuple without revealing or mutating another bound case"
+                "rejects a compiled plan hash that is not derived from the compiled case"
               ],
               "expected_failure_message_patterns": [
                 "expected"
