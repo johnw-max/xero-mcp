@@ -512,22 +512,40 @@ describe("fail-closed local acceptance mechanism", () => {
     }
   });
 
-  it("reports all precondition blockers and runs no build/test command", async () => {
+  it("reports every precondition blocker and still measures the candidate", async () => {
+    // Same pathology the independent-review-live removal addressed, one level up:
+    // traceability-closed fails on every run until a reviewer re-authors the
+    // artifact, so short-circuiting on it stopped every run before any real check
+    // executed. The operator learned nothing about the candidate while waiting on
+    // paperwork. Verification now runs regardless; the gate still fails closed, and
+    // an acceptance receipt is written only on an overall PASS, so nothing built
+    // under a failed run can be promoted.
     const executed: string[] = [];
     const outcome = await runStepsFailClosed(plan(), async (step) => {
       executed.push(step.id);
       return {
         id: step.id,
-        status: step.id === "traceability-closed" ? "FAIL" : "NOT_CAPTURED",
+        status: step.id === "traceability-closed" ? "FAIL" : "PASS",
       };
     });
     expect(outcome.status).toBe("FAIL");
-    expect(executed).toEqual([
+    expect(outcome.failed_step_id).toBe("traceability-closed");
+    expect(executed.slice(0, 3)).toEqual([
       "traceability-closed",
       "local-agent-evidence",
       "process-crash-restart-evidence",
     ]);
-    expect(executed).not.toContain("typecheck");
+    expect(executed).toContain("typecheck");
+    expect(executed).toContain("full-regression");
+  });
+
+  it("names the failing precondition even when a later verification step also fails", async () => {
+    const outcome = await runStepsFailClosed(plan(), async (step) => ({
+      id: step.id,
+      status: ["traceability-closed", "full-regression"].includes(step.id) ? "FAIL" : "PASS",
+    }));
+    expect(outcome.status).toBe("FAIL");
+    expect(outcome.failed_step_id).toBe("traceability-closed");
   });
 
   it("no longer carries a step that can only ever fail", () => {

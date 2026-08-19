@@ -1021,20 +1021,30 @@ export async function runStepsFailClosed(steps, executeStep) {
   const preconditions = steps.filter((step) => step.precondition === true);
   // Every precondition is now equal: the first one is no longer a distinguished
   // authority step that had to pass before anything else could run. Failing
-  // closed still means the first failing precondition stops the gate — what
-  // changed is that no step is guaranteed to fail before the others are reached.
+  // closed still means a failing precondition fails the gate — what changed is
+  // that no step is guaranteed to fail before the others are reached.
   for (const step of preconditions) {
     const result = await executeStep(step);
     results.push(result);
   }
   const failedPrecondition = results.find((result) => result.status !== "PASS");
-  if (failedPrecondition) {
-    return { status: "FAIL", failed_step_id: failedPrecondition.id, results };
-  }
+  // A precondition failing no longer skips verification. The preconditions
+  // validate review documentation - traceability closure, agent and crash
+  // evidence - while the steps below establish whether the candidate itself
+  // typechecks, passes its suite, and rebuilds to the same image. Those are
+  // different questions, and short-circuiting meant an incomplete review
+  // artifact left the candidate entirely unmeasured: the operator learned
+  // nothing about the code until the paperwork was finished. The gate still
+  // fails closed on either, and still reports the first failure.
   for (const step of steps.filter((candidate) => candidate.precondition !== true)) {
     const result = await executeStep(step);
     results.push(result);
-    if (result.status !== "PASS") return { status: "FAIL", failed_step_id: step.id, results };
+    if (result.status !== "PASS") {
+      return { status: "FAIL", failed_step_id: failedPrecondition?.id ?? step.id, results };
+    }
+  }
+  if (failedPrecondition) {
+    return { status: "FAIL", failed_step_id: failedPrecondition.id, results };
   }
   return { status: "PASS", failed_step_id: null, results };
 }
