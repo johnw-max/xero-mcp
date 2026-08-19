@@ -2431,10 +2431,10 @@
               "obligation_id": "K-013-C03-P01",
               "invariant": "Source archive, source manifest, bundle manifest and build identity are mechanically rebuilt from and match the immutable snapshot.",
               "target_path": "src/xeroRelease.ts",
-              "target_anchor": "xeroBuildIdentityHash",
+              "target_anchor": "parseXeroBuildIdentity",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "return hashObject(identity);",
-              "replacement": "return hashObject({});",
+              "literal": "if (hashObject(parsed) !== hashObject(expected)) {",
+              "replacement": "if (false) {",
               "test_files": [
                 "tests/xero-build-identity.test.ts",
                 "tests/runtime-readiness-evidence.test.ts"
@@ -2999,10 +2999,10 @@
               "obligation_id": "K-015-C03-P01",
               "invariant": "Canonical external control clauses exactly define all traceability claims and cannot be deleted or rewritten together with an implementation-authored summary.",
               "target_path": "scripts/review/traceability-validator-lib.mjs",
-              "target_anchor": "validateControlCatalog",
+              "target_anchor": "actualClauses",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "actualCatalogSha256 !== expectedControlCatalogSha256",
-              "replacement": "false",
+              "literal": "    if (JSON.stringify(stableValue([...actualClauses.entries()].sort())) !==",
+              "replacement": "    if (JSON.stringify(stableValue([...actualClauses.entries()].sort())) ===",
               "test_files": [
                 "tests/traceability-validator.test.ts",
                 "tests/independent-review-evidence.test.ts"
@@ -3479,17 +3479,17 @@
               "obligation_id": "K-015-C15-P01",
               "invariant": "The local Gate cannot self-close Gate L or substitute its own evidence for independent external approval.",
               "target_path": "scripts/review/traceability-validator-lib.mjs",
-              "target_anchor": "validateControlCatalog",
+              "target_anchor": "reviewer_execution_id",
               "mutation_operator": "REPLACE_EXACT_LITERAL",
-              "literal": "actualCatalogSha256 !== expectedControlCatalogSha256",
-              "replacement": "false",
+              "literal": "if (requirement.closure.reviewer_execution_id === requirement.closure.implementation_execution_id) {",
+              "replacement": "if (false) {",
               "test_files": [
                 "tests/traceability-validator.test.ts",
                 "tests/independent-review-evidence.test.ts"
               ],
               "mutation_test_path": "tests/traceability-validator.test.ts",
               "expected_failing_test_names": [
-                "requires the host-approved control root for release closure and rejects a candidate-selected digest"
+                "requires a source-bound independent closure and rejects implementer self-closure"
               ],
               "expected_failure_message_patterns": [
                 "expected"
