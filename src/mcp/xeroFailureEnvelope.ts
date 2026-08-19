@@ -11,6 +11,15 @@ export interface XeroMcpFailureEnvelope {
     recovery_action: string;
     reason_codes?: string[];
     invalid_fields?: string[];
+    /**
+     * Which prepared fields disagreed with the Case operation. The server has
+     * always computed these; not returning them left the caller with an opaque
+     * persistence failure and nothing to correct, and the observed response was
+     * to route around the control instead — offering to book under a different
+     * supplier, or to invent a registration number. Field names describe the
+     * caller's own proposal, so naming them discloses nothing.
+     */
+    mismatch_fields?: string[];
     holding_case_id?: string;
     holding_case_version?: number;
     hold_releases_at?: string;
@@ -200,6 +209,7 @@ export function xeroMcpFailureEnvelope(error: unknown): XeroMcpFailureEnvelope {
     : undefined;
   const codes = reasonCodes(safe);
   const invalidFields = safeRequestFields(safe.details?.invalidFields);
+  const mismatchFields = safeRequestFields(safe.details?.mismatchFields);
   const holdingCaseId = safeIdentifier(safe.details?.holdingCaseId);
   const holdingCaseVersion = typeof safe.details?.holdingCaseVersion === "number" &&
     Number.isSafeInteger(safe.details.holdingCaseVersion) && safe.details.holdingCaseVersion > 0
@@ -234,6 +244,7 @@ export function xeroMcpFailureEnvelope(error: unknown): XeroMcpFailureEnvelope {
       recovery_action: explicitRecovery ?? fallback.recovery,
       ...(codes.length > 0 ? { reason_codes: codes } : {}),
       ...(invalidFields.length > 0 ? { invalid_fields: invalidFields } : {}),
+      ...(mismatchFields.length > 0 ? { mismatch_fields: mismatchFields } : {}),
       ...(holdingCaseId ? { holding_case_id: holdingCaseId } : {}),
       ...(holdingCaseVersion ? { holding_case_version: holdingCaseVersion } : {}),
       ...(holdReleasesAt ? { hold_releases_at: holdReleasesAt } : {}),

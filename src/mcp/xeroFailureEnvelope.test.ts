@@ -78,3 +78,29 @@ describe("coordinate reservation conflicts reported to the Agent", () => {
     expect(envelope.error.hold_releases_at).toBeUndefined();
   });
 });
+
+describe("prepared-proposal mismatches reported to the Agent", () => {
+  it("names the fields that disagreed instead of returning an opaque persistence failure", () => {
+    // Observed live: a supplier bill for a new contact failed with only
+    // ACCOUNTING_CASE_PREPARATION_PAYLOAD_MISMATCH. The server knew exactly which
+    // fields disagreed and did not say, so the agent could not correct anything
+    // and instead proposed booking the bill under a different supplier.
+    const envelope = xeroMcpFailureEnvelope(new AppError("PERSISTENCE_FAILURE", "mismatch", {
+      httpStatus: 503,
+      details: {
+        reasonCodes: ["ACCOUNTING_CASE_PREPARATION_PAYLOAD_MISMATCH"],
+        mismatchFields: ["canonicalPayload.externalReference", "binding.targetSessionId"],
+      },
+    }));
+
+    expect(envelope.error.mismatch_fields)
+      .toEqual(["canonicalPayload.externalReference", "binding.targetSessionId"]);
+  });
+
+  it("drops anything in that list that is not a plain field path", () => {
+    const envelope = xeroMcpFailureEnvelope(new AppError("PERSISTENCE_FAILURE", "mismatch", {
+      details: { mismatchFields: ["ok.field", "<script>", "secret value with spaces"] },
+    }));
+    expect(envelope.error.mismatch_fields).toEqual(["ok.field"]);
+  });
+});
