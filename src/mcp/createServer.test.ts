@@ -73,7 +73,7 @@ describe("MCP tool surface", () => {
     const tools = await client.listTools();
 
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([...TOOL_ALLOWLIST].sort());
-    expect(tools.tools).toHaveLength(29);
+    expect(tools.tools).toHaveLength(30);
     expect(tools.tools.map((tool) => tool.name)).not.toEqual(expect.arrayContaining([
       "xero_prepare_manual_journal_draft",
       "xero_create_manual_journal_draft",
