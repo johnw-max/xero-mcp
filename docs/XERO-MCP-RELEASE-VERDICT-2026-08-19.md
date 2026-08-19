@@ -119,7 +119,7 @@ API 不会给的形状而长期未被发现：
 |---|---|---|
 | 内核评审轮次未完成 | 90 个 probe 里 57 个借用了别的 claim 的证据；18 个需求全部自标 `OPEN`，工件没有说谎，是这轮评审没做完 | 逐条补齐可实证的证伪 probe（改一行、跑指定测试、看它失败），不能靠手写 |
 | 评审分片容量上限 | 仓库长大后单个语义单元装不下分片 | 提高上限或按语义再切分 |
-| Drive（accountingv2）联动 | UAT agent 未挂 Drive MCP，agent 自述无该工具 | 需把 Drive MCP 挂到同一 agent 才能端到端测；本 MCP 侧的边界（上游 case 绑定）已单独验证通过 |
+| Drive（accountingv2）联动 | 在 agent2 workspace 里 `accountingv2` 的状态是"需授权"——不是没挂到 agent 上，而是这个 MCP 自身没有完成 OAuth 授权。本地也没有它的源码，无法本地连通 | 需由该 MCP 的负责人完成授权后才能端到端测。**本 MCP 侧的边界（同一上游 case 不得跨两个 Xero 组织）已单独实测通过**，见 ADR-002 |
 | 本地 harness 无 OAuth broker | 保真度差异，非缺陷 | `xero_start_organisation_switch` 本地返回 `CONFIGURATION_ERROR`，线上可用；已写入剧本备注 |
 | 公开远程仓库已含真实 Xero client id | 未决 | 轮换或接受，需人决策 |
 
