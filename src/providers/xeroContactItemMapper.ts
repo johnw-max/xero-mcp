@@ -214,27 +214,41 @@ export function mapContactUpdateToXero(prepared: ContactUpdatePrimitive): XeroSa
   };
 }
 
-function safePhone(value: unknown): SafeContactPhone | undefined {
+/**
+ * A provider array entry is one of three things, and the difference matters:
+ * a real value, a well-formed placeholder carrying no information, or something
+ * we cannot parse. Xero returns four empty phone blocks and two empty address
+ * blocks on every contact regardless of what was sent - that is how it says
+ * "nothing on file", not a sign the response is untrustworthy. Only the third
+ * case justifies rejecting the whole readback.
+ */
+type MappedEntry<T> = { kind: "VALUE"; value: T } | { kind: "EMPTY" } | { kind: "INVALID" };
+
+function safePhone(value: unknown): MappedEntry<SafeContactPhone> {
   const phone = providerObject(value);
   const phoneType = boundedString(phone?.phoneType, 16);
-  const phoneNumber = boundedString(phone?.phoneNumber, 50);
-  if (!phone || !phoneNumber || !phoneType || !["DEFAULT", "DDI", "MOBILE", "FAX", "OFFICE"].includes(phoneType)) {
-    return undefined;
+  if (!phone || !phoneType || !["DEFAULT", "DDI", "MOBILE", "FAX", "OFFICE"].includes(phoneType)) {
+    return { kind: "INVALID" };
   }
+  const phoneNumber = boundedString(phone.phoneNumber, 50);
+  if (!phoneNumber) return { kind: "EMPTY" };
   const areaCode = boundedString(phone.phoneAreaCode, 10);
   const countryCode = boundedString(phone.phoneCountryCode, 20);
   return {
-    phoneType: phoneType as SafeContactPhone["phoneType"],
-    phoneNumber,
-    ...(areaCode ? { areaCode } : {}),
-    ...(countryCode ? { countryCode } : {}),
+    kind: "VALUE",
+    value: {
+      phoneType: phoneType as SafeContactPhone["phoneType"],
+      phoneNumber,
+      ...(areaCode ? { areaCode } : {}),
+      ...(countryCode ? { countryCode } : {}),
+    },
   };
 }
 
-function safeAddress(value: unknown): SafeContactAddress | undefined {
+function safeAddress(value: unknown): MappedEntry<SafeContactAddress> {
   const address = providerObject(value);
   const addressType = boundedString(address?.addressType, 16);
-  if (!address || !addressType || !["POBOX", "STREET"].includes(addressType)) return undefined;
+  if (!address || !addressType || !["POBOX", "STREET"].includes(addressType)) return { kind: "INVALID" };
   const line1 = boundedString(address.addressLine1, 500);
   const line2 = boundedString(address.addressLine2, 500);
   const line3 = boundedString(address.addressLine3, 500);
@@ -244,7 +258,12 @@ function safeAddress(value: unknown): SafeContactAddress | undefined {
   const postalCode = boundedString(address.postalCode, 50);
   const country = boundedString(address.country, 50);
   const attentionTo = boundedString(address.attentionTo, 255);
+  if (!line1 && !line2 && !line3 && !line4 && !city && !region && !postalCode && !country && !attentionTo) {
+    return { kind: "EMPTY" };
+  }
   return {
+    kind: "VALUE",
+    value: {
     addressType: addressType as SafeContactAddress["addressType"],
     ...(line1 ? { line1 } : {}),
     ...(line2 ? { line2 } : {}),
@@ -255,20 +274,22 @@ function safeAddress(value: unknown): SafeContactAddress | undefined {
     ...(postalCode ? { postalCode } : {}),
     ...(country ? { country } : {}),
     ...(attentionTo ? { attentionTo } : {}),
+    },
   };
 }
 
 function strictMappedArray<T>(
   input: unknown,
-  mapper: (value: unknown) => T | undefined,
+  mapper: (value: unknown) => MappedEntry<T>,
 ): { valid: boolean; values?: T[] } {
   if (input === undefined) return { valid: true };
   if (!Array.isArray(input)) return { valid: false };
   const values: T[] = [];
   for (const entry of input) {
     const mapped = mapper(entry);
-    if (!mapped) return { valid: false };
-    values.push(mapped);
+    if (mapped.kind === "INVALID") return { valid: false };
+    if (mapped.kind === "EMPTY") continue;
+    values.push(mapped.value);
   }
   return { valid: true, ...(values.length > 0 ? { values } : {}) };
 }
@@ -331,6 +352,33 @@ function targetFromSnapshot(snapshot: SafeContactSnapshot): SafeContactTarget {
   return sortedContactTarget(target);
 }
 
+/**
+ * What we sent is a request; what comes back is the provider's representation of
+ * stored state. Demanding those be structurally identical asserts a property no
+ * provider guarantees - Xero alone defaults phone and address blocks we never
+ * sent. The invariant worth enforcing is that every field we did assert survived
+ * unchanged; fields we never asserted belong to the provider, not to us.
+ */
+function contactTargetMismatches(expected: SafeContactTarget, actual: SafeContactTarget): string[] {
+  const want = sortedContactTarget(expected);
+  const have = sortedContactTarget(actual);
+  const mismatches: string[] = [];
+  for (const key of Object.keys(want) as (keyof SafeContactTarget)[]) {
+    const asserted = want[key];
+    if (asserted === undefined) continue;
+    if (key === "phones" || key === "addresses") {
+      const present = (have[key] ?? []) as unknown[];
+      const missing = (asserted as unknown[]).some(
+        (entry) => !present.some((candidate) => stableStringify(candidate) === stableStringify(entry)),
+      );
+      if (missing) mismatches.push(`target.${key}`);
+      continue;
+    }
+    if (stableStringify(have[key]) !== stableStringify(asserted)) mismatches.push(`target.${key}`);
+  }
+  return mismatches;
+}
+
 export function verifyContactReadback(
   prepared: ContactCreatePrimitive,
   raw: unknown,
@@ -374,9 +422,7 @@ export function verifyContactReadback(
   ) {
     mismatches.push("contactNumber");
   }
-  if (stableStringify(targetFromSnapshot(snapshot)) !== stableStringify(sortedContactTarget(prepared.target))) {
-    mismatches.push("target");
-  }
+  mismatches.push(...contactTargetMismatches(prepared.target, targetFromSnapshot(snapshot)));
   return { verified: mismatches.length === 0, snapshot, mismatches };
 }
 

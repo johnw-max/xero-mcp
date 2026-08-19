@@ -530,7 +530,11 @@ export class XeroContactItemMutationService {
             });
             throw new AppError("READBACK_MISMATCH", "Xero readback does not match the confirmed mutation.", {
               httpStatus: 409,
-              details: { outcome: recovered.outcome, xeroObjectId: objectId, mismatches: verification.mismatches },
+              details: {
+                outcome: recovered.outcome,
+                xeroObjectId: objectId,
+                mismatchFields: verification.mismatches,
+              },
             });
           }
         }
@@ -542,7 +546,7 @@ export class XeroContactItemMutationService {
         throw new AppError("WRITE_RESULT_UNKNOWN", "The Xero object exists but exact readback was not verified.", {
           httpStatus: 502,
           retryable: false,
-          details: { xeroObjectId: objectId, mismatches: verification.mismatches },
+          details: { xeroObjectId: objectId, mismatchFields: verification.mismatches },
         });
       }
       const completed = await this.mutations.markReadbackVerified(context, {

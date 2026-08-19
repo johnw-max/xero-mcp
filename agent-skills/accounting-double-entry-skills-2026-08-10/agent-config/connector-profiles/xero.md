@@ -33,7 +33,7 @@ Map only mounted tools after the platform verifies the connection, tenant bindin
 
 ## Current evidence boundary
 
-The 0.4.0-rc.1 local release contract exposes exactly 28 public tools. The only mutation entry points are the three typed Accounting Case tools above; legacy object-specific prepare/create tools and browser approval are not public. All actual provider creates remain behind the embedded ledger-control kernel and a one-shot permit.
+The 0.4.0-rc.1 local release contract exposes exactly 29 public tools. The only mutation entry points are the three typed Accounting Case tools above; legacy object-specific prepare/create tools and browser approval are not public. All actual provider creates remain behind the embedded ledger-control kernel and a one-shot permit.
 
 The current Case compiler can plan basic contacts plus native Invoice, Bill and CreditNote objects in `DRAFT`. A Case is not a write receipt. Execution is successful only when each eligible operation has a provider object ID, a durable provider receipt and an exact matching read-back. Unknown outcomes prohibit blind or new-key retry; runtime may perform at most one controlled recovery in the provider-native idempotency window for the same request and same idempotency key under a durable single claim, then enters GET-only recovery. A model statement such as "written" without those receipts is not an accounting outcome.
 

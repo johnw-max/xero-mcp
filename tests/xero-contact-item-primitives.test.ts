@@ -508,8 +508,72 @@ describe("safe Xero contact primitives", () => {
       expectedCreatedId: "11111111-1111-4111-8111-111111111111",
     })).toMatchObject({
       verified: false,
-      mismatches: ["target"],
+      mismatches: ["target.name"],
     });
+  });
+
+  it("verifies a real Xero contact readback carrying the default empty phone and address blocks", () => {
+    // Xero returns four empty phone blocks and two empty address blocks on every
+    // contact, whatever was sent. Test doubles that echo the request never show
+    // this, so every contact write was scored WRITE_UNCERTAIN in production while
+    // the stored object was exactly correct.
+    const providerDefaults = {
+      phones: [
+        { phoneType: "DDI", phoneNumber: "", phoneAreaCode: "", phoneCountryCode: "" },
+        { phoneType: "DEFAULT", phoneNumber: "", phoneAreaCode: "", phoneCountryCode: "" },
+        { phoneType: "FAX", phoneNumber: "", phoneAreaCode: "", phoneCountryCode: "" },
+        { phoneType: "MOBILE", phoneNumber: "", phoneAreaCode: "", phoneCountryCode: "" },
+      ],
+      addresses: [
+        { addressType: "STREET", city: "", region: "", postalCode: "", country: "" },
+        { addressType: "POBOX", city: "", region: "", postalCode: "", country: "" },
+      ],
+    };
+    const prepared = prepareContactCreate({ name: "Westbrook Facilities" }, {
+      externalKey: "crm/supplier/77",
+      namespace: "acctdemo",
+      confirmationToken: "1122334455667788",
+    });
+    const raw = {
+      contactID: "278fd2b0-c2a7-4e1b-88d1-047253f74501",
+      name: "Westbrook Facilities",
+      contactNumber: prepared.externalReference,
+      updatedDateUTC: "2026-08-19T09:00:00.000Z",
+      ...providerDefaults,
+    };
+    const options = {
+      namespace: "acctdemo",
+      expectedCreatedId: "278fd2b0-c2a7-4e1b-88d1-047253f74501",
+    };
+    const snapshot = mapSafeContactReadback(raw, { namespace: "acctdemo" });
+    expect(snapshot).toBeDefined();
+    expect(snapshot).not.toHaveProperty("phones");
+    expect(snapshot).not.toHaveProperty("addresses");
+    expect(verifyContactReadback(prepared, raw, options)).toMatchObject({
+      verified: true,
+      mismatches: [],
+    });
+
+    // The protection this check exists for must still fire: a field we asserted
+    // coming back altered, and a provider entry we cannot parse at all.
+    expect(verifyContactReadback(prepared, { ...raw, name: "Westbrook Holdings" }, options))
+      .toMatchObject({ verified: false, mismatches: ["target.name"] });
+    expect(verifyContactReadback(prepared, {
+      ...raw,
+      phones: [{ phoneType: "SATELLITE", phoneNumber: "1" }],
+    }, options)).toMatchObject({ verified: false, mismatches: ["readback.invalid"] });
+
+    // A phone we did assert must not be silently dropped by the provider.
+    const withPhone = prepareContactCreate({
+      name: "Westbrook Facilities",
+      phones: [{ phone_type: "DEFAULT", phone_number: "65551234" }],
+    }, {
+      externalKey: "crm/supplier/77",
+      namespace: "acctdemo",
+      confirmationToken: "1122334455667788",
+    });
+    expect(verifyContactReadback(withPhone, raw, options))
+      .toMatchObject({ verified: false, mismatches: ["target.phones"] });
   });
 });
 
