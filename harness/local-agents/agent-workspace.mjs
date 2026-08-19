@@ -440,9 +440,9 @@ export async function buildToolContractEvidence(repoRoot) {
   } catch {
     throw new Error("TOOL_ALLOWLIST_INVALID_JSON");
   }
-  if (!Array.isArray(parsed?.tools) || parsed.tools.length !== 29 ||
+  if (!Array.isArray(parsed?.tools) || parsed.tools.length !== 30 ||
       parsed.tools.some((tool) => typeof tool !== "string" || !tool)) {
-    throw new Error("TOOL_ALLOWLIST_MUST_CONTAIN_29_TOOLS");
+    throw new Error("TOOL_ALLOWLIST_MUST_CONTAIN_30_TOOLS");
   }
   const schemaSources = await schemaSourceEntries(repoRoot);
   const schemaManifest = { tools: parsed.tools, sources: schemaSources };

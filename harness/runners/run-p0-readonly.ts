@@ -65,6 +65,7 @@ const PINNED_TOOL_SURFACE = [
   "xero_list_accounting_cases",
   "xero_list_invoices",
   "xero_list_credit_notes",
+  "xero_get_credit_note",
   "xero_list_payments",
   "xero_list_quotes",
   "xero_get_quote",
@@ -695,7 +696,7 @@ function evaluateConnection(options: {
     organisationFactPaths.includes("/result/baseCurrency") &&
     !JSON.stringify(callToolPayload(organisationExecution?.callToolResult)).includes(options.tenantId);
   const oracleResults = [
-    oracle("exact_29_tools", sameStringSet(options.listTools, PINNED_TOOL_SURFACE), options.listTools, [options.listToolsRef], "tools/list must equal the independent pinned 29-tool Accounting Case surface."),
+    oracle("exact_30_tools", sameStringSet(options.listTools, PINNED_TOOL_SURFACE), options.listTools, [options.listToolsRef], "tools/list must equal the independent pinned 30-tool Accounting Case surface."),
     oracle("connected_true", status?.connected === true, status?.connected ?? null, options.executions.get("connection_status")?.evidenceRefs ?? [], "Connection status must be true from parsed model-visible MCP output."),
     oracle("write_scope_absent", scopes.includes("xero.draft.write") === false && sameStringSet(scopes, ["xero.read"]), scopes, options.executions.get("connection_status")?.evidenceRefs ?? [], "The bound installation must expose only xero.read."),
     oracle("exact_org_id", targetEvidencePassed, {

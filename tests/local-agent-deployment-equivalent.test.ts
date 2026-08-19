@@ -138,8 +138,8 @@ describe("local deployment-equivalent Agent harness", () => {
     const workspace = await createAgentWorkspace(repoRoot);
     try {
       const toolContract = await buildToolContractEvidence(repoRoot);
-      expect(toolContract.tool_count).toBe(29);
-      expect(toolContract.tools).toHaveLength(29);
+      expect(toolContract.tool_count).toBe(30);
+      expect(toolContract.tools).toHaveLength(30);
       expect(toolContract.allowlist.sha256).toMatch(/^[a-f0-9]{64}$/u);
       expect(toolContract.schema.sha256).toMatch(/^[a-f0-9]{64}$/u);
       const evidence = {
@@ -158,13 +158,13 @@ describe("local deployment-equivalent Agent harness", () => {
     }
   });
 
-  it("keeps 29 backend tools but exposes only the typed Case profile to Luna", async () => {
+  it("keeps 30 backend tools but exposes only the typed Case profile to Luna", async () => {
     const contract = await buildToolContractEvidence(repoRoot);
-    expect(contract.tool_count).toBe(29);
+    expect(contract.tool_count).toBe(30);
     expect(contract.agent_profile).toEqual({
       profile_id: "xero-accounting-case-write-v1",
       enabled_tools: [...ACCOUNTING_CASE_AGENT_ENABLED_TOOLS],
-      backend_tool_count: 29,
+      backend_tool_count: 30,
     });
   });
 
