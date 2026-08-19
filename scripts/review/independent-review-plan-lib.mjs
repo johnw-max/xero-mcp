@@ -25,6 +25,22 @@ export const INDEPENDENT_REVIEW_MODEL = "gpt-5.6-sol";
 export const INDEPENDENT_REVIEW_REASONING_EFFORT = "xhigh";
 export const INDEPENDENT_REVIEW_HOST_CONTEXT_TOKEN_LIMIT = 400_000;
 const REVIEW_SYSTEM_AND_TOOL_TOKEN_RESERVE = 64 * 1024;
+/**
+ * The admission limit is denominated in tokens, but the payload is measured in
+ * bytes, so the two were being compared directly — one byte counted as one
+ * token. For the TypeScript in this repository a token is closer to three and a
+ * half bytes, which made the estimate roughly quadruple the truth and pushed
+ * the largest and most safety-critical file, src/db/postgresRepository.ts at
+ * ~444 KiB, past a budget it comfortably fits inside. The effect was that the
+ * review could not admit the very file where the reservation and binding guards
+ * live, and it got worse as the code grew.
+ *
+ * Two rather than three and a half: still well under the real ratio, so the
+ * estimate stays deliberately pessimistic and a shard cannot overrun the
+ * reviewer's context, while no longer rejecting content that fits. The byte
+ * ceilings below are unchanged and remain authoritative.
+ */
+const REVIEW_CONSERVATIVE_BYTES_PER_TOKEN = 2;
 const REVIEW_OUTPUT_TOKEN_RESERVE = 32 * 1024;
 const REVIEW_PROMPT_AND_ENVELOPE_BYTE_RESERVE = 16 * 1024;
 
@@ -510,7 +526,8 @@ async function capacity(identityByPath, contentByPath, paths, edgeCount = 0, pro
   // The repository admission policy deliberately uses one UTF-8 byte as one
   // input token. This is an upper bound, not a claim about a vendor tokenizer
   // or a model's advertised context window.
-  const conservativeInputTokens = REVIEW_SYSTEM_AND_TOOL_TOKEN_RESERVE + serializedPayloadBytes;
+  const conservativeInputTokens = REVIEW_SYSTEM_AND_TOOL_TOKEN_RESERVE +
+    Math.ceil(serializedPayloadBytes / REVIEW_CONSERVATIVE_BYTES_PER_TOKEN);
   return {
     file_count: files.length,
     total_bytes: files.reduce((sum, file) => sum + file.size_bytes, 0),
@@ -537,7 +554,8 @@ async function semanticCapacity(identityByPath, semanticCatalog, semanticUnitIds
     edge_count: edgeCount,
     probe_count: probeCount,
   }), "utf8") + REVIEW_PROMPT_AND_ENVELOPE_BYTE_RESERVE;
-  const conservativeInputTokens = REVIEW_SYSTEM_AND_TOOL_TOKEN_RESERVE + serializedPayloadBytes;
+  const conservativeInputTokens = REVIEW_SYSTEM_AND_TOOL_TOKEN_RESERVE +
+    Math.ceil(serializedPayloadBytes / REVIEW_CONSERVATIVE_BYTES_PER_TOKEN);
   return {
     file_count: files.length,
     total_bytes: semanticUnitIds.reduce((sum, unitId) =>
