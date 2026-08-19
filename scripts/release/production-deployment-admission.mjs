@@ -637,6 +637,35 @@ export function assertPulledProductionImageIdentity(inspection, env, ociReceipt)
       !envValues.includes(`XERO_APPROVED_CONTROL_CATALOG_SHA256=${env.XERO_APPROVED_CONTROL_CATALOG_SHA256}`)) {
     throw new Error("PRODUCTION_IMAGE_CONTROL_CATALOG_ENV_MISMATCH");
   }
+  // The image bakes in the identity of the source it was built from, and that is
+  // what the server publishes as its runtime attestation. A deployment env file
+  // supplying the same variable silently wins over the baked value, so the server
+  // would attest to a build it is not running and have no way to notice. The image
+  // is digest-pinned above, which makes its own value the authority here.
+  const embeddedIdentityEntry = envValues.find((value) => value.startsWith("XERO_BUILD_IDENTITY_JSON="));
+  if (!embeddedIdentityEntry) throw new Error("PRODUCTION_IMAGE_BUILD_IDENTITY_ENV_MISSING");
+  let embeddedIdentity;
+  try {
+    embeddedIdentity = JSON.parse(embeddedIdentityEntry.slice("XERO_BUILD_IDENTITY_JSON=".length));
+  } catch {
+    throw new Error("PRODUCTION_IMAGE_BUILD_IDENTITY_ENV_INVALID");
+  }
+  if (embeddedIdentity?.acceptanceSourceSha256 !== ociReceipt.acceptanceSourceSha256 ||
+      embeddedIdentity?.sourceArchiveSha256 !== ociReceipt.sourceArchiveSha256) {
+    throw new Error("PRODUCTION_IMAGE_BUILD_IDENTITY_ENV_MISMATCH");
+  }
+  if (env.XERO_BUILD_IDENTITY_JSON !== undefined) {
+    let overrideIdentity;
+    try {
+      overrideIdentity = JSON.parse(env.XERO_BUILD_IDENTITY_JSON);
+    } catch {
+      throw new Error("PRODUCTION_BUILD_IDENTITY_OVERRIDE_INVALID");
+    }
+    if (JSON.stringify(overrideIdentity, Object.keys(overrideIdentity).sort()) !==
+        JSON.stringify(embeddedIdentity, Object.keys(embeddedIdentity).sort())) {
+      throw new Error("PRODUCTION_BUILD_IDENTITY_OVERRIDE_MISMATCH");
+    }
+  }
   return true;
 }
 

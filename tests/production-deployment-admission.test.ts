@@ -315,6 +315,10 @@ describe("production deployment admission", () => {
       acceptanceSourceSha256: "2".repeat(64),
       sourceArchiveSha256: "3".repeat(64),
     };
+    const embeddedIdentity = JSON.stringify({
+      acceptanceSourceSha256: receipt.acceptanceSourceSha256,
+      sourceArchiveSha256: receipt.sourceArchiveSha256,
+    });
     const inspection = {
       RepoDigests: [env.APP_IMAGE],
       Id: config,
@@ -325,12 +329,46 @@ describe("production deployment admission", () => {
           "io.zcloak.xero.source-archive-sha256": receipt.sourceArchiveSha256,
           "io.zcloak.xero.approved-control-catalog-sha256": catalog,
         },
-        Env: [`XERO_APPROVED_CONTROL_CATALOG_SHA256=${catalog}`],
+        Env: [
+          `XERO_APPROVED_CONTROL_CATALOG_SHA256=${catalog}`,
+          `XERO_BUILD_IDENTITY_JSON=${embeddedIdentity}`,
+        ],
       },
     };
     expect(assertPulledProductionImageIdentity(inspection, env, receipt)).toBe(true);
     expect(() => assertPulledProductionImageIdentity({ ...inspection, RepoDigests: [] }, env, receipt))
       .toThrow("PRODUCTION_IMAGE_REPODIGEST_MISMATCH");
+
+    // The server publishes its build identity from this variable. A deployment env
+    // file supplying it silently wins over the value the image baked in, so the
+    // running server would attest to a build it is not executing.
+    const stripped = {
+      ...inspection,
+      Config: { ...inspection.Config, Env: [`XERO_APPROVED_CONTROL_CATALOG_SHA256=${catalog}`] },
+    };
+    expect(() => assertPulledProductionImageIdentity(stripped, env, receipt))
+      .toThrow("PRODUCTION_IMAGE_BUILD_IDENTITY_ENV_MISSING");
+    const foreign = {
+      ...inspection,
+      Config: {
+        ...inspection.Config,
+        Env: [
+          `XERO_APPROVED_CONTROL_CATALOG_SHA256=${catalog}`,
+          `XERO_BUILD_IDENTITY_JSON=${JSON.stringify({ acceptanceSourceSha256: "9".repeat(64), sourceArchiveSha256: receipt.sourceArchiveSha256 })}`,
+        ],
+      },
+    };
+    expect(() => assertPulledProductionImageIdentity(foreign, env, receipt))
+      .toThrow("PRODUCTION_IMAGE_BUILD_IDENTITY_ENV_MISMATCH");
+    expect(assertPulledProductionImageIdentity(inspection, { ...env, XERO_BUILD_IDENTITY_JSON: embeddedIdentity }, receipt))
+      .toBe(true);
+    expect(() => assertPulledProductionImageIdentity(inspection, {
+      ...env,
+      XERO_BUILD_IDENTITY_JSON: JSON.stringify({
+        acceptanceSourceSha256: "8".repeat(64),
+        sourceArchiveSha256: "7".repeat(64),
+      }),
+    }, receipt)).toThrow("PRODUCTION_BUILD_IDENTITY_OVERRIDE_MISMATCH");
   });
 
   it("captures the exact authority revision, write mode, and standing-delegation bytes", () => {
