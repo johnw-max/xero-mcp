@@ -105,7 +105,14 @@ function completePageProblems(
   if (evidence.omittedInvalid !== 0) problems.push("PROVIDER_ROWS_OMITTED_INVALID");
   if ((evidence.omittedOverflow ?? 0) !== 0) problems.push("PROVIDER_ROWS_OMITTED_OVERFLOW");
   if (evidence.hasNextPageIsEstimated) problems.push("PROVIDER_PAGINATION_ESTIMATED");
-  if (!Number.isInteger(evidence.providerPageCount) || (evidence.providerPageCount ?? 0) < requestedPage) {
+  // Xero reports pageCount 0 / itemCount 0 for a filter that matches nothing
+  // (e.g. the first bill ever for a supplier). That is a complete, exact
+  // answer, not a broken one — only reject a page count that is missing or
+  // that contradicts the page we asked for when rows actually came back.
+  const emptyExactHistory = evidence.providerPageCount === 0 && evidence.providerItemCount === 0 &&
+    requestedPage === 1 && rowCount === 0;
+  if (!emptyExactHistory &&
+      (!Number.isInteger(evidence.providerPageCount) || (evidence.providerPageCount ?? 0) < requestedPage)) {
     problems.push("PROVIDER_PAGE_COUNT_MISSING_OR_INVALID");
   }
   if (!Number.isInteger(evidence.providerItemCount) || (evidence.providerItemCount ?? -1) < 0) {

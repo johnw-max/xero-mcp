@@ -234,6 +234,54 @@ describe("Xero provider business-coordinate history", () => {
     });
   }
 
+  it("treats Xero's exact empty history (pageCount 0 / itemCount 0) as a complete NONE, not as invalid", async () => {
+    // Production incident: the first-ever bill for a supplier. Xero answers a
+    // contact+ACCPAY walk with pageCount 0 / itemCount 0 and no rows. That is
+    // an exact, exhausted read; rejecting it as PROVIDER_PAGE_COUNT_MISSING_OR_INVALID
+    // made every new-supplier bill unwritable.
+    const reader = readerFor("SUPPLIER_BILL");
+    vi.mocked(reader.listInvoices).mockResolvedValueOnce({
+      invoices: [],
+      pagination: {
+        page: 1,
+        pageSize: 100,
+        returned: 0,
+        providerPageCount: 0,
+        providerItemCount: 0,
+        hasNextPage: false,
+        hasNextPageIsEstimated: false,
+        omittedInvalid: 0,
+      },
+    });
+    await expect(lookupXeroProviderBusinessCoordinate({
+      reader,
+      principal: context,
+      operation: operation("SUPPLIER_BILL"),
+    })).resolves.toMatchObject({ state: "NONE" });
+  });
+
+  it("still rejects a page count that contradicts a page that returned rows", async () => {
+    const reader = readerFor("SUPPLIER_BILL");
+    vi.mocked(reader.listInvoices).mockResolvedValueOnce({
+      invoices: [invoiceSnapshot("ACCPAY", "OTHER-1")],
+      pagination: {
+        page: 1,
+        pageSize: 100,
+        returned: 1,
+        providerPageCount: 0,
+        providerItemCount: 0,
+        hasNextPage: false,
+        hasNextPageIsEstimated: false,
+        omittedInvalid: 0,
+      },
+    });
+    await expect(lookupXeroProviderBusinessCoordinate({
+      reader,
+      principal: context,
+      operation: operation("SUPPLIER_BILL"),
+    })).resolves.toMatchObject({ state: "INCOMPLETE" });
+  });
+
   it("fails closed as INCOMPLETE when provider pagination cannot prove exhaustion", async () => {
     const reader = readerFor("SALES_INVOICE");
     vi.mocked(reader.listInvoices).mockResolvedValueOnce({

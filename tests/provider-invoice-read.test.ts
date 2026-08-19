@@ -103,7 +103,7 @@ describe("provider invoice history reads", () => {
       true,
       undefined,
       4,
-      true,
+      false,
       25,
       "ACME",
     );
@@ -141,6 +141,41 @@ describe("provider invoice history reads", () => {
       },
     });
     expect(result.invoices[0]).not.toHaveProperty("lines");
+  });
+
+  it("always requests summaryOnly=false so Xero returns exact pagination for the history walk", async () => {
+    // Production incident: with summaryOnly=true, Xero's Invoices endpoint
+    // omits response.body.pagination entirely (confirmed empirically against
+    // the live API), which forced the business-coordinate history walk in
+    // xeroBusinessCoordinateHistory.ts to fail closed with
+    // PROVIDER_PAGINATION_ESTIMATED / PROVIDER_ITEM_COUNT_MISSING_OR_INVALID
+    // on every supplier-bill write. Passing summaryOnly=false restores the
+    // exact pageCount/itemCount Xero already returns for this query shape.
+    const getInvoices = vi.fn().mockResolvedValue({
+      body: { invoices: [], pagination: { page: 1, pageSize: 100, pageCount: 1, itemCount: 0 } },
+      response: { headers: {} },
+    });
+    const provider = providerWithClient({ accountingApi: { getInvoices } });
+
+    await provider.listInvoices("actor-a", listInvoicesSchema.parse({ page_size: 100 }));
+
+    expect(getInvoices).toHaveBeenCalledWith(
+      "tenant-a",
+      undefined,
+      undefined,
+      "Date DESC",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      1,
+      false,
+      undefined,
+      4,
+      false,
+      100,
+      undefined,
+    );
   });
 
   it("does not turn Xero's summary-only attachment omission into a false value", async () => {

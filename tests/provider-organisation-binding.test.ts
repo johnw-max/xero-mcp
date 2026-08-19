@@ -86,4 +86,44 @@ describe("provider organisation binding", () => {
     });
     expect(getOrganisations).toHaveBeenCalledWith("tenant-bound");
   });
+
+  it("normalises the lock dates Xero actually returns into calendar strings", async () => {
+    // The Xero SDK deserialises these two into Date objects. Every consumer
+    // downstream treats them as YYYY-MM-DD strings: the case target schema
+    // rejects anything else outright, and the period-lock guard compares them
+    // with <=, which on a Date silently compares against "Tue Jun 30 2026...".
+    const getOrganisations = vi.fn().mockResolvedValue({
+      body: {
+        organisations: [{
+          organisationID: "tenant-bound",
+          name: "Bound organisation",
+          periodLockDate: new Date("2026-06-30T00:00:00.000Z"),
+          endOfYearLockDate: new Date("2025-12-31T00:00:00.000Z"),
+        }],
+      },
+    });
+    const provider = providerWithClient({ accountingApi: { getOrganisations } });
+
+    const organisation = await provider.getOrganisation("actor-a");
+
+    expect(organisation.periodLockDate).toBe("2026-06-30");
+    expect(organisation.endOfYearLockDate).toBe("2025-12-31");
+  });
+
+  it("drops a lock date it cannot read rather than passing an unusable value on", async () => {
+    const getOrganisations = vi.fn().mockResolvedValue({
+      body: {
+        organisations: [{
+          organisationID: "tenant-bound",
+          name: "Bound organisation",
+          periodLockDate: "not a date at all",
+        }],
+      },
+    });
+    const provider = providerWithClient({ accountingApi: { getOrganisations } });
+
+    const organisation = await provider.getOrganisation("actor-a");
+
+    expect(organisation.periodLockDate).toBeUndefined();
+  });
 });

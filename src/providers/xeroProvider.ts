@@ -660,8 +660,14 @@ export class XeroAccountingProvider implements AccountingProvider {
       if (organisation.salesTaxPeriod) summary.salesTaxPeriod = String(organisation.salesTaxPeriod);
       if (organisation.defaultSalesTax) summary.defaultSalesTax = organisation.defaultSalesTax;
       if (organisation.defaultPurchasesTax) summary.defaultPurchasesTax = organisation.defaultPurchasesTax;
-      if (organisation.periodLockDate) summary.periodLockDate = organisation.periodLockDate;
-      if (organisation.endOfYearLockDate) summary.endOfYearLockDate = organisation.endOfYearLockDate;
+      // Xero hands these back as Date objects, not the calendar strings the rest
+      // of the summary carries. Passing them through raw fails schema validation
+      // for the whole target, and the lock-date guard downstream compares them as
+      // strings — so an unnormalised value silently decides period locks wrong.
+      const periodLockDate = xeroDate(organisation.periodLockDate);
+      if (periodLockDate) summary.periodLockDate = periodLockDate;
+      const endOfYearLockDate = xeroDate(organisation.endOfYearLockDate);
+      if (endOfYearLockDate) summary.endOfYearLockDate = endOfYearLockDate;
       if (typeof organisation.isDemoCompany === "boolean") summary.isDemoCompany = organisation.isDemoCompany;
       if (organisation.organisationStatus) summary.organisationStatus = organisation.organisationStatus;
       return summary;
@@ -911,7 +917,16 @@ export class XeroAccountingProvider implements AccountingProvider {
           input.include_archived,
           undefined,
           4,
-          true,
+          // summaryOnly must be false (or omitted): empirically, Xero's
+          // Invoices endpoint drops response.body.pagination entirely
+          // (no pageCount/itemCount at all, not even estimated) whenever
+          // summaryOnly=true, regardless of page/pageSize/includeArchived.
+          // With it false the same query returns exact pageCount/itemCount,
+          // which the provider-business-coordinate history walk requires to
+          // ever leave PROVIDER_PAGINATION_ESTIMATED /
+          // PROVIDER_ITEM_COUNT_MISSING_OR_INVALID. mapInvoiceSummary already
+          // handles both shapes (see its hasAttachments branch below).
+          false,
           input.page_size,
           input.search_term,
         );
