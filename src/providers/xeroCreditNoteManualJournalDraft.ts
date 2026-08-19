@@ -16,6 +16,7 @@ import {
   type CanonicalManualJournalDraftLine,
 } from "../domain/xeroCreditNoteManualJournalDraft.js";
 import { hashObject } from "../security/hash.js";
+import { xeroProviderDateOnly } from "./xeroProviderDate.js";
 
 const PROVIDER_LINE_AMOUNT_TYPE: Readonly<Record<CanonicalDraftLineAmountType, LineAmountTypes>> = {
   EXCLUSIVE: LineAmountTypes.Exclusive,
@@ -315,7 +316,7 @@ export function mapCreditNoteDraftReadback(
     const creditNoteId = providerUuid(creditNote?.creditNoteID);
     const contact = providerRecord(creditNote?.contact);
     const contactId = providerUuid(contact?.contactID);
-    const creditNoteDate = providerText(creditNote?.date, 10);
+    const creditNoteDate = providerText(xeroProviderDateOnly(creditNote?.date), 10);
     const currency = providerText(creditNote?.currencyCode, 3);
     const reference = providerText(
       expectedAuthoritativeProviderField === "CREDIT_NOTE_NUMBER"
@@ -447,7 +448,7 @@ export function mapManualJournalDraftReadback(
   try {
     const journal = providerRecord(input);
     const manualJournalId = providerUuid(journal?.manualJournalID);
-    const journalDate = providerText(journal?.date, 10);
+    const journalDate = providerText(xeroProviderDateOnly(journal?.date), 10);
     const narration = providerText(journal?.narration, 255);
     const mappedLines = mapJournalLines(journal?.journalLines);
     if (

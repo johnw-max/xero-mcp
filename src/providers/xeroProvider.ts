@@ -88,6 +88,7 @@ import {
   type PurchaseOrderSnapshot,
   type QuoteSnapshot,
 } from "./xeroExtendedReadMapper.js";
+import { xeroProviderDate as xeroDate } from "./xeroProviderDate.js";
 
 type XeroInvoice = InstanceType<typeof Invoice>;
 type XeroCreditNote = InstanceType<typeof CreditNote>;
@@ -131,16 +132,6 @@ function decimal(value: number | undefined): string | undefined {
 function boundedProviderText(value: unknown, maxLength = 512): string | undefined {
   if (typeof value !== "string" || value.length === 0) return undefined;
   return value.slice(0, maxLength);
-}
-
-function xeroDate(value: unknown): string | undefined {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
-  if (typeof value !== "string") return undefined;
-  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
-  const match = /^\/Date\((-?\d+)/.exec(value);
-  if (!match?.[1]) return undefined;
-  const parsed = new Date(Number(match[1]));
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString().slice(0, 10);
 }
 
 function accountingInvoiceType(value: unknown): InvoiceType | undefined {

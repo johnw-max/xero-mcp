@@ -450,6 +450,63 @@ describe("Quote and purchase-order draft schemas", () => {
     });
   });
 
+  it("accepts a native Date object for date fields exactly like the equivalent plain string (live Xero returns Date, not string, for these fields)", () => {
+    const quote = buildQuoteDraftPrimitive(quoteInput);
+    const purchaseOrder = buildPurchaseOrderDraftPrimitive(purchaseOrderInput);
+
+    const quoteDateVariants = [
+      { ...quoteReadback(), date: new Date("2026-08-07T00:00:00.000Z") },
+      { ...quoteReadback(), expiryDate: new Date("2026-08-21T00:00:00.000Z") },
+      {
+        ...quoteReadback(),
+        date: new Date("2026-08-07T00:00:00.000Z"),
+        expiryDate: new Date("2026-08-21T00:00:00.000Z"),
+      },
+    ];
+    for (const candidate of quoteDateVariants) {
+      expect(mapQuoteDraftReadback(candidate)).toMatchObject({
+        ok: true,
+        snapshot: {
+          objectType: "QUOTE",
+          quoteId,
+          canonicalPayload: { quoteDate: "2026-08-07", expiryDate: "2026-08-21" },
+        },
+      });
+      expect(verifyQuoteDraftReadback(quoteId, quote.canonicalPayload, candidate)).toMatchObject({
+        ok: true,
+        readbackCanonicalPayloadHash: quote.canonicalPayloadHash,
+      });
+    }
+
+    const purchaseOrderDateVariants = [
+      { ...purchaseOrderReadback(), date: new Date("2026-08-07T00:00:00.000Z") },
+      { ...purchaseOrderReadback(), expectedArrivalDate: new Date("2026-08-14T00:00:00.000Z") },
+      { ...purchaseOrderReadback(), deliveryDate: new Date("2026-08-21T00:00:00.000Z") },
+      {
+        ...purchaseOrderReadback(),
+        date: new Date("2026-08-07T00:00:00.000Z"),
+        expectedArrivalDate: new Date("2026-08-14T00:00:00.000Z"),
+        deliveryDate: new Date("2026-08-21T00:00:00.000Z"),
+      },
+    ];
+    for (const candidate of purchaseOrderDateVariants) {
+      expect(mapPurchaseOrderDraftReadback(candidate)).toMatchObject({
+        ok: true,
+        snapshot: {
+          objectType: "PURCHASE_ORDER",
+          purchaseOrderId,
+          canonicalPayload: {
+            purchaseOrderDate: "2026-08-07",
+            expectedArrivalDate: "2026-08-14",
+            deliveryDate: "2026-08-21",
+          },
+        },
+      });
+      expect(verifyPurchaseOrderDraftReadback(purchaseOrderId, purchaseOrder.canonicalPayload, candidate))
+        .toMatchObject({ ok: true, readbackCanonicalPayloadHash: purchaseOrder.canonicalPayloadHash });
+    }
+  });
+
   it("requires provider lineAmount while tolerating normal currency rounding", () => {
     const quote = buildQuoteDraftPrimitive(quoteInput);
     const raw = quoteReadback();

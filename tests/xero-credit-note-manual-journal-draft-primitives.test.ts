@@ -503,6 +503,43 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
       .toMatchObject({ ok: true, readbackCanonicalPayloadHash: journal.canonicalPayloadHash });
   });
 
+  it("accepts a native Date object for date fields exactly like the equivalent plain string (live Xero returns Date, not string, for CreditNote.date and ManualJournal.date)", () => {
+    const credit = buildCreditNoteDraftPrimitive(creditNoteInput);
+    const journal = buildManualJournalDraftPrimitive(manualJournalInput);
+    const creditNoteWithDateObject = {
+      ...creditNoteReadback(),
+      date: new Date("2026-08-07T00:00:00.000Z"),
+    };
+    const journalWithDateObject = {
+      ...manualJournalReadback(),
+      date: new Date("2026-07-31T00:00:00.000Z"),
+    };
+
+    expect(mapCreditNoteDraftReadback(
+      creditNoteWithDateObject,
+      credit.canonicalPayload.authoritativeProviderField,
+    )).toMatchObject({
+      ok: true,
+      snapshot: {
+        objectType: "CREDIT_NOTE",
+        creditNoteId,
+        canonicalPayload: { creditNoteDate: "2026-08-07" },
+      },
+    });
+    expect(mapManualJournalDraftReadback(journalWithDateObject)).toMatchObject({
+      ok: true,
+      snapshot: {
+        objectType: "MANUAL_JOURNAL",
+        manualJournalId,
+        canonicalPayload: { journalDate: "2026-07-31" },
+      },
+    });
+    expect(verifyCreditNoteDraftReadback(creditNoteId, credit.canonicalPayload, creditNoteWithDateObject))
+      .toMatchObject({ ok: true, readbackCanonicalPayloadHash: credit.canonicalPayloadHash });
+    expect(verifyManualJournalDraftReadback(manualJournalId, journal.canonicalPayload, journalWithDateObject))
+      .toMatchObject({ ok: true, readbackCanonicalPayloadHash: journal.canonicalPayloadHash });
+  });
+
   it("fails exact verification for object IDs, statuses, types, contacts, dates, currencies, references, and every line field", () => {
     const credit = buildCreditNoteDraftPrimitive(creditNoteInput);
     const journal = buildManualJournalDraftPrimitive(manualJournalInput);

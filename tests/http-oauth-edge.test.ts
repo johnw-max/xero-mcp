@@ -24,7 +24,7 @@ import {
   type LedgerAuthoritySnapshot,
 } from "../src/domain/ledgerAuthority.js";
 import { XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION } from "../src/policy/xeroAccountingCaseProviderContract.js";
-import { XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION } from "../src/policy/xeroSingaporeAccountingPolicy.js";
+import { XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION } from "../src/policy/xeroDeclaredLedgerPolicy.js";
 
 const issuer = "https://xero-mcp.example.test";
 const compatibleRecoveryProjection = {
@@ -32,7 +32,7 @@ const compatibleRecoveryProjection = {
   activeCaseCount: 0,
   storedPolicyProjectionVersions: [],
   storedProviderProjectionVersions: [],
-  requiredPolicyProjectionVersion: XERO_SINGAPORE_ACCOUNTING_POLICY_PROJECTION_VERSION,
+  requiredPolicyProjectionVersion: XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION,
   requiredProviderProjectionVersion: XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION,
 };
 const notRequiredFirmGovernance = {

@@ -19,6 +19,7 @@ import {
   type PrepareQuoteDraftInput,
 } from "../domain/xeroQuotePurchaseOrderDraft.js";
 import { hashObject } from "../security/hash.js";
+import { xeroProviderDateOnly } from "./xeroProviderDate.js";
 
 const QUOTE_LINE_AMOUNT_TYPES: Readonly<Record<CanonicalLineAmountType, QuoteLineAmountTypes>> = {
   EXCLUSIVE: QuoteLineAmountTypes.EXCLUSIVE,
@@ -299,8 +300,8 @@ export function mapQuoteDraftReadback(
     const quoteId = providerUuid(quote?.quoteID);
     const contact = providerRecord(quote?.contact);
     const contactId = providerUuid(contact?.contactID);
-    const quoteDate = providerTrimmedString(quote?.date, 10);
-    const expiryDate = providerTrimmedString(quote?.expiryDate, 10);
+    const quoteDate = providerTrimmedString(xeroProviderDateOnly(quote?.date), 10);
+    const expiryDate = providerTrimmedString(xeroProviderDateOnly(quote?.expiryDate), 10);
     const currency = providerTrimmedString(quote?.currencyCode, 3);
     const reference = providerTrimmedString(quote?.reference, 255);
     const lineAmountType = quoteLineAmountType(quote?.lineAmountTypes);
@@ -349,13 +350,13 @@ export function mapPurchaseOrderDraftReadback(
     const purchaseOrderId = providerUuid(purchaseOrder?.purchaseOrderID);
     const contact = providerRecord(purchaseOrder?.contact);
     const contactId = providerUuid(contact?.contactID);
-    const purchaseOrderDate = providerTrimmedString(purchaseOrder?.date, 10);
+    const purchaseOrderDate = providerTrimmedString(xeroProviderDateOnly(purchaseOrder?.date), 10);
     const expectedArrivalDate = purchaseOrder?.expectedArrivalDate === undefined
       ? undefined
-      : providerTrimmedString(purchaseOrder.expectedArrivalDate, 10);
+      : providerTrimmedString(xeroProviderDateOnly(purchaseOrder.expectedArrivalDate), 10);
     const deliveryDate = purchaseOrder?.deliveryDate === undefined
       ? undefined
-      : providerTrimmedString(purchaseOrder.deliveryDate, 10);
+      : providerTrimmedString(xeroProviderDateOnly(purchaseOrder.deliveryDate), 10);
     const currency = providerTrimmedString(purchaseOrder?.currencyCode, 3);
     const reference = providerTrimmedString(purchaseOrder?.reference, 255);
     const lineAmountType = purchaseOrderLineAmountType(purchaseOrder?.lineAmountTypes);

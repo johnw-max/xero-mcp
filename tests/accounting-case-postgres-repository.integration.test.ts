@@ -246,7 +246,7 @@ describeWithPostgres("Accounting Case PostgreSQL evidence linkage", () => {
             unitAmount: "100.00",
             sourceTax: "9.00",
             accountCode: "200",
-            taxType: "OUTPUT",
+            taxType: "OUTPUTY24",
           }],
           declaredNet: "100.00",
           declaredTax: "9.00",
