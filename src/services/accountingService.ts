@@ -30,6 +30,7 @@ import { createDraftSupplierBillSchema } from "../domain/schemas.js";
 import type {
   GetBankTransactionInput,
   GetItemInput,
+  GetCreditNoteInput,
   GetManualJournalInput,
   GetPurchaseOrderInput,
   GetQuoteInput,
@@ -1377,6 +1378,15 @@ export class AccountingService {
 
   listManualJournals(principal: AccountingPrincipal, input: ListManualJournalsInput) {
     return this.#provider.listManualJournals(principal, input);
+  }
+
+  /**
+   * The only path that reaches a credit note's line items. xero_list_credit_notes
+   * returns summaries, which carry no lines, so without this a caller can see that
+   * a credit note exists and not what it credits.
+   */
+  getCreditNote(principal: AccountingPrincipal, input: GetCreditNoteInput) {
+    return this.#provider.getCreditNote(principal, input.credit_note_id);
   }
 
   getManualJournal(principal: AccountingPrincipal, input: GetManualJournalInput) {

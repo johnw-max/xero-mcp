@@ -45,7 +45,7 @@ const legacyObjectMutationTools = [
 ];
 
 describe("current 0.4.0-rc.1 release materials", () => {
-  it("pins one exact 29-tool allowlist and three Case mutation tools", () => {
+  it("pins one exact 30-tool allowlist and three Case mutation tools", () => {
     const allowlist = json<{ tools: string[] }>("config/tool-allowlist.json").tools;
     const expected = json<string[]>("tests/contract/expected-tools.json");
     const contract = json<{
@@ -63,11 +63,11 @@ describe("current 0.4.0-rc.1 release materials", () => {
     expect(contract.requiredMigration).toBe(XERO_RELEASE_ATTESTATION.requiredMigration);
     expect(contract.authorityModel).toBe("STANDING_DELEGATION");
     expect(contract.expectedTools).toEqual(allowlist);
-    expect(allowlist).toHaveLength(29);
+    expect(allowlist).toHaveLength(30);
     expect(caseTools.every((tool) => allowlist.includes(tool))).toBe(true);
     expect(legacyObjectMutationTools.some((tool) => allowlist.includes(tool))).toBe(false);
     expect(contract.forbiddenPublicTools).toEqual(legacyObjectMutationTools);
-    expect(hashObject(allowlist)).toBe("a8cef167a23fbbe4bd43221e7793b1dd74104fb24e46a8ef6e16c7501bccf36d");
+    expect(hashObject(allowlist)).toBe("ed6667e843ea916ad672ad260d0d7705df75ad4632c181e4e554250b82b076e5");
   });
 
   it("uses only the three current Accounting Case scenario manifests", () => {
@@ -116,7 +116,7 @@ describe("current 0.4.0-rc.1 release materials", () => {
 
   it("keeps the current plain-language capability entry on the 0.4 Case contract", () => {
     const capability = text("docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md");
-    expect(capability).toContain("当前候选：`0.4.0-rc.1` / 29 个公共工具 / Accounting Case / Standing Delegation");
+    expect(capability).toContain("当前候选：`0.4.0-rc.1` / 30 个公共工具 / Accounting Case / Standing Delegation");
     expect(capability).toContain("尚未部署，Agent2 与 Work 的 0.4 写入验收尚未执行");
     expect(capability).toContain("Provider ID、receipt 和精确回读");
     expect(capability).toContain("原文件 hash / Host 文件收据");
@@ -156,7 +156,7 @@ describe("current 0.4.0-rc.1 release materials", () => {
       expect(deploymentAllowlist, tool).toContain(`\`${tool}\``);
     }
     for (const tool of legacyObjectMutationTools) expect(profile, tool).not.toContain(tool);
-    expect(profile).toContain("exactly 29 public tools");
+    expect(profile).toContain("exactly 30 public tools");
     expect(profile).toContain("provider object ID, a durable provider receipt and an exact matching read-back");
     expect(profile).toContain("`VALID_FOR_LIVE_BOOKS` is required for a production target");
     expect(profile).toContain("`UNKNOWN` or a missing validity state blocks the whole Case");

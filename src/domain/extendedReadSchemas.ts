@@ -136,6 +136,10 @@ export const getManualJournalSchema = z.object({
   manual_journal_id: xeroId,
 }).strict();
 
+export const getCreditNoteSchema = z.object({
+  credit_note_id: xeroId,
+}).strict();
+
 export const itemSortSchema = z.enum([
   "CODE_ASC",
   "CODE_DESC",
@@ -226,6 +230,7 @@ export type ManualJournalStatus = z.infer<typeof manualJournalStatusSchema>;
 export type ManualJournalSort = z.infer<typeof manualJournalSortSchema>;
 export type ListManualJournalsInput = z.infer<typeof listManualJournalsSchema>;
 export type GetManualJournalInput = z.infer<typeof getManualJournalSchema>;
+export type GetCreditNoteInput = z.infer<typeof getCreditNoteSchema>;
 export type ItemSort = z.infer<typeof itemSortSchema>;
 export type ListItemsInput = z.infer<typeof listItemsSchema>;
 export type GetItemInput = z.infer<typeof getItemSchema>;

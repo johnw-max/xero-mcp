@@ -29,6 +29,7 @@ import {
 import {
   getBankTransactionSchema,
   getItemSchema,
+  getCreditNoteSchema,
   getManualJournalSchema,
   getPurchaseOrderSchema,
   getQuoteSchema,
@@ -876,6 +877,26 @@ export function createAccountingMcpServer(
       input,
       action: (effectiveContext, businessInput) => service.getManualJournal(effectiveContext, businessInput),
       recordId: (result) => result.manualJournalId,
+    }),
+  );
+
+  server.registerTool(
+    "xero_get_credit_note",
+    {
+      title: "Get exact Xero credit note",
+      description: "Reads one bounded credit-note snapshot by its exact Xero CreditNoteID, including its line items. xero_list_credit_notes returns summaries only and carries no lines.",
+      inputSchema: targeted(getCreditNoteSchema),
+      annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false },
+    },
+    async (input) => audited({
+      service,
+      context,
+      requiredScope: "xero.read",
+      actorId,
+      toolName: "xero_get_credit_note",
+      input,
+      action: (effectiveContext, businessInput) => service.getCreditNote(effectiveContext, businessInput),
+      recordId: (result) => result.creditNoteId,
     }),
   );
 

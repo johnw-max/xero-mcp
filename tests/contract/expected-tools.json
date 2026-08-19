@@ -6,6 +6,7 @@
   "xero_list_accounts",
   "xero_list_tax_rates",
   "xero_list_contacts",
+  "xero_get_credit_note",
   "xero_get_contact",
   "xero_search_contacts",
   "xero_prepare_accounting_case",

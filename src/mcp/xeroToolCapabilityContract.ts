@@ -76,6 +76,7 @@ export const XERO_TOOL_CAPABILITY_ACTION_IDS = {
   xero_list_accounting_cases: ["organisation.read_prepare"],
   xero_list_invoices: ["customer_invoice.read_prepare", "supplier_bill.read_prepare"],
   xero_list_credit_notes: ["credit_note.read_prepare"],
+  xero_get_credit_note: ["credit_note.read_prepare"],
   xero_list_payments: ["payment.read_prepare"],
   xero_list_quotes: ["quote.read_prepare"],
   xero_get_quote: ["quote.read_prepare"],

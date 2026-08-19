@@ -2,7 +2,7 @@
 
 核对日期：2026-08-13
 
-当前候选：`0.4.0-rc.1` / 29 个公共工具 / Accounting Case / Standing Delegation
+当前候选：`0.4.0-rc.1` / 30 个公共工具 / Accounting Case / Standing Delegation
 晋级状态：本地候选，尚未部署，Agent2 与 Work 的 0.4 写入验收尚未执行
 
 ## 一句话结论
@@ -22,7 +22,7 @@
 
 因此当前可说“0.4 候选已实现并在本地验收”，不能说“0.4 已上线”或“Agent2 / Work 已自动记账成功”。
 
-## 会计用户看到的 29 个公共工具
+## 会计用户看到的 30 个公共工具
 
 - 23 个读取工具：Organisation、Account、Tax Rate、Contact、Invoice/Bill、Credit Note、Payment、Quote、Purchase Order、Manual Journal、Item、Bank Transaction 和有界 Trial Balance。
 - 2 个目标控制工具：pin 当前 Organisation，以及发起受控 Organisation 切换。
