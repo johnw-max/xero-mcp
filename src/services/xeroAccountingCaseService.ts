@@ -12,6 +12,8 @@ import type {
   AccountingCaseOperation,
   AccountingCaseTarget,
   AccountingFact,
+  CommercialDocumentFact,
+  CommercialDocumentRoute,
   ContactDurableIdentity,
   NativeDocumentFact,
   NativeDocumentRoute,
@@ -84,7 +86,10 @@ import type {
 import { xeroMutationRequestIdForPreparation } from "./xeroMutationService.js";
 import type { XeroMutationRequest } from "../domain/xeroMutation.js";
 import { resolveStableXeroTaxRate } from "../policy/xeroTaxRateResolver.js";
-import { evaluateXeroNativeRouteContract } from "../policy/xeroNativeRouteContract.js";
+import {
+  evaluateXeroCommercialDocumentRouteContract,
+  evaluateXeroNativeRouteContract,
+} from "../policy/xeroNativeRouteContract.js";
 import type { XeroFirmGovernanceExpectation } from "../policy/xeroFirmGovernanceClaim.js";
 import {
   XERO_CONTACT_IDENTITY_CONTRACT_VERSION,
@@ -840,6 +845,17 @@ export class XeroAccountingCaseService {
         httpStatus: 503,
       });
     }
+    if (this.#isCommercialDocumentRoute(operation.nativeRoute)) {
+      // xeroBusinessCoordinateHistory only knows how to list/get invoices and
+      // credit notes (it is a GL-duplicate engine; see CommercialDocumentRoute
+      // in accountingCase.ts). Callers must not reach this for QUOTE/
+      // PURCHASE_ORDER -- #preflightCommercialDocument and
+      // #executeCommercialDocument never call it -- so this is a defensive,
+      // type-forced rejection, not a live code path.
+      throw new AppError("PERSISTENCE_FAILURE", "Provider document history is unavailable for commercial-document operations.", {
+        httpStatus: 503,
+      });
+    }
     const nativeRoute = operation.nativeRoute;
     const result = await lookupXeroProviderBusinessCoordinate({
       reader: this.provider as XeroBusinessCoordinateHistoryReadPort,
@@ -963,6 +979,17 @@ export class XeroAccountingCaseService {
   ): XeroFirmGovernanceExpectation {
     if (operation.nativeRoute === "CONTACT_CREATE") {
       throw new AppError("PERSISTENCE_FAILURE", "A contact operation has no document governance coordinate.", {
+        httpStatus: 503,
+      });
+    }
+    if (this.#isCommercialDocumentRoute(operation.nativeRoute)) {
+      // Firm-governance authority is a GL-write control (see
+      // xeroFirmGovernanceClaim.ts: XeroFirmGovernanceExpectation.route is
+      // NativeDocumentRoute, not widened). Quotes/purchase orders never reach
+      // this method -- neither #executeNativeDocument nor #executeCreditNote
+      // is ever called for them -- so this is a defensive, type-forced
+      // rejection, not a live code path.
+      throw new AppError("PERSISTENCE_FAILURE", "A commercial-document operation has no firm-governance document coordinate.", {
         httpStatus: 503,
       });
     }
@@ -1323,7 +1350,7 @@ export class XeroAccountingCaseService {
         target,
         sources: input.sources,
         facts: originalProjection.facts,
-      }, accountingPolicy, providerContract);
+      }, accountingPolicy, providerContract, contactProjection.contactBindings);
     } catch (error) {
       if (!(error instanceof AccountingCaseCompilationError)) throw error;
       throw new AppError("VALIDATION_FAILED", error.message, {
@@ -1643,7 +1670,7 @@ export class XeroAccountingCaseService {
           ...(fact.accountNumber !== undefined ? { accountNumber: fact.accountNumber } : {}),
         });
         mergeRequest(this.#contactResolutionKey(identity), identity);
-      } else if (fact.kind === "NATIVE_DOCUMENT") {
+      } else if (fact.kind === "NATIVE_DOCUMENT" || fact.kind === "COMMERCIAL_DOCUMENT") {
         const identity = normalizeXeroContactIdentity({
           name: fact.contactName,
           ...(fact.contactDurableIdentity !== undefined
@@ -1705,7 +1732,7 @@ export class XeroAccountingCaseService {
           }));
         }
       }
-      if (fact.kind === "NATIVE_DOCUMENT") {
+      if (fact.kind === "NATIVE_DOCUMENT" || fact.kind === "COMMERCIAL_DOCUMENT") {
         const identity = normalizeXeroContactIdentity({
           name: fact.contactName,
           ...(fact.contactDurableIdentity !== undefined ? { durableIdentity: fact.contactDurableIdentity } : {}),
@@ -2234,7 +2261,33 @@ export class XeroAccountingCaseService {
           httpStatus: 503,
         });
       }
-      if (operation.nativeRoute !== "CONTACT_CREATE") {
+      if (operation.nativeRoute === "QUOTE" || operation.nativeRoute === "PURCHASE_ORDER") {
+        // Cannot be re-derived from the source fact here the way native
+        // documents are just below: that needs the counterparty-contact
+        // binding resolved when the Case was compiled
+        // (AccountingCaseCommercialContactBinding), which is not part of the
+        // sealed provider projection this function rehydrates from. The
+        // canonicalPayloadHash check above already guards payload tampering;
+        // this guards the business-identity/reservation fields it does not
+        // cover.
+        const reservation = operation.businessReservation;
+        const reservationCoordinate = {
+          schemaVersion: reservation.schemaVersion,
+          providerId: reservation.providerId,
+          kind: reservation.kind,
+          canonicalFields: reservation.canonicalFields,
+        };
+        if (
+          operation.businessIdentityHash !== hashObject(operation.businessIdentity) ||
+          hashObject(reservationCoordinate) !== reservation.coordinateHash
+        ) {
+          throw new AppError(
+            "PERSISTENCE_FAILURE",
+            "Accounting Case commercial-document operation integrity verification failed.",
+            { httpStatus: 503 },
+          );
+        }
+      } else if (operation.nativeRoute !== "CONTACT_CREATE") {
         const event = record.compiled.events.find((candidate) => candidate.eventId === operation.eventId);
         const fact = record.compiled.activeFacts.find((candidate): candidate is NativeDocumentFact =>
           candidate.kind === "NATIVE_DOCUMENT" && candidate.factId === event?.primaryFactId);
@@ -2356,6 +2409,11 @@ export class XeroAccountingCaseService {
         continue;
       }
 
+      if (operation.nativeRoute === "QUOTE" || operation.nativeRoute === "PURCHASE_ORDER") {
+        results.push(await this.#preflightCommercialDocument(context, record, operationRecord));
+        continue;
+      }
+
       this.#assertNativeRouteContract(record, operation);
       const contactName = this.#stringField(operation.canonicalPayload, "contactName");
       const sealedIdentity = this.#sealedContactIdentity(operation);
@@ -2414,6 +2472,75 @@ export class XeroAccountingCaseService {
     return results;
   }
 
+  /**
+   * Quote/purchase-order counterpart of the native-document preflight branch
+   * above. Deliberately does not call #providerBusinessCoordinateHistory:
+   * that engine only knows how to list/get invoices and credit notes (see
+   * CommercialDocumentRoute), so there is no pre-write "does this already
+   * exist in Xero" check for these two routes -- factDisposition already
+   * says so explicitly via the EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE
+   * event reason code, and #assertCurrentOriginalTransactionEvidence /
+   * firm-governance coverage do not apply either (neither is a ledger event).
+   */
+  async #preflightCommercialDocument(
+    context: RequestContext,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<AccountingCaseOperationPreflight> {
+    const operation = operationRecord.operation;
+    this.#assertCommercialDocumentRouteContract(record, operation);
+    const contactName = this.#stringField(operation.canonicalPayload, "contactName");
+    const sealedIdentity = this.#sealedContactIdentity(operation);
+    const resolvedContact = await this.#resolveContactIdentity(context, sealedIdentity.requested);
+    if (!resolvedContact) {
+      throw new AppError("VALIDATION_FAILED", `Accounting Case has no exact active Xero contact for ${contactName}.`, {
+        httpStatus: 422,
+        details: {
+          reasonCodes: ["EXACT_XERO_CONTACT_REQUIRED"],
+          caseId: record.compiled.caseId,
+          caseVersion: record.compiled.version,
+          failedOperationId: operation.operationId,
+          nextAction: "RESOLVE_CONTACT_THEN_PREPARE_NEW_CASE_VERSION",
+        },
+      });
+    }
+    if (
+      resolvedContact.contact.contactId !== sealedIdentity.contactId ||
+      stableStringify(resolvedContact.decision) !== stableStringify(sealedIdentity)
+    ) {
+      throw new AppError("STALE_PREFLIGHT", "The Xero contact identity no longer matches the compiled Case decision.", {
+        httpStatus: 409,
+        retryable: false,
+        details: {
+          failureLayer: "ACCOUNTING_CASE_CONTACT_IDENTITY",
+          reasonCodes: ["XERO_CONTACT_IDENTITY_DECISION_DRIFT"],
+          recoveryAction: "PREPARE_NEW_ACCOUNTING_CASE_VERSION",
+          providerMutationPossible: false,
+        },
+      });
+    }
+    const preparationId = await this.#prepareCommercialDocumentOperation(
+      context,
+      record,
+      operationRecord,
+      resolvedContact.contact,
+    );
+    return this.#preparedOperationEvidence(record, operation, preparationId);
+  }
+
+  /**
+   * QUOTE/PURCHASE_ORDER carry no sealed live-account binding: they skip the
+   * requireXeroDeclaredLedgerAccount machinery entirely (see
+   * #prepareCommercialDocumentOperation), so #serverCoaExecutionConstraints
+   * would throw if called for one. Every call site that already excludes
+   * CONTACT_CREATE for the same structural reason must also exclude these.
+   */
+  #isCommercialDocumentRoute(
+    route: AccountingCaseOperation["nativeRoute"],
+  ): route is CommercialDocumentRoute {
+    return route === "QUOTE" || route === "PURCHASE_ORDER";
+  }
+
   #casePreflightReceipt(
     record: AccountingCaseVersionRecord,
     requestId: string,
@@ -2439,7 +2566,8 @@ export class XeroAccountingCaseService {
       operations: record.operations.map((recorded) => {
         const preflight = byId.get(recorded.operation.operationId);
         if (!preflight) throw new AppError("PERSISTENCE_FAILURE", "Accounting Case preflight is incomplete.");
-        const serverCoaExecutionConstraints = recorded.operation.nativeRoute === "CONTACT_CREATE"
+        const serverCoaExecutionConstraints = recorded.operation.nativeRoute === "CONTACT_CREATE" ||
+            this.#isCommercialDocumentRoute(recorded.operation.nativeRoute)
           ? undefined
           : this.#serverCoaExecutionConstraints(record, recorded.operation);
         return {
@@ -2515,6 +2643,8 @@ export class XeroAccountingCaseService {
         case "SUPPLIER_BILL": return { actionId: "supplier_bill.create_draft", objectType: "SUPPLIER_BILL", operation: "CREATE_DRAFT" } as const;
         case "CUSTOMER_CREDIT":
         case "SUPPLIER_CREDIT": return { actionId: "credit_note.create_draft", objectType: "CREDIT_NOTE", operation: "CREATE_DRAFT" } as const;
+        case "QUOTE": return { actionId: "quote.create_draft", objectType: "QUOTE", operation: "CREATE_DRAFT" } as const;
+        case "PURCHASE_ORDER": return { actionId: "purchase_order.create_draft", objectType: "PURCHASE_ORDER", operation: "CREATE_DRAFT" } as const;
       }
     })();
     const envelopeMismatches = [
@@ -2535,7 +2665,12 @@ export class XeroAccountingCaseService {
 
     const payload = preparation.canonicalPayload;
     const casePayload = operation.canonicalPayload;
-    const nativeCurrency = operation.nativeRoute === "CONTACT_CREATE"
+    // Commercial documents (QUOTE/PURCHASE_ORDER) carry no monetaryRule in
+    // their canonicalPayload -- there is no accounting-policy tax-rate
+    // reconciliation for them (see CommercialDocumentFact) -- so they are
+    // excluded here the same way CONTACT_CREATE is.
+    const isCommercialDocument = this.#isCommercialDocumentRoute(operation.nativeRoute);
+    const nativeCurrency = operation.nativeRoute === "CONTACT_CREATE" || isCommercialDocument
       ? undefined
       : this.#stringField(casePayload, "currency");
     const monetaryRule = nativeCurrency === undefined
@@ -2543,6 +2678,7 @@ export class XeroAccountingCaseService {
       : parseSealedAccountingMonetaryRule(casePayload.monetaryRule, nativeCurrency);
     if (
       operation.nativeRoute !== "CONTACT_CREATE" &&
+      !isCommercialDocument &&
       !monetaryRule
     ) fail(["canonicalPayload.monetaryRule"]);
     let expectedProjection: Record<string, unknown> | undefined;
@@ -2686,6 +2822,73 @@ export class XeroAccountingCaseService {
           )),
           tax: this.#taxTotalForPreparationLines(actualLines, monetaryRule!),
           gross: this.#grossTotalForPreparationLines(actualLines, monetaryRule!),
+        };
+      } else if (operation.nativeRoute === "QUOTE" || operation.nativeRoute === "PURCHASE_ORDER") {
+        const contact = providerReferences.contact;
+        if (!contact || !exactName(contact.name, this.#stringField(casePayload, "contactName"))) {
+          fail(["providerReferences.contact"]);
+        }
+        const resolvedContact = contact as ContactSummary;
+        const expectedLines = this.#payloadLines(casePayload).map((line, index) => ({
+          description: this.#stringField(line, "description"),
+          quantity: fixedFourScaled(scaledCaseDecimal(line.quantity, `case.lines[${index}].quantity`)),
+          unitAmount: fixedFourScaled(scaledCaseDecimal(line.unitAmount, `case.lines[${index}].unitAmount`)),
+          accountCode: this.#stringField(line, "accountCode"),
+          taxType: this.#stringField(line, "taxType"),
+        }));
+        const actualLines = this.#payloadLines(payload).map((line, index) => {
+          const expectedLine = expectedLines[index]!;
+          if (!expectedLine) fail([`canonicalPayload.lines[${index}]`]);
+          return {
+            description: this.#stringField(line, "description"),
+            quantity: fixedFourScaled(scaledCaseDecimal(line.quantity, `preparation.lines[${index}].quantity`)),
+            unitAmount: fixedFourScaled(scaledCaseDecimal(line.unitAmount, `preparation.lines[${index}].unitAmount`)),
+            accountCode: this.#stringField(line, "accountCode"),
+            taxType: this.#stringField(line, "taxType"),
+          };
+        });
+        const isQuote = operation.nativeRoute === "QUOTE";
+        expectedProjection = {
+          route: operation.nativeRoute,
+          actionId: expectedRoute.actionId,
+          schemaVersion: "xero-controlled-draft:v1",
+          objectType: expectedRoute.objectType,
+          operation: expectedRoute.operation,
+          status: "DRAFT",
+          contactId: resolvedContact.contactId,
+          documentDate: this.#stringField(casePayload, "documentDate"),
+          expiryDate: isQuote ? this.#stringField(casePayload, "expiryDate") : null,
+          expectedArrivalDate: !isQuote && typeof casePayload.expectedArrivalDate === "string"
+            ? casePayload.expectedArrivalDate
+            : null,
+          deliveryDate: !isQuote && typeof casePayload.deliveryDate === "string" ? casePayload.deliveryDate : null,
+          currency: this.#stringField(casePayload, "currency"),
+          reference: this.#stringField(casePayload, "reference"),
+          // Unlike the SALES_INVOICE/SUPPLIER_BILL branch above, no
+          // "EXCLUSIVE" -> "Exclusive" conversion here: the controlled-draft
+          // canonical schema (shared with credit notes) keeps the case-level
+          // casing (EXCLUSIVE/INCLUSIVE/NO_TAX) as its own lineAmountType.
+          lineAmountType: casePayload.lineAmountType,
+          lines: expectedLines,
+        };
+        actualProjection = {
+          route: operation.nativeRoute,
+          actionId: operation.actionId,
+          schemaVersion: payload.schemaVersion,
+          objectType: payload.objectType,
+          operation: payload.operation,
+          status: payload.status,
+          contactId: payload.contactId,
+          documentDate: isQuote ? payload.quoteDate : payload.purchaseOrderDate,
+          expiryDate: isQuote ? payload.expiryDate : null,
+          expectedArrivalDate: !isQuote && typeof payload.expectedArrivalDate === "string"
+            ? payload.expectedArrivalDate
+            : null,
+          deliveryDate: !isQuote && typeof payload.deliveryDate === "string" ? payload.deliveryDate : null,
+          currency: payload.currency,
+          reference: payload.reference,
+          lineAmountType: payload.lineAmountType,
+          lines: actualLines,
         };
       } else {
         const contact = providerReferences.contact;
@@ -2848,10 +3051,23 @@ export class XeroAccountingCaseService {
     operationRecord: AccountingCaseOperationRecord,
   ): Promise<AccountingCaseVersionRecord> {
     const operation = operationRecord.operation;
-    if (operation.actionId === "contact.create_basic") {
-      return this.#executeContact(context, binding, record, operationRecord);
+    switch (operation.actionId) {
+      case "contact.create_basic":
+        return this.#executeContact(context, binding, record, operationRecord);
+      case "quote.create_draft":
+      case "purchase_order.create_draft":
+        return this.#executeCommercialDocument(context, binding, record, operationRecord);
+      case "customer_invoice.create_draft":
+      case "supplier_bill.create_draft":
+      case "credit_note.create_draft":
+        return this.#executeNativeDocument(context, binding, record, operationRecord);
+      default: {
+        const unreachable: never = operation.actionId;
+        throw new AppError("PERSISTENCE_FAILURE", `Unhandled Accounting Case action: ${String(unreachable)}`, {
+          httpStatus: 500,
+        });
+      }
     }
-    return this.#executeNativeDocument(context, binding, record, operationRecord);
   }
 
   #contactLifecycleScanIncomplete(message: string): AppError {
@@ -3267,6 +3483,35 @@ export class XeroAccountingCaseService {
     }
   }
 
+  /** Commercial-document counterpart of #assertNativeRouteContract. */
+  #assertCommercialDocumentRouteContract(
+    record: AccountingCaseVersionRecord,
+    operation: AccountingCaseOperation,
+  ): void {
+    const event = record.compiled.events.find((candidate) => candidate.eventId === operation.eventId);
+    const fact = record.compiled.activeFacts.find((candidate): candidate is CommercialDocumentFact =>
+      candidate.kind === "COMMERCIAL_DOCUMENT" && candidate.factId === event?.primaryFactId);
+    if (!fact) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case commercial-document route has no immutable source fact.", {
+        httpStatus: 503,
+      });
+    }
+    const decision = evaluateXeroCommercialDocumentRouteContract(fact);
+    if (!decision.adapterCanPrepare || decision.route !== operation.nativeRoute) {
+      throw new AppError("VALIDATION_FAILED", "The compiled Accounting Case route is not supported by the released Xero adapter.", {
+        httpStatus: 422,
+        retryable: false,
+        details: {
+          failureLayer: "ACCOUNTING_CASE_PREFLIGHT",
+          reasonCodes: decision.reasonCodes.length > 0
+            ? decision.reasonCodes
+            : ["XERO_COMMERCIAL_DOCUMENT_ROUTE_MISMATCH"],
+          providerMutationPossible: false,
+        },
+      });
+    }
+  }
+
   #contactResolution(
     requestedName: string,
     contact: ContactSummary,
@@ -3493,6 +3738,18 @@ export class XeroAccountingCaseService {
     operationRecord: AccountingCaseOperationRecord,
   ): Promise<AccountingCaseVersionRecord> {
     const operation = operationRecord.operation;
+    if (operation.nativeRoute === "QUOTE" || operation.nativeRoute === "PURCHASE_ORDER") {
+      // Dispatched earlier, in #executeOperation by actionId, to
+      // #executeCommercialDocument. The type says a commercial-document
+      // route could reach this function, so it is answered rather than
+      // assumed away -- same idiom as the CUSTOMER_CREDIT/SUPPLIER_CREDIT/
+      // CONTACT_CREATE branch inside executePrepared below.
+      throw new AppError(
+        "PERSISTENCE_FAILURE",
+        `Route ${operation.nativeRoute} is dispatched before the native document write boundary.`,
+        { httpStatus: 500 },
+      );
+    }
     // Repeat the deployment profile + live AccountID/code/type/class binding at
     // the final Case write boundary. Drift is zero-write and requires a new Case.
     await this.#assertCurrentOrganisationPolicy(context, record);
@@ -3599,6 +3856,56 @@ export class XeroAccountingCaseService {
         throw this.#existingBusinessCoordinateError(operation, providerHistory);
       }
     }, this.#sealedFirmGovernanceExpectation(operation));
+    const projected = await this.repository.projectAccountingCaseOperationFromMutation({
+      binding,
+      caseId: record.compiled.caseId,
+      version: record.compiled.version,
+      operationId: operation.operationId,
+      requestId: this.#executionRequestId(record),
+      expectedStates: ["PREPARED"],
+      desiredState: "READBACK_VERIFIED",
+      mutationRequestId: written.mutation_request_id,
+      now: this.#now(),
+    });
+    return projected;
+  }
+
+  /**
+   * Quote/purchase-order counterpart of #executeNativeDocument /
+   * #executeCreditNote. No #assertCurrentOrganisationPolicy or
+   * #serverCoaExecutionConstraints call: those re-verify the case's sealed
+   * live-account binding, which commercial-document lines are never part of
+   * (declaredLedgerCoordinates only scans NATIVE_DOCUMENT facts). Their
+   * account/tax/contact freshness is instead re-verified independently on
+   * every call by XeroControlledMutationService#validateDocumentReferences,
+   * inside this.accounting.createQuoteDraft/createPurchaseOrderDraft itself.
+   */
+  async #executeCommercialDocument(
+    context: RequestContext,
+    binding: AccountingCaseBinding,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<AccountingCaseVersionRecord> {
+    const operation = operationRecord.operation;
+    this.#assertCommercialDocumentRouteContract(record, operation);
+    const contactName = operation.canonicalPayload.contactName;
+    if (typeof contactName !== "string") {
+      throw new AppError("VALIDATION_FAILED", "Commercial-document operation has no canonical contact name.", { httpStatus: 422 });
+    }
+    await this.#assertSealedContactBinding(context, operationRecord);
+    const preparationId = operationRecord.preparationId;
+    if (!preparationId) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case execution has no sealed commercial-document preparation.", {
+        httpStatus: 503,
+      });
+    }
+    const request = {
+      preparation_id: preparationId,
+      request_id: this.#operationRequestId(record, operation),
+    };
+    const written = operation.actionId === "quote.create_draft"
+      ? await this.accounting.createQuoteDraft(context, request)
+      : await this.accounting.createPurchaseOrderDraft(context, request);
     const projected = await this.repository.projectAccountingCaseOperationFromMutation({
       binding,
       caseId: record.compiled.caseId,
@@ -3796,6 +4103,66 @@ export class XeroAccountingCaseService {
       preparationId: prepared.preparation_id,
       providerReferences: { contact, ledgerBinding: sealedLedgerBinding },
     };
+  }
+
+  /**
+   * Quote/purchase-order counterpart of #prepareNativeDocumentOperation.
+   * Deliberately does not use the sealed-live-account-binding machinery that
+   * function relies on (requireXeroDeclaredLedgerAccount, serverCoaExecutionConstraints):
+   * this.accounting.prepareQuoteDraft/preparePurchaseOrderDraft independently
+   * re-verify every line's account and tax type against the live chart of
+   * accounts on every call (XeroControlledMutationService#validateDocumentReferences),
+   * so that protection already exists on the write path itself.
+   */
+  async #prepareCommercialDocumentOperation(
+    context: RequestContext,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+    contact: ContactSummary,
+  ): Promise<string> {
+    const operation = operationRecord.operation;
+    const payload = operation.canonicalPayload;
+    if (payload.xeroContactId !== contact.contactId) {
+      throw new AppError("VALIDATION_FAILED", "The server-resolved Xero contact ID does not match the compiled Case binding.", {
+        httpStatus: 422,
+        details: {
+          reasonCodes: ["CONTACT_BINDING_ID_MISMATCH"],
+          providerMutationPossible: false,
+        },
+      });
+    }
+    const lines = this.#payloadLines(payload).map((line, index) => ({
+      description: this.#stringField(line, "description"),
+      quantity: fixedNumber(line.quantity, `lines[${index}].quantity`),
+      unit_amount: fixedNumber(line.unitAmount, `lines[${index}].unitAmount`),
+      account_code: this.#stringField(line, "accountCode"),
+      tax_type: this.#stringField(line, "taxType"),
+    }));
+    const common = {
+      source_ref: `case:${record.compiled.caseId}`,
+      source_unit_key: operation.operationId,
+      source_sha256: this.#operationSourceHash(record, operation),
+      contact_id: contact.contactId,
+      currency: this.#stringField(payload, "currency"),
+      reference: this.#stringField(payload, "reference"),
+      line_amount_type: lineAmountType(payload.lineAmountType),
+      lines,
+    };
+    const prepared = operation.nativeRoute === "QUOTE"
+      ? await this.accounting.prepareQuoteDraft(context, {
+          ...common,
+          quote_date: this.#stringField(payload, "documentDate"),
+          expiry_date: this.#stringField(payload, "expiryDate"),
+        })
+      : await this.accounting.preparePurchaseOrderDraft(context, {
+          ...common,
+          purchase_order_date: this.#stringField(payload, "documentDate"),
+          ...(typeof payload.expectedArrivalDate === "string"
+            ? { expected_arrival_date: payload.expectedArrivalDate }
+            : {}),
+          ...(typeof payload.deliveryDate === "string" ? { delivery_date: payload.deliveryDate } : {}),
+        });
+    return prepared.preparation_id;
   }
 
   #payloadLines(payload: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -4271,6 +4638,21 @@ export class XeroAccountingCaseService {
       case "credit_note.create_draft":
         await this.accounting.createCreditNoteDraft(context, input);
         return;
+      case "quote.create_draft":
+        await this.accounting.createQuoteDraft(context, input);
+        return;
+      case "purchase_order.create_draft":
+        await this.accounting.createPurchaseOrderDraft(context, input);
+        return;
+      default: {
+        // Not TS-enforced (this switch returns void, so an unhandled case
+        // would silently no-op rather than fail to compile) -- the explicit
+        // never-check is what actually catches a future action left out here.
+        const unreachable: never = operationRecord.operation.actionId;
+        throw new AppError("PERSISTENCE_FAILURE", `Unhandled Accounting Case action in recovery: ${String(unreachable)}`, {
+          httpStatus: 500,
+        });
+      }
     }
   }
 

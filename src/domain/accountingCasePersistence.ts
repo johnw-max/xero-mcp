@@ -545,6 +545,10 @@ export function accountingCaseMutationRoute(
       return { objectType: "SUPPLIER_BILL", operation: "CREATE_DRAFT" };
     case "credit_note.create_draft":
       return { objectType: "CREDIT_NOTE", operation: "CREATE_DRAFT" };
+    case "quote.create_draft":
+      return { objectType: "QUOTE", operation: "CREATE_DRAFT" };
+    case "purchase_order.create_draft":
+      return { objectType: "PURCHASE_ORDER", operation: "CREATE_DRAFT" };
   }
 }
 

@@ -216,13 +216,13 @@ describe("Xero capability and risk policy", () => {
       "credit_note.create_draft",
       "customer_invoice.create_draft",
       "supplier_bill.create_draft",
+      "quote.create_draft",
+      "purchase_order.create_draft",
     ] as const) {
       expect(lookupAgentFacingXeroCapabilityDecision(actionId))
         .toMatchObject({ agentReachableWriteAction: true });
     }
     for (const actionId of [
-      "quote.create_draft",
-      "purchase_order.create_draft",
       "manual_journal.create_draft",
       "contact.update_basic",
       "item.create_basic_untracked",

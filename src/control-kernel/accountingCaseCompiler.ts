@@ -14,6 +14,8 @@ import {
   type AccountingFactKind,
   type AccountingSourceArtifact,
   type BankStatementSummaryFact,
+  type CommercialDocumentFact,
+  type CommercialDocumentRoute,
   type CompiledAccountingCase,
   type ContactCandidateFact,
   type EmployeeExpenseFact,
@@ -89,6 +91,7 @@ function compilationFailure(
 const PRIMARY_FACT_KINDS = new Set<AccountingFactKind>([
   "CONTACT_CANDIDATE",
   "NATIVE_DOCUMENT",
+  "COMMERCIAL_DOCUMENT",
   "PAYMENT",
   "BANK_FEE",
   "PREPAYMENT",
@@ -569,6 +572,194 @@ function operationForNative(
   };
 }
 
+function contactSupportsCommercialDocument(
+  contact: ContactCandidateFact,
+  document: CommercialDocumentFact,
+): boolean {
+  if (!contact.usageRoles.includes(document.counterpartyRole)) return false;
+  if (contact.name.toLocaleLowerCase("en") !== document.contactName.toLocaleLowerCase("en")) return false;
+  if (contact.durableIdentity !== undefined || document.contactDurableIdentity !== undefined) {
+    return contact.durableIdentity !== undefined && document.contactDurableIdentity !== undefined &&
+      hashObject(contact.durableIdentity) === hashObject(document.contactDurableIdentity);
+  }
+  return true;
+}
+
+function commercialContactDependencies(fact: CommercialDocumentFact, facts: readonly AccountingFact[]): string[] {
+  return facts.flatMap((candidate) => candidate.kind === "CONTACT_CANDIDATE" &&
+    contactSupportsCommercialDocument(candidate, fact)
+    ? [candidate.eventKey]
+    : []);
+}
+
+/**
+ * Server-resolved binding for a commercial-document fact's counterparty.
+ * Deliberately a plain, provider-neutral shape passed in alongside `provider`
+ * rather than a method on AccountingCaseProviderEnforcementContract: that
+ * contract's contactBinding() only accepts ContactCandidateFact |
+ * NativeDocumentFact, so a CommercialDocumentFact could never be passed to
+ * it -- which is the point (see the doc comment on CommercialDocumentRoute).
+ */
+export interface AccountingCaseCommercialContactBinding {
+  readonly contactId: string;
+  readonly identity?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Kept provider-neutral and inline, deliberately not delegated to a Xero-
+ * named policy function: unlike evaluateXeroNativeRouteContract (which
+ * encodes what the released Xero adapter can express), this is not an
+ * adapter-capability limit. A quote must go to a customer and a purchase
+ * order to a supplier, and a quote needs an expiry, regardless of provider.
+ * The reason codes match XeroCommercialDocumentRouteContractReason in
+ * xeroNativeRouteContract.ts (used for the execution-time re-check there) by
+ * construction, not by shared code, since that file is Xero-specific policy
+ * this provider-neutral compiler must not import.
+ */
+function commercialDocumentRouteReasonCodes(
+  fact: Pick<CommercialDocumentFact, "documentKind" | "counterpartyRole" | "expiryDate">,
+): string[] {
+  const reasons: string[] = [];
+  switch (fact.documentKind) {
+    case "QUOTE":
+      if (fact.counterpartyRole !== "CUSTOMER") reasons.push("QUOTE_COUNTERPARTY_MUST_BE_CUSTOMER");
+      if (!fact.expiryDate) reasons.push("QUOTE_EXPIRY_DATE_REQUIRED");
+      break;
+    case "PURCHASE_ORDER":
+      if (fact.counterpartyRole !== "SUPPLIER") reasons.push("PURCHASE_ORDER_COUNTERPARTY_MUST_BE_SUPPLIER");
+      break;
+    default: {
+      const unreachable: never = fact.documentKind;
+      throw new Error(`Unhandled commercial document kind: ${String(unreachable)}`);
+    }
+  }
+  return reasons;
+}
+
+function operationForCommercialDocument(
+  fact: CommercialDocumentFact,
+  context: {
+    caseId: string;
+    caseVersion: number;
+    target: AccountingCaseTarget;
+    sourceRevisionHash: string;
+    dependencyEventKeys: string[];
+    providerId: string;
+    contactBindings: ReadonlyMap<string, AccountingCaseCommercialContactBinding>;
+  },
+): AccountingCaseOperation {
+  const route: CommercialDocumentRoute = fact.documentKind;
+  const reasons = commercialDocumentRouteReasonCodes(fact);
+  if (fact.documentValidity === "UNKNOWN") reasons.push("DOCUMENT_VALIDITY_UNKNOWN");
+  if (fact.documentValidity === "TEST_OR_NOT_VALID" && context.target.environment !== "TEST") {
+    reasons.push("NON_LIVE_DOCUMENT_REQUIRES_TEST_TENANT");
+  }
+  if (context.target.periodLockDate && fact.documentDate <= context.target.periodLockDate) {
+    reasons.push("DOCUMENT_DATE_IN_PERIOD_LOCK");
+  }
+  if (context.target.endOfYearLockDate && fact.documentDate <= context.target.endOfYearLockDate) {
+    reasons.push("DOCUMENT_DATE_IN_END_OF_YEAR_LOCK");
+  }
+  const binding = context.contactBindings.get(fact.factId);
+  if (!binding) {
+    // factDisposition only reaches AUTO_EXECUTE (and therefore this function)
+    // once a contact binding exists, so a miss here is an internal
+    // invariant break, not a normal validation finding.
+    compilationFailure(
+      "ACCOUNTING_POLICY_LINE_DECISION_INVALID",
+      `facts.${fact.factId}.contactName`,
+      "A commercial-document operation was compiled with no resolved counterparty binding.",
+    );
+  }
+  const normalizedLines = fact.lines.map((line) => ({
+    lineId: line.lineId,
+    description: line.description,
+    quantity: line.quantity,
+    unitAmount: line.unitAmount,
+    accountCode: line.accountCode,
+    taxType: line.taxType,
+  }));
+  const normalizedReference = fact.reference.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleUpperCase("en");
+  const canonicalPayload: Record<string, unknown> = {
+    schemaVersion: "accounting-case-commercial-document:v1",
+    route,
+    documentKind: fact.documentKind,
+    counterpartyRole: fact.counterpartyRole,
+    reference: fact.reference,
+    documentDate: fact.documentDate,
+    ...(fact.expiryDate ? { expiryDate: fact.expiryDate } : {}),
+    ...(fact.expectedArrivalDate ? { expectedArrivalDate: fact.expectedArrivalDate } : {}),
+    ...(fact.deliveryDate ? { deliveryDate: fact.deliveryDate } : {}),
+    currency: fact.currency,
+    contactName: fact.contactName,
+    ...(fact.contactDurableIdentity ? { contactDurableIdentity: fact.contactDurableIdentity } : {}),
+    xeroContactId: binding.contactId,
+    xeroContactIdentity: binding.identity,
+    lineAmountType: fact.lineAmountType,
+    lines: normalizedLines,
+    documentValidity: fact.documentValidity,
+    liveBooksEligible: fact.documentValidity === "VALID_FOR_LIVE_BOOKS",
+    testTenantOnly: fact.documentValidity === "TEST_OR_NOT_VALID",
+    status: "DRAFT",
+  };
+  const actionId = fact.documentKind === "QUOTE"
+    ? "quote.create_draft" as const
+    : "purchase_order.create_draft" as const;
+  const canonicalPayloadHash = hashObject(canonicalPayload);
+  const operationIdentity = {
+    caseId: context.caseId,
+    caseVersion: context.caseVersion,
+    sourceRevisionHash: context.sourceRevisionHash,
+    eventId: eventId(context.caseId, fact.eventKey),
+    actionId,
+    canonicalPayloadHash,
+  };
+  // Own reservation namespace ("COMMERCIAL_DOCUMENT_OCCURRENCE"), disjoint from
+  // the native-document "LEDGER_DOCUMENT_OCCURRENCE" kind, so this can never
+  // collide with -- or be aliased against -- an invoice/credit-note reservation.
+  const businessIdentityCanonicalFields = Object.freeze({
+    route,
+    contactId: binding.contactId,
+    reference: normalizedReference,
+  });
+  const businessIdentity = Object.freeze({
+    schemaVersion: ACCOUNTING_CASE_BUSINESS_IDENTITY_SCHEMA_VERSION,
+    providerId: context.providerId,
+    kind: "COMMERCIAL_DOCUMENT_OCCURRENCE",
+    canonicalFields: businessIdentityCanonicalFields,
+  });
+  const reservationCoordinate = Object.freeze({
+    schemaVersion: ACCOUNTING_CASE_BUSINESS_RESERVATION_SCHEMA_VERSION,
+    providerId: context.providerId,
+    kind: "COMMERCIAL_DOCUMENT_OCCURRENCE",
+    canonicalFields: businessIdentityCanonicalFields,
+  });
+  const businessReservation = Object.freeze({
+    ...reservationCoordinate,
+    coordinateHash: hashObject(reservationCoordinate),
+    scope: "ALL_OCCURRENCES" as const,
+  });
+  const operationReasons = uniqueSorted(reasons);
+  return {
+    caseId: context.caseId,
+    target: context.target,
+    operationId: `op_${hashObject(operationIdentity).slice(0, 24)}`,
+    eventId: operationIdentity.eventId,
+    actionId,
+    nativeRoute: route,
+    dependencyEventKeys: uniqueSorted(context.dependencyEventKeys),
+    canonicalPayload,
+    canonicalPayloadHash,
+    businessIdentity,
+    businessIdentityHash: hashObject(businessIdentity),
+    businessReservation,
+    sourceRevisionHash: context.sourceRevisionHash,
+    caseVersion: context.caseVersion,
+    terminalState: operationReasons.length === 0 ? "ELIGIBLE_FOR_PREFLIGHT" : "BLOCKED_VALIDATION",
+    reasonCodes: operationReasons,
+  };
+}
+
 function validatePrepayment(fact: PrepaymentFact): string[] {
   const reasons: string[] = [];
   const net = decimalMinor(fact.net);
@@ -858,6 +1049,20 @@ function validationReasons(
       }
       return uniqueSorted([...providerReasons, ...reasons]);
     }
+    case "COMMERCIAL_DOCUMENT": {
+      const reasons = commercialDocumentRouteReasonCodes(fact);
+      if (fact.documentValidity === "UNKNOWN") reasons.push("DOCUMENT_VALIDITY_UNKNOWN");
+      if (fact.documentValidity === "TEST_OR_NOT_VALID" && target.environment !== "TEST") {
+        reasons.push("NON_LIVE_DOCUMENT_REQUIRES_TEST_TENANT");
+      }
+      if (target.periodLockDate && fact.documentDate <= target.periodLockDate) {
+        reasons.push("DOCUMENT_DATE_IN_PERIOD_LOCK");
+      }
+      if (target.endOfYearLockDate && fact.documentDate <= target.endOfYearLockDate) {
+        reasons.push("DOCUMENT_DATE_IN_END_OF_YEAR_LOCK");
+      }
+      return uniqueSorted(reasons);
+    }
     case "PREPAYMENT": return uniqueSorted([
       ...validatePrepayment(fact),
       ...policy.validatePrepayment(fact, target),
@@ -882,6 +1087,7 @@ function factDisposition(
   target: AccountingCaseTarget,
   policy: AccountingPolicyEnforcementContract,
   provider: AccountingCaseProviderEnforcementContract,
+  commercialContactBindings: ReadonlyMap<string, AccountingCaseCommercialContactBinding>,
 ): { disposition: AccountingEventDisposition; reasonCodes: string[] } {
   const primary = primaryFact(groupedFacts);
   if (!primary) {
@@ -924,6 +1130,26 @@ function factDisposition(
       };
     }
   }
+  // Commercial documents (quote/purchase order) are resolved through the
+  // separate commercialContactBindings map, not provider.contactBinding(),
+  // because that method only accepts ContactCandidateFact | NativeDocumentFact.
+  if (primary.kind === "COMMERCIAL_DOCUMENT") {
+    const unresolvedContact = allFacts.some((candidate) =>
+      candidate.kind === "CONTACT_CANDIDATE" &&
+      contactSupportsCommercialDocument(candidate, primary) &&
+      !provider.contactBinding(candidate).resolvedId) && !commercialContactBindings.has(primary.factId);
+    if (!commercialContactBindings.has(primary.factId)) {
+      return {
+        disposition: "REVIEW_REQUIRED",
+        reasonCodes: uniqueSorted([
+          unresolvedContact
+            ? "PLANNED_CONTACT_DEPENDENCY_REQUIRES_NEW_CASE_VERSION"
+            : provider.unresolvedContactReasonCode,
+          ...reasons,
+        ]),
+      };
+    }
+  }
   switch (primary.kind) {
     case "CONTACT_CANDIDATE":
       return provider.contactBinding(primary).resolvedId
@@ -935,6 +1161,16 @@ function factDisposition(
               reasonCodes: uniqueSorted(["CONTACT_DURABLE_IDENTITY_REQUIRED", ...reasons]),
             };
     case "NATIVE_DOCUMENT": return { disposition: "AUTO_EXECUTE", reasonCodes: reasons };
+    // Informational, not blocking: unlike invoices/bills/credit notes, there
+    // is no pre-write "does this already exist in Xero" duplicate check for
+    // quotes/purchase orders (see CommercialDocumentRoute) -- Xero posts no
+    // journal lines for either, so the GL-duplicate engine does not apply,
+    // and building a replacement now would be untestable without captured
+    // real response fixtures. Said explicitly here rather than left silent.
+    case "COMMERCIAL_DOCUMENT": return {
+      disposition: "AUTO_EXECUTE",
+      reasonCodes: uniqueSorted(["EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE", ...reasons]),
+    };
     case "ORIGINAL_TRANSACTION_EVIDENCE": return { disposition: "EVIDENCE_ONLY", reasonCodes: reasons };
     case "OPENING_BALANCE_REVIEW": return { disposition: "REVIEW_REQUIRED", reasonCodes: uniqueSorted(["OPENING_BALANCE_POLICY_REQUIRED", ...reasons]) };
     case "BANK_STATEMENT_SUMMARY":
@@ -1131,6 +1367,14 @@ export function compileAccountingCase(
   raw: PrepareAccountingCaseInput,
   policy: AccountingPolicyEnforcementContract,
   provider: AccountingCaseProviderEnforcementContract,
+  /**
+   * Server-resolved counterparty bindings for COMMERCIAL_DOCUMENT facts,
+   * keyed by factId. A sibling to the provider's own contactBinding(), kept
+   * as a separate plain map rather than added to that interface because
+   * AccountingCaseProviderEnforcementContract#contactBinding only accepts
+   * ContactCandidateFact | NativeDocumentFact -- see CommercialDocumentRoute.
+   */
+  commercialContactBindings: ReadonlyMap<string, AccountingCaseCommercialContactBinding> = new Map(),
 ): CompiledAccountingCase {
   const input = prepareAccountingCaseSchema.parse(raw) as PrepareAccountingCaseInput;
   const sourceArtifacts = [...input.sources]
@@ -1183,11 +1427,12 @@ export function compileAccountingCase(
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([eventKey, groupedFacts]) => {
       const primary = primaryFact(groupedFacts);
-      const decision = factDisposition(groupedFacts, facts, input.target, policy, provider);
-      let route: NativeDocumentRoute | "CONTACT_CREATE" | undefined;
+      const decision = factDisposition(groupedFacts, facts, input.target, policy, provider, commercialContactBindings);
+      let route: NativeDocumentRoute | CommercialDocumentRoute | "CONTACT_CREATE" | undefined;
       if (primary?.kind === "NATIVE_DOCUMENT") {
         route = provider.evaluateNativeRoute(primary, input.target).route;
       }
+      if (primary?.kind === "COMMERCIAL_DOCUMENT") route = primary.documentKind;
       if (primary?.kind === "CONTACT_CANDIDATE") route = "CONTACT_CREATE";
       return {
         eventId: eventId(input.caseId, eventKey),
@@ -1210,7 +1455,7 @@ export function compileAccountingCase(
     provider,
   };
   const hasGlobalDocumentEligibilityBlock = facts.some((fact) =>
-    fact.kind === "NATIVE_DOCUMENT" &&
+    (fact.kind === "NATIVE_DOCUMENT" || fact.kind === "COMMERCIAL_DOCUMENT") &&
     (fact.documentValidity === "UNKNOWN" ||
       (fact.documentValidity === "TEST_OR_NOT_VALID" && input.target.environment === "PRODUCTION")));
   const operations = (hasGlobalDocumentEligibilityBlock ? [] : facts.flatMap((fact): AccountingCaseOperation[] => {
@@ -1223,6 +1468,17 @@ export function compileAccountingCase(
       return [operationForNative(fact, {
         ...operationContext,
         dependencyEventKeys: contactDependencies(fact, facts),
+      })];
+    }
+    if (fact.kind === "COMMERCIAL_DOCUMENT") {
+      return [operationForCommercialDocument(fact, {
+        caseId: input.caseId,
+        caseVersion,
+        target: input.target,
+        sourceRevisionHash,
+        dependencyEventKeys: commercialContactDependencies(fact, facts),
+        providerId: provider.providerId,
+        contactBindings: commercialContactBindings,
       })];
     }
     return [];

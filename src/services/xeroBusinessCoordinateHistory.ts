@@ -15,6 +15,7 @@ import {
   type XeroAuthoritativeDocumentProviderField,
 } from "../policy/xeroBusinessCoordinateAuthority.js";
 import { xeroExistingDocumentMismatchReasons } from "../policy/xeroAccountingCaseExistingDocumentEvidence.js";
+import { isNativeDocumentRoute } from "../policy/xeroNativeRouteContract.js";
 
 const PAGE_SIZE = 100;
 const MAX_PROVIDER_ITEMS = 100_000;
@@ -268,7 +269,7 @@ export async function lookupXeroProviderBusinessCoordinate(input: {
   operation: AccountingCaseOperation;
 }): Promise<AccountingCaseProviderBusinessHistoryLookup> {
   const { operation } = input;
-  if (operation.nativeRoute === "CONTACT_CREATE") {
+  if (!isNativeDocumentRoute(operation.nativeRoute)) {
     return incomplete(0, ["NATIVE_DOCUMENT_ROUTE_REQUIRED"]);
   }
   const payloadReference = stringField(operation.canonicalPayload, "reference");

@@ -289,6 +289,13 @@ export function compileTestXeroAccountingCase(
       businessAuthority,
       injected.evidenceBindings,
     ),
+    // COMMERCIAL_DOCUMENT (quote/purchase order) facts resolve their
+    // counterparty through this separate map, not through the provider
+    // contract's contactBinding() -- see AccountingCaseCommercialContactBinding
+    // in accountingCaseCompiler.ts. Reusing the same test-only xeroContactId
+    // fixture convenience (legacyBindingFromRecord) that native-document
+    // fixtures already use keeps one way to bind a test counterparty.
+    projected.contactBindings,
   );
 }
 

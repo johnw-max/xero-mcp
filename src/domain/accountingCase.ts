@@ -43,6 +43,7 @@ export type AccountingCaseSourceSystem = typeof ACCOUNTING_CASE_SOURCE_SYSTEMS[n
 export const ACCOUNTING_FACT_KINDS = [
   "CONTACT_CANDIDATE",
   "NATIVE_DOCUMENT",
+  "COMMERCIAL_DOCUMENT",
   "PAYMENT",
   "BANK_FEE",
   "PREPAYMENT",
@@ -135,6 +136,20 @@ export type NativeDocumentRoute =
   | "SUPPLIER_CREDIT";
 
 /**
+ * Quotes and purchase orders are structurally invoice-/bill-shaped -- a
+ * counterparty, lines, dates -- but they are not ledger events: Xero posts no
+ * journal lines for either and neither ever appears on the Journals endpoint.
+ * This is a deliberately disjoint route family, not a widened
+ * NativeDocumentRoute. Every place keyed on the four historical routes
+ * (business-coordinate authority, business-coordinate history, firm-
+ * governance authority) stays exhaustive over exactly those four because a
+ * value of this type can never be passed where a NativeDocumentRoute is
+ * required -- the compiler refuses, rather than silently mis-routing through
+ * machinery built for documents that post to the general ledger.
+ */
+export type CommercialDocumentRoute = "QUOTE" | "PURCHASE_ORDER";
+
+/**
  * Opaque provider-native ledger coordinate carried through the shared kernel.
  * Under the released ledger-gateway policy this is the caller-declared Xero
  * account code; the compiler never interprets or maps it.
@@ -216,6 +231,50 @@ export function declaredNativeDocumentLineCoordinate(
   line: NativeDocumentLine,
 ): DeclaredNativeDocumentLineCoordinate {
   return { accountCode: line.accountCode, taxType: line.taxType };
+}
+
+export interface CommercialDocumentLine {
+  lineId: string;
+  description: string;
+  quantity: string;
+  unitAmount: string;
+  /** Explicit provider-native account code declared for this exact line. */
+  accountCode: string;
+  /** Explicit provider-native TaxType declared for this exact line. */
+  taxType: string;
+}
+
+/**
+ * A quote or a purchase order: invoice-/bill-shaped (a counterparty, lines,
+ * dates, a currency) but not a ledger event, since Xero posts no journal
+ * lines for either. Kept as its own fact kind -- not a NativeDocumentFact
+ * variant -- so it can never be routed through machinery built for documents
+ * that post to the general ledger (see CommercialDocumentRoute).
+ *
+ * There is deliberately no declaredNet/declaredTax/declaredGross here: Xero
+ * computes tax on these objects itself from each line's TaxType, and the
+ * released adapter reports only an entered (pre-tax) line total, not a
+ * caller-asserted net/tax/gross split for the compiler to reconcile against.
+ */
+export interface CommercialDocumentFact extends AccountingFactBase {
+  kind: "COMMERCIAL_DOCUMENT";
+  documentKind: "QUOTE" | "PURCHASE_ORDER";
+  /** QUOTE is always CUSTOMER-facing; PURCHASE_ORDER is always SUPPLIER-facing. */
+  counterpartyRole: "CUSTOMER" | "SUPPLIER";
+  reference: string;
+  documentDate: string;
+  /** QUOTE only, and required for it: when the quoted price stops being valid. */
+  expiryDate?: string;
+  /** PURCHASE_ORDER only, both optional logistics dates. */
+  expectedArrivalDate?: string;
+  deliveryDate?: string;
+  currency: string;
+  contactName: string;
+  /** Source-supported namespace for resolving the existing counterparty. */
+  contactDurableIdentity?: ContactDurableIdentity;
+  lineAmountType: "EXCLUSIVE" | "INCLUSIVE" | "NO_TAX";
+  lines: CommercialDocumentLine[];
+  documentValidity: AccountingDocumentValidity;
 }
 
 export interface PaymentFact extends AccountingFactBase {
@@ -400,6 +459,7 @@ export interface ControlFindingFact extends AccountingFactBase {
 export type AccountingFact =
   | ContactCandidateFact
   | NativeDocumentFact
+  | CommercialDocumentFact
   | PaymentFact
   | BankFeeFact
   | PrepaymentFact
@@ -427,7 +487,7 @@ export interface AccountingEvent {
   factIds: string[];
   sourceUnitIds: string[];
   disposition: AccountingEventDisposition;
-  route?: NativeDocumentRoute | "CONTACT_CREATE";
+  route?: NativeDocumentRoute | CommercialDocumentRoute | "CONTACT_CREATE";
   reasonCodes: string[];
 }
 
@@ -529,8 +589,10 @@ export interface AccountingCaseOperation {
     | "contact.create_basic"
     | "customer_invoice.create_draft"
     | "supplier_bill.create_draft"
-    | "credit_note.create_draft";
-  nativeRoute: NativeDocumentRoute | "CONTACT_CREATE";
+    | "credit_note.create_draft"
+    | "quote.create_draft"
+    | "purchase_order.create_draft";
+  nativeRoute: NativeDocumentRoute | CommercialDocumentRoute | "CONTACT_CREATE";
   dependencyEventKeys: string[];
   canonicalPayload: Record<string, unknown>;
   canonicalPayloadHash: string;

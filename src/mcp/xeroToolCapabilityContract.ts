@@ -71,6 +71,8 @@ export const XERO_TOOL_CAPABILITY_ACTION_IDS = {
     "customer_invoice.create_draft",
     "supplier_bill.create_draft",
     "credit_note.create_draft",
+    "quote.create_draft",
+    "purchase_order.create_draft",
   ],
   xero_get_accounting_case_status: ["organisation.read_prepare"],
   xero_list_accounting_cases: ["organisation.read_prepare"],

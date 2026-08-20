@@ -1,5 +1,5 @@
 import type { AccountingCaseProviderBusinessHistoryLookup } from "../control-kernel/accountingCaseProviderContract.js";
-import type { AccountingCaseOperation, NativeDocumentRoute } from "../domain/accountingCase.js";
+import type { AccountingCaseOperation, CommercialDocumentRoute, NativeDocumentRoute } from "../domain/accountingCase.js";
 import { hashObject, stableStringify } from "../security/hash.js";
 import {
   XERO_REFERENCE_COORDINATE_NORMALIZATION_VERSION,
@@ -81,12 +81,27 @@ function providerReference(
  * deliberately does not trust a caller-supplied `canonicalEconomicMatch`
  * boolean: repositories use these reasons before persisting a no-write state.
  */
+function isCommercialDocumentRoute(
+  route: AccountingCaseOperation["nativeRoute"],
+): route is CommercialDocumentRoute {
+  return route === "QUOTE" || route === "PURCHASE_ORDER";
+}
+
 export function xeroExistingDocumentMismatchReasons(
   operation: AccountingCaseOperation,
   rawSnapshot: unknown,
   expectedObjectId?: string,
 ): string[] {
   if (operation.nativeRoute === "CONTACT_CREATE") return ["NATIVE_DOCUMENT_ROUTE_REQUIRED"];
+  // Quotes/purchase orders are not ledger events (see CommercialDocumentRoute
+  // in accountingCase.ts) and have no pre-write existing-document check at
+  // all -- xeroBusinessCoordinateHistory only knows how to list/get invoices
+  // and credit notes. Said explicitly rather than left to fall through
+  // expectedProviderType()/expectedAction() below, which are typed to
+  // NativeDocumentRoute and would not accept this value anyway.
+  if (isCommercialDocumentRoute(operation.nativeRoute)) {
+    return ["EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE"];
+  }
   const route = operation.nativeRoute;
   const payload = operation.canonicalPayload;
   const snapshot = record(rawSnapshot);

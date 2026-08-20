@@ -135,6 +135,8 @@ export const AGENT_REACHABLE_WRITE_ACTIONS = Object.freeze([
   "contact.create_basic",
   "credit_note.create_draft",
   "customer_invoice.create_draft",
+  "purchase_order.create_draft",
+  "quote.create_draft",
   "supplier_bill.create_draft",
 ] as const satisfies readonly XeroWriteActionId[]);
 
@@ -154,8 +156,6 @@ export function isAgentReachableWriteAction(id: XeroWriteActionId): boolean {
  * compile until it is handled.
  */
 export const CASE_EXECUTOR_PENDING_ACTIONS = Object.freeze([
-  "quote.create_draft",
-  "purchase_order.create_draft",
   "manual_journal.create_draft",
 ] as const satisfies readonly XeroWriteActionId[]);
 

@@ -129,6 +129,53 @@ const nativeDocumentLine = z.object({
   taxType,
 }).strict();
 
+// Quote/purchase-order lines: same provider-native account_code/tax_type
+// coordinate as native-document lines, but no sourceTax -- there is no
+// caller-declared net/tax/gross to reconcile a source tax figure against
+// (see CommercialDocumentFact in accountingCase.ts).
+const commercialDocumentLine = z.object({
+  lineId: id,
+  description: z.string().trim().min(1).max(1_000),
+  quantity: positiveDecimal4,
+  unitAmount: nonNegativeDecimal4,
+  accountCode,
+  taxType,
+}).strict();
+
+const commercialDocument = z.object({
+  ...factBase,
+  kind: z.literal("COMMERCIAL_DOCUMENT"),
+  documentKind: z.enum(["QUOTE", "PURCHASE_ORDER"]),
+  counterpartyRole: z.enum(["CUSTOMER", "SUPPLIER"]),
+  reference: z.string().trim().min(1).max(255),
+  documentDate: date,
+  // QUOTE requires this; PURCHASE_ORDER never sets it. Requiredness by
+  // documentKind is a route-contract concern (like INVOICE's dueDate below),
+  // not a schema-level one -- see commercialDocumentRouteReasonCodes in
+  // accountingCaseCompiler.ts.
+  expiryDate: date.optional(),
+  // PURCHASE_ORDER only, both optional; QUOTE never sets either.
+  expectedArrivalDate: date.optional(),
+  deliveryDate: date.optional(),
+  currency,
+  contactName: z.string().trim().min(1).max(255),
+  contactDurableIdentity: contactDurableIdentity.optional(),
+  lineAmountType: z.enum(["EXCLUSIVE", "INCLUSIVE", "NO_TAX"]),
+  lines: z.array(commercialDocumentLine).min(1).max(20)
+    .refine((lines) => new Set(lines.map((line) => line.lineId)).size === lines.length, "line IDs must be unique"),
+  documentValidity: z.enum(["VALID_FOR_LIVE_BOOKS", "TEST_OR_NOT_VALID", "UNKNOWN"]),
+}).strict().superRefine((value, context) => {
+  if (value.expiryDate && value.expiryDate < value.documentDate) {
+    context.addIssue({ code: "custom", path: ["expiryDate"], message: "must not be before documentDate" });
+  }
+  if (value.expectedArrivalDate && value.expectedArrivalDate < value.documentDate) {
+    context.addIssue({ code: "custom", path: ["expectedArrivalDate"], message: "must not be before documentDate" });
+  }
+  if (value.deliveryDate && value.deliveryDate < value.documentDate) {
+    context.addIssue({ code: "custom", path: ["deliveryDate"], message: "must not be before documentDate" });
+  }
+});
+
 const nativeDocument = z.object({
   ...factBase,
   kind: z.literal("NATIVE_DOCUMENT"),
@@ -391,6 +438,7 @@ const control = z.object({
 export const accountingFactSchema = z.discriminatedUnion("kind", [
   contact,
   nativeDocument,
+  commercialDocument,
   payment,
   bankFee,
   prepayment,
