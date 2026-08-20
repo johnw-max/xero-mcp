@@ -161,6 +161,8 @@ function fixedFour(value: number): string {
 
 class DurableSyntheticXeroProvider implements AccountingProvider {
   readonly #contact: ContactSummary;
+  /** ContactSummary.name is optional on the real interface; this fixture always sets it. */
+  readonly #contactName = "Exact Customer";
   readonly #accounts: readonly AccountSummary[];
   readonly #taxRate: TaxRateSummary;
 
@@ -172,7 +174,7 @@ class DurableSyntheticXeroProvider implements AccountingProvider {
   ) {
     this.#contact = Object.freeze({
       contactId: metadata.contact_id,
-      name: "Exact Customer",
+      name: this.#contactName,
       status: "ACTIVE",
       isCustomer: true,
     });
@@ -210,7 +212,7 @@ class DurableSyntheticXeroProvider implements AccountingProvider {
     organisationStatus: "ACTIVE",
   });
 
-  readonly listAccounts: AccountingProvider["listAccounts"] = async () => structuredClone(this.#accounts);
+  readonly listAccounts: AccountingProvider["listAccounts"] = async () => structuredClone([...this.#accounts]);
   readonly listTaxRates: AccountingProvider["listTaxRates"] = async () => [structuredClone(this.#taxRate)];
   readonly listContacts: AccountingProvider["listContacts"] = async () => ({
     contacts: [structuredClone(this.#contact)],
@@ -226,7 +228,7 @@ class DurableSyntheticXeroProvider implements AccountingProvider {
     tenant: { id: this.metadata.tenant_id, name: "Crash Harness Company" },
     contacts: [structuredClone(this.#contact)],
     contactsComplete: true,
-    accounts: structuredClone(this.#accounts),
+    accounts: structuredClone([...this.#accounts]),
     taxRates: [structuredClone(this.#taxRate)],
   });
   readonly getContact: AccountingProvider["getContact"] = async (_principal, contactId) =>
@@ -370,7 +372,7 @@ class DurableSyntheticXeroProvider implements AccountingProvider {
         unitAmount: fixedFour(line.unit_amount),
         lineAmount: fixedFour(amount),
         taxAmount: fixedFour(amount * 0.09),
-        accountId: line.account_id,
+        ...(line.account_id !== undefined ? { accountId: line.account_id } : {}),
         accountCode: line.account_code,
         taxType: line.tax_type,
       };
@@ -382,7 +384,7 @@ class DurableSyntheticXeroProvider implements AccountingProvider {
       invoiceId: this.metadata.invoice_id,
       type: "ACCREC",
       status: "DRAFT",
-      contact: { contactId: this.metadata.contact_id, name: this.#contact.name },
+      contact: { contactId: this.metadata.contact_id, name: this.#contactName },
       invoiceDate: input.invoice_date,
       dueDate: input.due_date,
       currency: input.currency,
@@ -456,7 +458,6 @@ function instrumentRepository(
 async function seed(
   repository: PostgresAccountingRepository,
   metadata: RuntimeMetadata,
-  context: RequestContext,
 ): Promise<void> {
   const anchor = new Date(metadata.anchor_at);
   const expiresAt = new Date(metadata.target_expires_at);
@@ -631,7 +632,7 @@ async function main(): Promise<void> {
   const durableRepository = new PostgresAccountingRepository(databaseUrl);
   try {
     const context = requestContext(metadata);
-    if (args.phase === "initial") await seed(durableRepository, metadata, context);
+    if (args.phase === "initial") await seed(durableRepository, metadata);
     const repository = instrumentRepository(durableRepository, args.scenario, args.phase);
     const provider = new DurableSyntheticXeroProvider(durableRepository, metadata, args.scenario, args.phase);
     const anchor = new Date(metadata.anchor_at);

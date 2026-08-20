@@ -263,7 +263,9 @@ function applicationConfig(tenantId: string): AppConfig {
     },
     xeroWriteEnabled: false,
     xeroAllowedTenantId: tenantId,
+    xeroAuthorityRevision: 1,
     tokenEncryptionKey: Buffer.alloc(32, 7),
+    xeroMutationConfirmationKey: Buffer.alloc(32, 8),
     demoActorId: "p0-readonly-demo-actor",
     logLevel: "error",
   };
@@ -591,7 +593,22 @@ async function executeTool(options: {
   let isError = false;
   let thrown: unknown;
   try {
-    callToolResult = await options.client.callTool({ name: tool, arguments: input });
+    const rawResult = await options.client.callTool({ name: tool, arguments: input });
+    // callTool()'s declared return type is a union with the legacy
+    // toolResult-shaped CompatibilityCallToolResultSchema branch, but the
+    // SDK's own runtime default (resultSchema = CallToolResultSchema; see
+    // @modelcontextprotocol/sdk client/index.js) already guarantees a
+    // content-shaped result whenever no compatibility schema is requested,
+    // which this harness never does. Verify that guarantee instead of just
+    // asserting it: the two content-shaped declarations in the SDK's own
+    // .d.ts (this call's inline return type and the separately exported
+    // CallToolResult) are not nominally identical under
+    // exactOptionalPropertyTypes, so structural narrowing alone cannot
+    // collapse them.
+    if (!("content" in rawResult) || !Array.isArray(rawResult.content)) {
+      throw new Error(`Tool ${tool} returned a non-standard MCP result without a content array.`);
+    }
+    callToolResult = rawResult as CallToolResult;
     structuredContent = callToolResult.structuredContent;
     modelText = firstModelText(callToolResult);
     isError = callToolResult.isError === true;
@@ -1037,7 +1054,8 @@ export async function executeP0ReadOnlySuite(
     prepare: unavailableCaseOperation,
     execute: rejectOrdinaryReadOnlyExecution,
     status: unavailableCaseOperation,
-  } as unknown as Pick<XeroAccountingCaseService, "prepare" | "execute" | "status">;
+    listAttentionCases: unavailableCaseOperation,
+  } as unknown as Pick<XeroAccountingCaseService, "prepare" | "execute" | "status" | "listAttentionCases">;
   const server = createAccountingMcpServer(service, context, undefined, undefined, accountingCases);
   const client = new Client({ name: "xero-p0-readonly-harness", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

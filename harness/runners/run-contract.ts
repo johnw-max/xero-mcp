@@ -224,7 +224,11 @@ async function main(): Promise<void> {
         completion_claim: { ledger_write_claim: "NOT_WRITTEN" },
       };
     },
-  } as unknown as Pick<XeroAccountingCaseService, "prepare" | "execute" | "status">;
+    listAttentionCases: async (...args: unknown[]) => {
+      harnessService.calls.push({ method: "accountingCase.listAttentionCases", arguments: args });
+      return { cases: [], has_more: false };
+    },
+  } as unknown as Pick<XeroAccountingCaseService, "prepare" | "execute" | "status" | "listAttentionCases">;
   const context = createLegacySharedBearerRequestContext({
     actorId: "contract-harness-read-only",
     audience: "https://xero-mcp.contract-harness.invalid/mcp",

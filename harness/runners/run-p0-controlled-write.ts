@@ -730,7 +730,6 @@ async function postingForInput(
   input: CreateDraftSupplierBillInput,
 ): Promise<PostingRequest | undefined> {
   return harness.backingRepository.findActivePostingDuplicate({
-    actorId: harness.context.actorId,
     tenantId: harness.provider.tenantId,
     sourceSha256: input.source_sha256,
     contactId: input.contact_id.trim().toLowerCase(),

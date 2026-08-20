@@ -148,6 +148,21 @@ interface LocalAgentProtocolObserver {
 
 /** Harness-only transport tap; production MCP behavior remains unchanged. */
 class AuditedLocalAgentTransport implements Transport {
+  /**
+   * A `get sessionId()` accessor of type `string | undefined` cannot satisfy
+   * `Transport`'s `sessionId?: string` under `exactOptionalPropertyTypes`:
+   * TypeScript requires "string when present" for an optional property, and
+   * an accessor is always present, so it can never be typed to admit
+   * `undefined` (the MCP SDK's own StreamableHTTPServerTransport hits the
+   * identical shape and is only spared because its .d.ts is trusted, not
+   * re-checked). Declaring the field with `declare` and wiring the live
+   * pass-through via defineProperty keeps this the same plain
+   * optional-property shape the interface declares, checkable as such, with
+   * identical runtime behaviour to the getter it replaces - nothing in the
+   * SDK ever writes to a Transport's sessionId, so a getter-only descriptor
+   * changes nothing observable.
+   */
+  declare readonly sessionId?: string;
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: <T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void;
@@ -156,16 +171,17 @@ class AuditedLocalAgentTransport implements Transport {
     private readonly inner: Transport,
     private readonly observer: LocalAgentProtocolObserver,
   ) {
+    Object.defineProperty(this, "sessionId", {
+      enumerable: false,
+      configurable: true,
+      get: (): string | undefined => this.inner.sessionId,
+    });
     inner.onclose = () => this.onclose?.();
     inner.onerror = (error) => this.onerror?.(error);
     inner.onmessage = (message, extra) => {
       this.observer.receive(message);
       this.onmessage?.(message, extra);
     };
-  }
-
-  get sessionId(): string | undefined {
-    return this.inner.sessionId;
   }
 
   async start(): Promise<void> {
@@ -215,9 +231,12 @@ const TARGET_SESSION_CREATED_AT = new Date(RUN_CLOCK_ANCHOR.getTime() - 30 * 60_
 const TARGET_SESSION_EXPIRES_AT = new Date(RUN_CLOCK_ANCHOR.getTime() + 2 * 60 * 60_000);
 const ACCOUNT_ID = "33333333-3333-4333-8333-333333333333";
 
+/** ContactSummary.name is optional on the real interface; this fixture always sets it. */
+const CONTACT_NAME = "Exact Customer";
+
 const CONTACT: ContactSummary = Object.freeze({
   contactId: CONTACT_ID,
-  name: "Exact Customer",
+  name: CONTACT_NAME,
   status: "ACTIVE",
   isCustomer: true,
 });
@@ -364,7 +383,7 @@ class P0XeroProviderFake implements AccountingProvider {
     organisationStatus: "ACTIVE",
   });
 
-  readonly listAccounts: AccountingProvider["listAccounts"] = async () => structuredClone(ACCOUNTS);
+  readonly listAccounts: AccountingProvider["listAccounts"] = async () => structuredClone([...ACCOUNTS]);
   readonly listTaxRates: AccountingProvider["listTaxRates"] = async () => TAX_RATES.map((rate) => structuredClone(rate));
   readonly listContacts: AccountingProvider["listContacts"] = async () => ({
     contacts: [structuredClone(CONTACT)],
@@ -372,7 +391,7 @@ class P0XeroProviderFake implements AccountingProvider {
   });
   readonly searchContacts: AccountingProvider["searchContacts"] = async (_principal, query) => {
     const canonicalQuery = query.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("en");
-    const canonicalContactName = CONTACT.name.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("en");
+    const canonicalContactName = CONTACT_NAME.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("en");
     const contacts = canonicalQuery === canonicalContactName ? [structuredClone(CONTACT)] : [];
     return { contacts, pagination: this.#singlePage(contacts.length) };
   };
@@ -380,7 +399,7 @@ class P0XeroProviderFake implements AccountingProvider {
     tenant: { id: TENANT_ID, name: "Synthetic Case Company" },
     contacts: [structuredClone(CONTACT)],
     contactsComplete: true,
-    accounts: structuredClone(ACCOUNTS),
+    accounts: structuredClone([...ACCOUNTS]),
     taxRates: TAX_RATES.map((rate) => structuredClone(rate)),
   });
   readonly getContact: AccountingProvider["getContact"] = async (_principal, contactId) =>
@@ -430,7 +449,7 @@ class P0XeroProviderFake implements AccountingProvider {
         unitAmount: fixedFour(line.unit_amount),
         lineAmount: fixedFour(lineAmount),
         taxAmount: fixedFour(minorUnitTax(lineAmount, taxRate)),
-        accountId: line.account_id,
+        ...(line.account_id !== undefined ? { accountId: line.account_id } : {}),
         accountCode: line.account_code,
         taxType: line.tax_type,
       };
@@ -445,7 +464,7 @@ class P0XeroProviderFake implements AccountingProvider {
       invoiceId: INVOICE_ID,
       type: "ACCREC",
       status: "DRAFT",
-      contact: { contactId: CONTACT_ID, name: CONTACT.name },
+      contact: { contactId: CONTACT_ID, name: CONTACT_NAME },
       invoiceDate: input.invoice_date,
       dueDate: input.due_date,
       currency: input.currency,
@@ -542,7 +561,7 @@ class P0XeroProviderFake implements AccountingProvider {
         unitAmount: fixedFour(line.unit_amount),
         lineAmount: fixedFour(lineAmount),
         taxAmount: fixedFour(minorUnitTax(lineAmount, taxRate)),
-        accountId: line.account_id,
+        ...(line.account_id !== undefined ? { accountId: line.account_id } : {}),
         accountCode: line.account_code,
         taxType: line.tax_type,
       };
@@ -557,7 +576,7 @@ class P0XeroProviderFake implements AccountingProvider {
       invoiceId: SUPPLIER_BILL_ID,
       type: "ACCPAY",
       status: "DRAFT",
-      contact: { contactId: CONTACT_ID, name: CONTACT.name },
+      contact: { contactId: CONTACT_ID, name: CONTACT_NAME },
       invoiceDate: input.invoice_date,
       dueDate: input.due_date,
       currency: input.currency,
@@ -616,8 +635,8 @@ class ObservedXeroMutationService extends XeroMutationService {
   constructor(
     ...args: [...ConstructorParameters<typeof XeroMutationService>, RuntimeCounters]
   ) {
-    const counters = args.pop() as RuntimeCounters;
-    super(...args as ConstructorParameters<typeof XeroMutationService>);
+    const [repository, options, counters] = args;
+    super(repository, options);
     this.counters = counters;
   }
 
@@ -1026,6 +1045,9 @@ export async function executeP0AccountingCaseSuite(
     status: async (...args: Parameters<XeroAccountingCaseService["status"]>) => {
       counters.caseStatusCalls += 1;
       return caseService.status(...args);
+    },
+    listAttentionCases: async (...args: Parameters<XeroAccountingCaseService["listAttentionCases"]>) => {
+      return caseService.listAttentionCases(...args);
     },
   };
   const server = createAccountingMcpServer(accounting, context, undefined, undefined, caseRuntime);
@@ -1436,6 +1458,11 @@ export async function startLocalAgentAccountingCaseMcp(
     }],
     publishedAt: new Date(RUN_CLOCK_ANCHOR),
   });
+  // Real evidence, not a plausible fake: the in-memory repository computes
+  // both fields for real from the snapshot just published above and the
+  // Accounting Cases actually stored (see InMemoryAccountingRepository's own
+  // readinessEvidence, which the production /readyz route also calls).
+  const attestationReadiness = await repository.readinessEvidence(XERO_RELEASE_ATTESTATION.requiredMigration);
 
   const provider = new P0XeroProviderFake(counters, "not-prepared", () => writeGateOpen, "NONE");
   const mutations = new ObservedXeroMutationService(repository, {
@@ -1544,8 +1571,17 @@ export async function startLocalAgentAccountingCaseMcp(
       buildIdentityHash: null,
       acceptanceSourceSha256: null,
       sourceArchiveSha256: null,
+      approvedControlCatalogSha256: null,
       writeMode: "WRITE_ENABLED",
       processWriteGateEnabled: true,
+      // This harness publishes the one authority snapshot it runs against
+      // (above) and treats it as authoritative; there is no separate
+      // deployment-config revision to drift from it.
+      configuredAuthorityRevision: authorityPublication.snapshot.revision,
+      // No standing-delegations config file backs this in-process harness,
+      // matching the null buildIdentityHash/acceptanceSourceSha256/
+      // sourceArchiveSha256/approvedControlCatalogSha256 above.
+      standingDelegationsConfigSha256: null,
       authoritySnapshotRevision: authorityPublication.snapshot.revision,
       authoritySnapshotHash: authorityPublication.snapshot.snapshotHash,
       authorityWriteKillSwitchEnabled: authorityPublication.snapshot.writeKillSwitchEnabled,
@@ -1554,6 +1590,8 @@ export async function startLocalAgentAccountingCaseMcp(
       requiredMigration: XERO_RELEASE_ATTESTATION.requiredMigration,
       requiredMigrationStatus: "NOT_APPLICABLE",
       migrationHead: null,
+      activeAccountingCaseRecoveryProjection: attestationReadiness.activeAccountingCaseRecoveryProjection,
+      firmGovernance: attestationReadiness.firmGovernance,
     }),
     runtime_attestation_hash: "",
   };
@@ -1729,7 +1767,10 @@ export async function startLocalAgentAccountingCaseMcp(
       }
       const projection = result as { case_id?: unknown; case_version?: unknown };
       if (typeof projection.case_id === "string" && Number.isInteger(projection.case_version)) {
-        audit.durable_evidence = await durableEvidence(projection.case_id, Number(projection.case_version));
+        const evidence = await durableEvidence(projection.case_id, Number(projection.case_version));
+        if (evidence !== undefined) {
+          audit.durable_evidence = evidence;
+        }
       }
       audit.tool_calls.push({
         server_call_id: serverCallId,
@@ -1796,6 +1837,9 @@ export async function startLocalAgentAccountingCaseMcp(
     status: async (...args: Parameters<XeroAccountingCaseService["status"]>) => {
       counters.caseStatusCalls += 1;
       return captureCall("xero_get_accounting_case_status", args[1], args[0], () => caseService.status(...args));
+    },
+    listAttentionCases: async (...args: Parameters<XeroAccountingCaseService["listAttentionCases"]>) => {
+      return captureCall("xero_list_accounting_cases", {}, args[0], () => caseService.listAttentionCases(...args));
     },
   };
   const observedTargetSessions = {
@@ -1970,7 +2014,8 @@ export async function executeLocalAgentTargetSessionNegativeSuite(
       return { state: "TERMINAL" };
     },
     status: async () => ({ state: "TERMINAL" }),
-  } as unknown as Pick<XeroAccountingCaseService, "prepare" | "execute" | "status">;
+    listAttentionCases: async () => ({ cases: [], has_more: false }),
+  } as unknown as Pick<XeroAccountingCaseService, "prepare" | "execute" | "status" | "listAttentionCases">;
 
   const call = async (
     scenarioContext: RequestContext,
