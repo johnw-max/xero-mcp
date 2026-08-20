@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../config.js";
 import type { AccountingRepository } from "../db/repository.js";
 import type { NextFunction, Request, Response } from "express";
+import { AppError } from "../errors.js";
 import type { Logger } from "../logging.js";
 import type { XeroOAuthService } from "../oauth/xeroOAuthService.js";
 import type { McpOAuthBrokerProvider } from "../oauth/mcpOAuthBrokerProvider.js";
@@ -692,5 +693,264 @@ describe("ticket-bound Xero OAuth identity boundary", () => {
     })).rejects.toThrow("access_denied");
 
     expect(createOperatorSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("Broker browser error pages", () => {
+  function brokerAppConfig(): AppConfig {
+    const config = requestContextTestConfig();
+    config.mcpOAuthBroker = {
+      enabled: true,
+      issuer: config.publicBaseUrl,
+      resourceUri: `${config.publicBaseUrl}/mcp`,
+      protectedResourceUris: [`${config.publicBaseUrl}/mcp`],
+      authorizationPath: "/authorize",
+      tokenPath: "/token",
+      revocationPath: "/revoke",
+      authorizationEndpoint: `${config.publicBaseUrl}/authorize`,
+      tokenEndpoint: `${config.publicBaseUrl}/token`,
+      revocationEndpoint: `${config.publicBaseUrl}/revoke`,
+      scopes: ["xero.read", "xero.draft.write"],
+      personalPocOnly: true,
+      hostClients: [{
+        name: "Agent2",
+        clientId: "agent2-client",
+        clientSecret: "s".repeat(43),
+        redirectUris: ["https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callback"],
+      }],
+      missingResourceCompatClientIds: [],
+      manualReturnClientIds: [],
+      accessTokenTtlSeconds: 900,
+      refreshTokenTtlSeconds: 2_592_000,
+      authorizationCodeTtlSeconds: 300,
+      browserFlowTtlSeconds: 600,
+      tokenHashKey: Buffer.alloc(32, 1),
+      cookieStateKey: Buffer.alloc(32, 2),
+    };
+    return config;
+  }
+
+  function brokerAppWithProvider(overrides: Partial<McpOAuthBrokerProvider>) {
+    const config = brokerAppConfig();
+    if (!config.mcpOAuthBroker?.enabled) throw new Error("test broker config must be enabled");
+    const clientsStore = new StaticOAuthClientsStore(
+      config.mcpOAuthBroker.hostClients,
+      config.mcpOAuthBroker.scopes,
+    );
+    const mcpOAuthProvider = {
+      clientsStore,
+      skipLocalPkceValidation: true,
+      authorize: vi.fn(),
+      challengeForAuthorizationCode: vi.fn(),
+      exchangeAuthorizationCode: vi.fn(),
+      exchangeRefreshToken: vi.fn(),
+      verifyAccessToken: vi.fn(),
+      revokeToken: vi.fn(),
+      handleXeroCallback: vi.fn(),
+      handleOrganisationSelection: vi.fn(),
+      ...overrides,
+    } as unknown as McpOAuthBrokerProvider;
+    const app = createHttpApp({
+      config,
+      repository: {} as AccountingRepository,
+      accountingService: {} as AccountingService,
+      oauthService: {} as XeroOAuthService,
+      reviewService: {} as ReviewService,
+      connectionTickets: {} as ConnectionTicketService,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger,
+      mcpOAuthProvider,
+    });
+    return app;
+  }
+
+  /**
+   * Pulls the exact function registered by `app.get`/`app.post` out of
+   * Express's own router stack — the same introspection the "mounts the
+   * Broker selection callback" test above already relies on — so this calls
+   * the real, wired-up route handler (try/catch and all) rather than a
+   * reimplementation of it.
+   */
+  function registeredBrokerHandler(
+    app: ReturnType<typeof createHttpApp>,
+    path: string,
+    method: "get" | "post",
+  ): (request: Request, response: Response) => Promise<void> {
+    const stack = (app as unknown as {
+      router: {
+        stack: Array<{
+          route?: { path?: string; stack: Array<{ method?: string; handle: unknown }> };
+        }>;
+      };
+    }).router.stack;
+    for (const layer of stack) {
+      if (layer.route?.path !== path) continue;
+      for (const inner of layer.route.stack) {
+        if (inner.method === method) {
+          return inner.handle as (request: Request, response: Response) => Promise<void>;
+        }
+      }
+    }
+    throw new Error(`No ${method.toUpperCase()} handler registered for ${path}`);
+  }
+
+  function fakeBrokerResponse() {
+    const state: { statusCode?: number; type?: string; body?: string; headers: Map<string, unknown> } = {
+      headers: new Map(),
+    };
+    const response = {
+      setHeader: vi.fn((name: string, value: unknown) => {
+        state.headers.set(name.toLowerCase(), value);
+        return response;
+      }),
+      status: vi.fn((status: number) => {
+        state.statusCode = status;
+        return response;
+      }),
+      type: vi.fn((value: string) => {
+        state.type = value;
+        return response;
+      }),
+      send: vi.fn((body: string) => {
+        state.body = body;
+        return response;
+      }),
+      json: vi.fn((body: unknown) => {
+        state.body = JSON.stringify(body);
+        return response;
+      }),
+    } as unknown as Response;
+    return { response, state };
+  }
+
+  it("renders a styled human page, never bare JSON, when the organisation chooser POST is rejected", async () => {
+    const app = brokerAppWithProvider({
+      handleOrganisationSelection: vi.fn(async () => {
+        throw new AppError("FORBIDDEN", "The organisation selection has expired or was already used.", {
+          httpStatus: 403,
+          details: { resultStatus: "FLOW_SELECTION_MISSING" },
+        });
+      }),
+    });
+    const handler = registeredBrokerHandler(app, "/oauth/xero/callback", "post");
+    const { response, state } = fakeBrokerResponse();
+
+    await handler({ method: "POST", path: "/oauth/xero/callback" } as Request, response);
+
+    expect(state.statusCode).toBe(403);
+    expect(state.type).toBe("html");
+    expect(response.json).not.toHaveBeenCalled();
+    expect(state.body).not.toMatch(/^\s*\{/);
+    expect(state.body).not.toContain("FLOW_SELECTION_MISSING");
+    expect(state.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(state.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("gives the legacy compatibility select route the same human-page treatment", async () => {
+    const app = brokerAppWithProvider({
+      handleOrganisationSelection: vi.fn(async () => {
+        throw new AppError("FORBIDDEN", "The organisation selection is invalid or was already used.", {
+          httpStatus: 403,
+          details: { resultStatus: "SELECTION_COMPLETE_REJECTED" },
+        });
+      }),
+    });
+    const handler = registeredBrokerHandler(app, "/oauth/xero/select", "post");
+    const { response, state } = fakeBrokerResponse();
+
+    await handler({ method: "POST", path: "/oauth/xero/select" } as Request, response);
+
+    expect(state.type).toBe("html");
+    expect(response.json).not.toHaveBeenCalled();
+    expect(state.body).toContain("wait");
+  });
+
+  it("renders a human page for a rejected GET Xero-redirect callback too", async () => {
+    const app = brokerAppWithProvider({
+      handleXeroCallback: vi.fn(async () => {
+        throw new AppError("FORBIDDEN", "The OAuth browser flow is invalid, expired, or already used.", {
+          httpStatus: 403,
+        });
+      }),
+    });
+    const handler = registeredBrokerHandler(app, "/oauth/xero/callback", "get");
+    const { response, state } = fakeBrokerResponse();
+
+    await handler({ method: "GET", path: "/oauth/xero/callback" } as Request, response);
+
+    expect(state.type).toBe("html");
+    expect(response.json).not.toHaveBeenCalled();
+    expect(state.body).not.toMatch(/^\s*\{/);
+  });
+
+  it.each([
+    ["FLOW_ALREADY_COMPLETED", "already completed", "if you already finished connecting"],
+    ["SELECTION_COMPLETE_REJECTED", "still wrapping up", "wait"],
+    ["CONNECTION_NOT_DISCOVERED", "no longer valid", "restart the connection"],
+    ["HOST_STATE_MISMATCH", "could not be completed", "restart the connection"],
+  ] as const)(
+    "gives resultStatus %s its own distinct, honest user-facing text",
+    async (resultStatus, ...expectedPhrases) => {
+      const app = brokerAppWithProvider({
+        handleOrganisationSelection: vi.fn(async () => {
+          throw new AppError("FORBIDDEN", "message", { httpStatus: 403, details: { resultStatus } });
+        }),
+      });
+      const handler = registeredBrokerHandler(app, "/oauth/xero/callback", "post");
+      const { response, state } = fakeBrokerResponse();
+
+      await handler({ method: "POST", path: "/oauth/xero/callback" } as Request, response);
+
+      for (const phrase of expectedPhrases) {
+        expect(state.body?.toLowerCase()).toContain(phrase.toLowerCase());
+      }
+    },
+  );
+
+  it("never claims 'already connected' for FLOW_SELECTION_MISSING — it cannot prove a completion, so it must not assert one", async () => {
+    // FLOW_SELECTION_MISSING covers every reason a selection can be
+    // unavailable that is *not* a proven completion (expired, never
+    // reached AWAITING_SELECTION, denied, or simply unprovable from this
+    // process). Only FLOW_ALREADY_COMPLETED — which the provider reports
+    // solely from its own completed-selection cache — may render the
+    // confident "already connected" copy tested above.
+    const app = brokerAppWithProvider({
+      handleOrganisationSelection: vi.fn(async () => {
+        throw new AppError("FORBIDDEN", "The organisation selection has expired or was already used.", {
+          httpStatus: 403,
+          details: { resultStatus: "FLOW_SELECTION_MISSING" },
+        });
+      }),
+    });
+    const handler = registeredBrokerHandler(app, "/oauth/xero/callback", "post");
+    const { response, state } = fakeBrokerResponse();
+
+    await handler({ method: "POST", path: "/oauth/xero/callback" } as Request, response);
+
+    expect(state.body).not.toContain("Already connected");
+    expect(state.body?.toLowerCase()).not.toContain("already connected");
+    expect(state.body?.toLowerCase()).toContain("may have expired");
+    expect(state.body?.toLowerCase()).toContain("if you already finished connecting, check your ai assistant");
+  });
+
+  it("keeps the four resultStatus pages textually distinct from one another", async () => {
+    const bodies = new Map<string, string>();
+    for (const resultStatus of [
+      "FLOW_ALREADY_COMPLETED",
+      "SELECTION_COMPLETE_REJECTED",
+      "CONNECTION_NOT_DISCOVERED",
+      "HOST_STATE_MISMATCH",
+    ]) {
+      const app = brokerAppWithProvider({
+        handleOrganisationSelection: vi.fn(async () => {
+          throw new AppError("FORBIDDEN", "message", { httpStatus: 403, details: { resultStatus } });
+        }),
+      });
+      const handler = registeredBrokerHandler(app, "/oauth/xero/callback", "post");
+      const { response, state } = fakeBrokerResponse();
+      await handler({ method: "POST", path: "/oauth/xero/callback" } as Request, response);
+      bodies.set(resultStatus, state.body ?? "");
+    }
+    const distinctBodies = new Set(bodies.values());
+    expect(distinctBodies.size).toBe(bodies.size);
   });
 });

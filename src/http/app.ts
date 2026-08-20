@@ -19,9 +19,12 @@ import { createMcpOAuthRouter } from "../oauth/mcpOAuthRouter.js";
 import {
   classifyBrokerBrowserOrigin,
   classifyBrokerFetchMetadata,
+  setSelectionPageHeaders,
   type McpOAuthBrokerProvider,
 } from "../oauth/mcpOAuthBrokerProvider.js";
 import {
+  brokerErrorPageReason,
+  renderBrokerErrorPage,
   renderOrganisationSwitchPage,
   renderOrganisationSwitchResultPage,
 } from "../oauth/brokerPages.js";
@@ -566,6 +569,34 @@ function setPrivateHtmlHeaders(response: Response): void {
   response.setHeader("Content-Security-Policy", "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
 }
 
+/**
+ * Every error reachable from the Broker's browser-facing Xero callback and
+ * organisation chooser lands here instead of the generic JSON handler at the
+ * bottom of this file. A `{"error":...}` body is right for the MCP/OAuth API
+ * surface; it is wrong for the first screen a person sees while connecting
+ * Xero to their Host, where it reads as "the integration is broken" even
+ * when the underlying condition — already connected, a previous attempt
+ * still settling — is normal and recoverable.
+ */
+function respondWithBrokerErrorPage(
+  response: Response,
+  request: Request,
+  error: unknown,
+  logger: Logger,
+): void {
+  const safe = toSafeError(error);
+  const resultStatus = typeof safe.details?.resultStatus === "string" ? safe.details.resultStatus : undefined;
+  logger.warn("HTTP request rejected.", {
+    method: request.method,
+    path: safeLogPath(request),
+    errorCode: safe.code,
+    ...(resultStatus ? { resultStatus } : {}),
+  });
+  if (response.headersSent) return;
+  setSelectionPageHeaders(response);
+  response.status(safe.httpStatus).type("html").send(renderBrokerErrorPage(brokerErrorPageReason(resultStatus)));
+}
+
 export async function beginTicketBoundXeroOAuth(options: {
   ticket: string;
   browserSession: string;
@@ -820,19 +851,31 @@ export function createHttpApp(options: {
 
   if (brokerConfig?.enabled && mcpOAuthProvider) {
     app.get("/oauth/xero/callback", async (request, response) => {
-      await mcpOAuthProvider.handleXeroCallback(request, response);
+      try {
+        await mcpOAuthProvider.handleXeroCallback(request, response);
+      } catch (error) {
+        respondWithBrokerErrorPage(response, request, error, logger);
+      }
     });
     // Use the same neutral callback path for the first-party organisation
     // confirmation POST. Some Host browser profiles block top-level requests
     // whose path ends in `/select`, even after the request reaches the server,
     // and therefore discard the authorization-code redirect response.
     app.post("/oauth/xero/callback", async (request, response) => {
-      await mcpOAuthProvider.handleOrganisationSelection(request, response);
+      try {
+        await mcpOAuthProvider.handleOrganisationSelection(request, response);
+      } catch (error) {
+        respondWithBrokerErrorPage(response, request, error, logger);
+      }
     });
     // Compatibility for an already-rendered, short-lived selection page from
     // the previous release. New pages never emit this action.
     app.post("/oauth/xero/select", async (request, response) => {
-      await mcpOAuthProvider.handleOrganisationSelection(request, response);
+      try {
+        await mcpOAuthProvider.handleOrganisationSelection(request, response);
+      } catch (error) {
+        respondWithBrokerErrorPage(response, request, error, logger);
+      }
     });
   } else {
     app.get("/connect/xero", async (request, response) => {

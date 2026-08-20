@@ -430,15 +430,43 @@ describe("MCP OAuth Broker provider", () => {
     expect(hostCallback.searchParams.get("state")).toBe("agent2-host-state");
     expect(hostCallback.searchParams.get("code")).toBe("r".repeat(43));
 
-    await expect(provider.handleOrganisationSelection(request({
+    // A second submit of the exact same chooser form — a double click, an
+    // impatient second tap, a back-button resubmit — must come back as the
+    // identical outcome, not an error: the caller's intent was already
+    // satisfied by the first submit, and no new credential is minted.
+    const replay = capturedResponse();
+    await provider.handleOrganisationSelection(request({
       originalUrl: "/oauth/xero/select",
       cookie: `${flowCookie?.name}=${flowCookie?.value}`,
       origin: "null",
       trustedNavigationMetadata: true,
       body: { csrf_token: csrfToken, selection_ticket: selectionTicket, connection_id: "conn_xero_demo" },
+    }), replay.response);
+    expect(replay.statuses).toEqual([200]);
+    expect(replay.redirects).toEqual([]);
+    expect(replay.cleared).toContain("__Host-zcloak_oauth_flow");
+    expect(replay.body).toBe(selection.body);
+    expect(replay.headers.get("content-security-policy")).toBe(
+      selection.headers.get("content-security-policy"),
+    );
+
+    // Naming a *different* connection than what this flow actually
+    // completed is not "the same request" even with an otherwise-valid
+    // ticket, so it is never replayed as a silent organisation switch — it
+    // still fails, distinctly from the safe retry case above. It is,
+    // however, still a *known* completion (the cache has this exact flow's
+    // outcome, just for the other connection), so the reason must say so
+    // rather than falling back to the generic "selection missing" code.
+    await expect(provider.handleOrganisationSelection(request({
+      originalUrl: "/oauth/xero/select",
+      cookie: `${flowCookie?.name}=${flowCookie?.value}`,
+      origin: "null",
+      trustedNavigationMetadata: true,
+      body: { csrf_token: csrfToken, selection_ticket: selectionTicket, connection_id: "some-other-connection" },
     }), capturedResponse().response)).rejects.toMatchObject({
       code: "FORBIDDEN",
       message: expect.stringMatching(/expired|already used/i),
+      details: { resultStatus: "FLOW_ALREADY_COMPLETED" },
     });
 
     const tokens = await provider.exchangeAuthorizationCode(
@@ -466,6 +494,128 @@ describe("MCP OAuth Broker provider", () => {
       redirectUri,
       new URL(brokerConfig.resourceUri),
     )).rejects.toMatchObject({ errorCode: "invalid_grant" });
+  });
+
+  it("never claims a completion it cannot prove: a selection that is simply gone stays FLOW_SELECTION_MISSING, not FLOW_ALREADY_COMPLETED", async () => {
+    const appConfig = config();
+    const brokerConfig = appConfig.mcpOAuthBroker;
+    if (!brokerConfig?.enabled) throw new Error("test broker must be enabled");
+    const repository = new InMemoryAccountingRepository();
+    let xeroState = "";
+    const manager = {
+      createOAuthClient: vi.fn((state: string) => {
+        xeroState = state;
+        return { buildConsentUrl: async () => `https://login.xero.test/authorize?state=${state}` };
+      }),
+    } as unknown as XeroClientManager;
+    const xeroAuthorization = {
+      exchange: vi.fn(async (input: {
+        authorizationId: string;
+        workspaceId: string;
+        authorizedBySubject: string;
+        now: Date;
+      }) => ({
+        authorization: {
+          authorizationId: input.authorizationId,
+          workspaceId: input.workspaceId,
+          authorizedBySubject: input.authorizedBySubject,
+          provider: "xero" as const,
+          grantedScopes: ["openid"],
+          tokenCiphertext: "ciphertext",
+          tokenExpiresAt: new Date(input.now.getTime() + 1_800_000),
+          refreshVersion: 0,
+          status: "ACTIVE" as const,
+          createdAt: input.now,
+          updatedAt: input.now,
+        },
+        connections: [{
+          connectionId: "conn_never_completed",
+          authorizationId: input.authorizationId,
+          provider: "xero" as const,
+          providerConnectionId: "official-xero-connection",
+          tenantId: "tenant-never-completed",
+          tenantName: "Never Completed Ltd",
+          status: "ACTIVE" as const,
+          lastVerifiedAt: input.now,
+          createdAt: input.now,
+          updatedAt: input.now,
+        }],
+      })),
+    } as unknown as BrokerXeroAuthorizationService;
+    const tokenService = new McpOAuthTokenService({
+      config: brokerConfig,
+      repository,
+      cipher: retryCipher,
+      clock: () => now,
+    });
+    const generated = ["b".repeat(43), "x".repeat(43), "c".repeat(43)];
+    const provider = new McpOAuthBrokerProvider({
+      config: appConfig,
+      repository,
+      manager,
+      xeroAuthorization,
+      tokens: tokenService,
+      clock: () => now,
+      secretFactory: () => {
+        const value = generated.shift();
+        if (!value) throw new Error("unexpected secret request");
+        return value;
+      },
+      idFactory: (purpose) => `${purpose}_never_completed`,
+    });
+
+    const authorize = capturedResponse();
+    await provider.authorize(await provider.clientsStore.getClient("agent2-client") as OAuthClientInformationFull, {
+      state: "never-completed-host-state",
+      scopes: ["xero.read"],
+      codeChallenge: pkceS256Challenge(verifier),
+      redirectUri,
+      resource: undefined,
+    }, authorize.response);
+    const flowCookie = authorize.cookies[0];
+
+    const callback = capturedResponse();
+    await provider.handleXeroCallback(request({
+      originalUrl: `/oauth/xero/callback?state=${xeroState}&code=xero-code`,
+      cookie: `${flowCookie?.name}=${flowCookie?.value}`,
+    }), callback.response);
+    const csrfToken = callback.body?.match(/name="csrf_token" value="([^"]+)"/u)?.[1];
+    const selectionTicket = callback.body?.match(/name="selection_ticket" value="([^"]+)"/u)?.[1];
+
+    // This flow reaches AWAITING_SELECTION — it has a perfectly valid
+    // selection ticket — but `handleOrganisationSelection` is never called
+    // on it, so the provider's completed-selection cache has no entry for
+    // it. Move it out of AWAITING_SELECTION some other way (here, the Host
+    // denies or the browser gives up), the same way an expiry would: no
+    // completion, ever, by anyone.
+    const flowHash = keyedOAuthSecretHash(brokerConfig.tokenHashKey, "browser_flow", flowCookie?.value as string);
+    const browserSessionHash = keyedOAuthSecretHash(
+      brokerConfig.tokenHashKey,
+      "browser_session",
+      flowCookie?.value as string,
+    );
+    const terminated = await repository.terminateBrokerAuthorizationFlow({
+      flowHash,
+      browserSessionHash,
+      terminalStatus: "FAILED",
+      now,
+    });
+    if (!terminated) throw new Error("test setup expected the flow to terminate");
+
+    // The selection ticket is still cryptographically valid (it only checks
+    // its own expiry and CSRF binding, never the repository), so this
+    // reaches the "is this flow still selectable" check and finds it is
+    // not — with nothing in the cache to say why. It must not guess.
+    await expect(provider.handleOrganisationSelection(request({
+      originalUrl: "/oauth/xero/select",
+      cookie: `${flowCookie?.name}=${flowCookie?.value}`,
+      origin: "null",
+      trustedNavigationMetadata: true,
+      body: { csrf_token: csrfToken, selection_ticket: selectionTicket, connection_id: "conn_never_completed" },
+    }), capturedResponse().response)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      details: { resultStatus: "FLOW_SELECTION_MISSING" },
+    });
   });
 
   it("gives multiple testers using one Host client independent installation subjects", async () => {

@@ -235,7 +235,7 @@ function setPrivateBrowserHeaders(response: Response): void {
   response.setHeader("X-Frame-Options", "DENY");
 }
 
-function setSelectionPageHeaders(response: Response): void {
+export function setSelectionPageHeaders(response: Response): void {
   setPrivateBrowserHeaders(response);
   response.setHeader(
     "Content-Security-Policy",
@@ -282,6 +282,36 @@ export function shouldUsePersonalPocManualReturn(options: {
 }
 
 /**
+ * The recorded outcome of one successful organisation-selection completion,
+ * kept just long enough to answer a repeated submit of the same form with the
+ * same 302 instead of a new credential or an error. Keyed by `flowHash`,
+ * which is only computable from the caller's already-verified, cookie-bound
+ * selection ticket — so reading this cache grants no capability beyond what
+ * the original request already proved.
+ */
+interface CompletedSelectionReplay {
+  selectedConnectionId: string;
+  manualPersonalPocReturn: boolean;
+  returnUrl: string;
+  hostName: string;
+  organisationName: string;
+  /** Mirrors the issued authorization code's own expiry. Past this, the code is dead and replaying it would only mislead, so the entry is dropped instead. */
+  expiresAt: number;
+}
+
+const COMPLETED_SELECTION_REPLAY_CACHE_LIMIT = 500;
+
+/**
+ * `"UNKNOWN"` is not evidence of anything — it means this process cannot
+ * confirm the flow *ever* completed, only that it is no longer available to
+ * complete now. Reading `"UNKNOWN"` as "not connected" would be exactly as
+ * wrong as reading it as "connected": both assert a fact the cache does not
+ * contain. Callers must render the honest, hedged copy for it, never the
+ * confident "already connected" copy that `"KNOWN_COMPLETED"` earns.
+ */
+type CompletedSelectionMatch = "REPLAYED" | "KNOWN_COMPLETED" | "UNKNOWN";
+
+/**
  * End-to-end outer OAuth provider for a pre-registered MCP Host.
  *
  * Host identity is deliberately not inferred from OAuth parameters. Until a
@@ -303,6 +333,14 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
   readonly #clock: () => Date;
   readonly #secretFactory: () => string;
   readonly #idFactory: (purpose: "installation" | "authorization" | "binding") => string;
+  /**
+   * Per-process only: a second instance behind a non-sticky load balancer, or
+   * a restart between the two submits, simply misses the cache and falls back
+   * to the "already connected" page (see `handleOrganisationSelection`). That
+   * fallback is correct either way, so this stays a plain in-memory Map
+   * rather than new persisted state.
+   */
+  readonly #completedSelections = new Map<string, CompletedSelectionReplay>();
 
   constructor(options: {
     config: AppConfig;
@@ -666,9 +704,20 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
       now,
     });
     if (!selection) {
+      // The most common reason this flow is no longer AWAITING_SELECTION is
+      // that this exact browser session already completed it — a double
+      // click, a back-button resubmit. If we still remember that outcome,
+      // hand back the identical result instead of an error; the caller's
+      // intent was already satisfied. A cache miss is genuinely ambiguous
+      // (never completed vs. completed by a process/entry we cannot see)
+      // and must not be reported as either "connected" or "not connected".
+      const match = this.#replayCompletedSelection(flowHash, selectedConnectionId, now, response);
+      if (match === "REPLAYED") return;
       throw new AppError("FORBIDDEN", "The organisation selection has expired or was already used.", {
         httpStatus: 403,
-        details: { resultStatus: "FLOW_SELECTION_MISSING" },
+        details: {
+          resultStatus: match === "KNOWN_COMPLETED" ? "FLOW_ALREADY_COMPLETED" : "FLOW_SELECTION_MISSING",
+        },
       });
     }
     const selectedConnection = selection.connections.find(
@@ -696,9 +745,20 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
       now,
     });
     if (!result) {
+      // A concurrent twin of this exact request (two requests that both read
+      // AWAITING_SELECTION before either committed) can lose the repository
+      // race yet still deserve the winner's outcome, not an error. A cache
+      // hit for this exact flowHash is unambiguous proof *this* flow
+      // completed (we only ever write it after our own commit for it), so it
+      // takes priority over the generic "still settling" rejection below,
+      // which is for a genuinely different, older installation's grant.
+      const match = this.#replayCompletedSelection(flowHash, selectedConnectionId, now, response);
+      if (match === "REPLAYED") return;
       throw new AppError("FORBIDDEN", "The organisation selection is invalid or was already used.", {
         httpStatus: 403,
-        details: { resultStatus: "SELECTION_COMPLETE_REJECTED" },
+        details: {
+          resultStatus: match === "KNOWN_COMPLETED" ? "FLOW_ALREADY_COMPLETED" : "SELECTION_COMPLETE_REJECTED",
+        },
       });
     }
 
@@ -754,12 +814,24 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
     });
     const hostName = this.#broker.hostClients.find((client) => client.clientId === result.flow.clientId)?.name
       ?? "MCP Host";
+    const manualPersonalPocReturn = shouldUsePersonalPocManualReturn({
+      broker: this.#broker,
+      personalPoc: result.flow.personalPoc,
+      clientId: result.flow.clientId,
+    });
+    // Recorded before the response is sent so a concurrent twin that loses
+    // the repository race above (see the `!result` branch) can still find
+    // this outcome the instant this call resolves.
+    this.#recordCompletedSelection(flowHash, {
+      selectedConnectionId,
+      manualPersonalPocReturn,
+      returnUrl,
+      hostName,
+      organisationName: selectedConnection.tenantName,
+      expiresAt: result.authorizationCode.expiresAt.getTime(),
+    }, now);
     sendBrokerHostAuthorizationResult(response, {
-      manualPersonalPocReturn: shouldUsePersonalPocManualReturn({
-        broker: this.#broker,
-        personalPoc: result.flow.personalPoc,
-        clientId: result.flow.clientId,
-      }),
+      manualPersonalPocReturn,
       returnUrl,
       hostName,
       organisationName: selectedConnection.tenantName,
@@ -771,6 +843,67 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
     rawSecret: string,
   ): string {
     return keyedOAuthSecretHash(this.#broker.tokenHashKey, purpose, rawSecret);
+  }
+
+  /** Drops any entry whose authorization code has already expired, so the cache cannot outlive what it is standing in for. */
+  #pruneCompletedSelections(now: Date): void {
+    const nowMs = now.getTime();
+    for (const [key, entry] of this.#completedSelections) {
+      if (entry.expiresAt <= nowMs) this.#completedSelections.delete(key);
+    }
+  }
+
+  #recordCompletedSelection(flowHash: string, entry: CompletedSelectionReplay, now: Date): void {
+    this.#pruneCompletedSelections(now);
+    if (this.#completedSelections.size >= COMPLETED_SELECTION_REPLAY_CACHE_LIMIT) {
+      const oldestKey = this.#completedSelections.keys().next().value;
+      if (oldestKey !== undefined) this.#completedSelections.delete(oldestKey);
+    }
+    this.#completedSelections.set(flowHash, entry);
+  }
+
+  /**
+   * A second POST that presents this flow's valid selection ticket and CSRF
+   * token, naming the same connection this flow already completed, is the
+   * same request arriving twice — a double click, an impatient second tap, a
+   * back-button resubmit. Replaying the exact original outcome (same
+   * authorization code, same Host state) satisfies the caller without
+   * minting a new credential or writing to the repository again.
+   *
+   * A cache miss here does not mean "never completed" — it only means this
+   * process cannot prove either way (a different process instance, or an
+   * entry that was never recorded because it belongs to a genuinely invalid
+   * request). The caller must not read `"UNKNOWN"` as "not connected" and
+   * must not read anything here as grounds to claim a completion it cannot
+   * verify; see `CompletedSelectionMatch`.
+   */
+  #replayCompletedSelection(
+    flowHash: string,
+    selectedConnectionId: string,
+    now: Date,
+    response: Response,
+  ): CompletedSelectionMatch {
+    const entry = this.#completedSelections.get(flowHash);
+    if (!entry) return "UNKNOWN";
+    if (entry.expiresAt > now.getTime() && entry.selectedConnectionId === selectedConnectionId) {
+      response.clearCookie(MCP_OAUTH_FLOW_COOKIE, clearBrokerFlowCookieOptions());
+      sendBrokerHostAuthorizationResult(response, {
+        manualPersonalPocReturn: entry.manualPersonalPocReturn,
+        returnUrl: entry.returnUrl,
+        hostName: entry.hostName,
+        organisationName: entry.organisationName,
+      });
+      return "REPLAYED";
+    }
+    // The cache proves this exact flow (this `flowHash`) really did complete
+    // — we only ever write an entry right after our own successful
+    // repository commit for it — but this specific request is not a safe
+    // replay of that outcome: either the cached authorization code has since
+    // expired, or this submit names a different connection than the one
+    // that was actually completed. Either way, "already connected" is a
+    // true statement even though handing back the cached credential is not
+    // the right response.
+    return "KNOWN_COMPLETED";
   }
 
   #newSecret(description: string): string {

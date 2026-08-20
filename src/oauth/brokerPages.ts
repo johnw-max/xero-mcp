@@ -237,3 +237,102 @@ export function renderOrganisationSwitchResultPage(options: {
     providerLogoDataUri: XERO_LOGO_DATA_URI,
   });
 }
+
+/**
+ * The small vocabulary a person actually needs when something on the Xero
+ * connection path goes wrong. The Broker's internal reason codes
+ * (`FLOW_ALREADY_COMPLETED`, `FLOW_SELECTION_MISSING`,
+ * `SELECTION_COMPLETE_REJECTED`, `CONNECTION_NOT_DISCOVERED`,
+ * `HOST_STATE_MISMATCH`, and the various origin/shape/ticket rejections)
+ * describe *why the database said no*; this type describes *what the person
+ * should do next*, which is deliberately a smaller, coarser set.
+ *
+ * `ALREADY_CONNECTED` is a factual claim, not a guess, and must only be
+ * chosen when the caller has positive proof the flow completed (see
+ * `FLOW_ALREADY_COMPLETED` below). A caller that only knows the selection is
+ * no longer available — with no proof either way of whether it ever
+ * completed — is not entitled to say "already connected"; asserting a
+ * completion that never happened tells the person to stop trying and go
+ * check an assistant that was never actually connected, which is the same
+ * failure mode as a bare JSON error page, just friendlier-sounding.
+ */
+export type BrokerErrorReason =
+  | "ALREADY_CONNECTED"
+  | "RETRY_SHORTLY"
+  | "RESTART_REQUIRED"
+  | "UNEXPECTED";
+
+const BROKER_ERROR_PAGE_COPY: Record<BrokerErrorReason, { title: string; summary: string; detail: string }> = {
+  ALREADY_CONNECTED: {
+    title: "Already connected",
+    summary: "This connection was already completed.",
+    detail: "If you already finished connecting, you can return to your AI assistant now — the connection should already be active there. If something still looks wrong, restart the connection from your AI assistant.",
+  },
+  RETRY_SHORTLY: {
+    title: "Still finishing up",
+    summary: "A previous connection attempt is still wrapping up.",
+    detail: "This usually clears within a few minutes. Please wait, then try connecting again from your AI assistant.",
+  },
+  RESTART_REQUIRED: {
+    title: "Let's try that again",
+    summary: "This connection link is no longer valid.",
+    detail: "It may have expired, or already been used. If you already finished connecting, check your AI assistant first — the connection may already be active there. Otherwise, please restart the connection from your AI assistant.",
+  },
+  UNEXPECTED: {
+    title: "Something went wrong",
+    summary: "This connection could not be completed.",
+    detail: "Please restart the connection from your AI assistant.",
+  },
+};
+
+/**
+ * Maps the Broker's internal FORBIDDEN `resultStatus` detail to the
+ * user-facing reason it should render as.
+ *
+ * `FLOW_ALREADY_COMPLETED` is the only route to `ALREADY_CONNECTED`: the
+ * Broker only reports it when its own in-process record proves this exact
+ * flow was completed (see `McpOAuthBrokerProvider`'s completed-selection
+ * cache). `FLOW_SELECTION_MISSING` looks similar from the outside — the
+ * selection is no longer available either way — but covers every other
+ * reason a flow can leave `AWAITING_SELECTION` (expired, never reached that
+ * state, denied, or simply unprovable from this process), so it maps to the
+ * same honest, hedged `RESTART_REQUIRED` copy as a genuinely unrecognised or
+ * malformed request: true whether or not anything ever completed.
+ */
+export function brokerErrorPageReason(resultStatus: string | undefined): BrokerErrorReason {
+  switch (resultStatus) {
+    case "FLOW_ALREADY_COMPLETED":
+      return "ALREADY_CONNECTED";
+    case "FLOW_SELECTION_MISSING":
+      return "RESTART_REQUIRED";
+    case "SELECTION_COMPLETE_REJECTED":
+      return "RETRY_SHORTLY";
+    case "CONNECTION_NOT_DISCOVERED":
+      return "RESTART_REQUIRED";
+    case "HOST_STATE_MISMATCH":
+      return "UNEXPECTED";
+    default:
+      return "RESTART_REQUIRED";
+  }
+}
+
+/**
+ * The one page every browser-facing error on the Xero connection path renders
+ * as. Never bare JSON: this is the first screen a customer sees during
+ * onboarding, and a `{"error":...}` body there reads as "the integration is
+ * broken" even when the underlying condition (already connected, a previous
+ * attempt still settling) is normal and recoverable.
+ */
+export function renderBrokerErrorPage(reason: BrokerErrorReason): string {
+  const copy = BROKER_ERROR_PAGE_COPY[reason];
+  return renderConnectionShell({
+    title: copy.title,
+    eyebrow: "Xero connection",
+    description: copy.summary,
+    content: `<div class="notice" role="alert">${escapeHtml(copy.detail)}</div>`,
+    providerKey: "xero",
+    providerName: "Xero",
+    providerLogoDataUri: XERO_LOGO_DATA_URI,
+    status: "attention",
+  });
+}

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  brokerErrorPageReason,
   personalPocHostReturnAction,
+  renderBrokerErrorPage,
   renderPersonalPocHostReturnPage,
   renderXeroOrganisationSelectionPage,
+  type BrokerErrorReason,
 } from "../src/oauth/brokerPages.js";
 
 describe("Xero broker organisation selection page", () => {
@@ -139,5 +142,91 @@ describe("Personal POC Host return page", () => {
       organisationName: "Synthetic Trial Co",
     }))
       .toThrow(/Host return URL/i);
+  });
+});
+
+describe("Broker browser error page reason mapping", () => {
+  it("maps FLOW_ALREADY_COMPLETED to the confident already-connected copy — the only code the Broker reports with actual proof of completion", () => {
+    expect(brokerErrorPageReason("FLOW_ALREADY_COMPLETED")).toBe("ALREADY_CONNECTED");
+  });
+
+  it("maps FLOW_SELECTION_MISSING to the honest hedge, not a false completion claim", () => {
+    // FLOW_SELECTION_MISSING fires whenever a selection is simply no longer
+    // available — expired, never reached AWAITING_SELECTION, denied, or a
+    // completion this process cannot see — which is not proof of anything.
+    // Only FLOW_ALREADY_COMPLETED (above) may claim a completion.
+    expect(brokerErrorPageReason("FLOW_SELECTION_MISSING")).toBe("RESTART_REQUIRED");
+  });
+
+  it("maps SELECTION_COMPLETE_REJECTED to retry-shortly, not a generic failure", () => {
+    expect(brokerErrorPageReason("SELECTION_COMPLETE_REJECTED")).toBe("RETRY_SHORTLY");
+  });
+
+  it("maps CONNECTION_NOT_DISCOVERED to restart-required", () => {
+    expect(brokerErrorPageReason("CONNECTION_NOT_DISCOVERED")).toBe("RESTART_REQUIRED");
+  });
+
+  it("maps HOST_STATE_MISMATCH to the vague unexpected-failure copy, never leaking why", () => {
+    expect(brokerErrorPageReason("HOST_STATE_MISMATCH")).toBe("UNEXPECTED");
+  });
+
+  it("falls back to restart-required, never already-connected, for any unrecognised or missing resultStatus", () => {
+    expect(brokerErrorPageReason(undefined)).toBe("RESTART_REQUIRED");
+    expect(brokerErrorPageReason("")).toBe("RESTART_REQUIRED");
+    expect(brokerErrorPageReason("SOME_UNKNOWN_FUTURE_CODE")).toBe("RESTART_REQUIRED");
+    expect(brokerErrorPageReason("CSRF_OK_SELECTION_TICKET_MISSING_CONNECTION_OK")).toBe("RESTART_REQUIRED");
+  });
+});
+
+describe("Broker browser error page rendering", () => {
+  it("renders distinct, human-readable text a person would actually see for each reason", () => {
+    const expectations: Record<BrokerErrorReason, { title: string; mustContain: string[] }> = {
+      ALREADY_CONNECTED: {
+        title: "Already connected",
+        mustContain: ["already completed", "return to your AI assistant", "already be active"],
+      },
+      RETRY_SHORTLY: {
+        title: "Still finishing up",
+        mustContain: ["still wrapping up", "wait", "try connecting again"],
+      },
+      RESTART_REQUIRED: {
+        title: "Let&#39;s try that again",
+        mustContain: ["no longer valid", "may have expired", "restart the connection"],
+      },
+      UNEXPECTED: {
+        title: "Something went wrong",
+        mustContain: ["could not be completed", "restart the connection"],
+      },
+    };
+
+    const bodies = new Set<string>();
+    for (const [reason, expectation] of Object.entries(expectations) as [BrokerErrorReason, typeof expectations[BrokerErrorReason]][]) {
+      const html = renderBrokerErrorPage(reason);
+      expect(html).toContain(expectation.title);
+      for (const phrase of expectation.mustContain) {
+        expect(html.toLowerCase()).toContain(phrase.toLowerCase());
+      }
+      expect(html).toContain('data-page-status="attention"');
+      expect(html).not.toContain("<script>");
+      bodies.add(html);
+    }
+    // Four reasons, four textually distinct pages.
+    expect(bodies.size).toBe(4);
+  });
+
+  it("never renders the internal resultStatus vocabulary into the page a customer sees", () => {
+    const internalCodes = [
+      "FLOW_ALREADY_COMPLETED",
+      "FLOW_SELECTION_MISSING",
+      "SELECTION_COMPLETE_REJECTED",
+      "CONNECTION_NOT_DISCOVERED",
+      "HOST_STATE_MISMATCH",
+    ];
+    for (const reason of ["ALREADY_CONNECTED", "RETRY_SHORTLY", "RESTART_REQUIRED", "UNEXPECTED"] as const) {
+      const html = renderBrokerErrorPage(reason);
+      for (const code of internalCodes) {
+        expect(html).not.toContain(code);
+      }
+    }
   });
 });
