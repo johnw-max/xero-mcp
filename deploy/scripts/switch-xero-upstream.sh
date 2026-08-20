@@ -7,14 +7,17 @@ readonly PUBLIC_HOST="mcp.jiayuanwang.xyz"
 readonly BLUE_PORT="18002"
 readonly GREEN_PORT="18004"
 readonly BLUE_VERSION="0.2.13"
-readonly GREEN_VERSION="0.3.0"
-readonly GREEN_TOOL_COUNT="43"
-readonly GREEN_TOOLSET_HASH="a76bf853dc4bc71bf33e5b42f936fbcc9d6593d67d23e40dedccc4d1e2ae5d65"
+readonly GREEN_VERSION="0.4.0-rc.1"
 readonly PUBLIC_SETTLE_ATTEMPTS="3"
 readonly PUBLIC_SETTLE_SLEEP_SECONDS="1"
 readonly PUBLIC_SETTLE_CURL_MAX_TIME_SECONDS="1"
 readonly LOCK_FILE="/run/lock/xero-mcp-upstream-switch.lock"
 readonly BACKUP_DIR="/var/backups/xero-mcp-nginx"
+readonly DOCKER_CLI="/usr/bin/docker"
+PATH=/usr/bin:/bin
+DOCKER_HOST=unix:///var/run/docker.sock
+export PATH DOCKER_HOST
+unset DOCKER_CONTEXT DOCKER_CONFIG BUILDX_BUILDER BUILDKIT_HOST
 
 TEMP_FILE=""
 
@@ -36,6 +39,7 @@ trap cleanup EXIT HUP INT TERM
 
 command -v awk >/dev/null 2>&1 || fail "AWK_MISSING"
 command -v curl >/dev/null 2>&1 || fail "CURL_MISSING"
+test -x "$DOCKER_CLI" || fail "DOCKER_MISSING"
 command -v flock >/dev/null 2>&1 || fail "FLOCK_MISSING"
 command -v nginx >/dev/null 2>&1 || fail "NGINX_MISSING"
 command -v sleep >/dev/null 2>&1 || fail "SLEEP_MISSING"
@@ -43,6 +47,58 @@ command -v systemctl >/dev/null 2>&1 || fail "SYSTEMCTL_MISSING"
 
 test -f "$SITE_FILE" || fail "SITE_FILE_MISSING"
 test ! -L "$SITE_FILE" || fail "SITE_FILE_MUST_NOT_BE_SYMLINK"
+
+load_green_release_environment() {
+  test "$#" = "1" || fail "RELEASE_ENV_OVERRIDE_FORBIDDEN"
+  capability_identity=$(/usr/bin/node scripts/validate-capability-manifest.mjs --require-ready --format fields) \
+    || fail "CAPABILITY_MANIFEST_ADMISSION_FAILED"
+  GREEN_TOOL_COUNT=$(printf '%s\n' "$capability_identity" | awk -F'|' '$1 == "tool_count" { print $2 }')
+  GREEN_TOOLSET_HASH=$(printf '%s\n' "$capability_identity" | awk -F'|' '$1 == "toolset_hash" { print $2 }')
+  test "$GREEN_TOOL_COUNT" -gt 0 || fail "CAPABILITY_TOOL_COUNT_INVALID"
+  printf '%s' "$GREEN_TOOLSET_HASH" | grep -Eq '^[0-9a-f]{64}$' || fail "CAPABILITY_TOOLSET_HASH_INVALID"
+  admitted_identity=$(/usr/bin/node scripts/release/production-deployment-admission.mjs --format fields) \
+    || fail "PRODUCTION_DEPLOYMENT_ADMISSION_FAILED"
+  IFS='|' read -r APP_IMAGE accepted_manifest_digest XERO_APPROVED_BUILD_IDENTITY_HASH \
+    XERO_APPROVED_ACCEPTANCE_SOURCE_SHA256 XERO_APPROVED_SOURCE_ARCHIVE_SHA256 \
+    XERO_ADMITTED_WRITE_ENABLED <<EOF
+$admitted_identity
+EOF
+  test -n "$APP_IMAGE" \
+    && test -n "$accepted_manifest_digest" \
+    && test -n "$XERO_APPROVED_BUILD_IDENTITY_HASH" \
+    && test -n "$XERO_APPROVED_ACCEPTANCE_SOURCE_SHA256" \
+    && test -n "$XERO_APPROVED_SOURCE_ARCHIVE_SHA256" \
+    && test -n "$XERO_ADMITTED_WRITE_ENABLED" \
+    || fail "PRODUCTION_DEPLOYMENT_ADMISSION_FIELDS_INVALID"
+}
+
+verify_green_image_identity() {
+  case "${APP_IMAGE:-}" in
+    *@sha256:[0-9a-f][0-9a-f]*) ;;
+    *) fail "APP_IMAGE_MUST_USE_IMMUTABLE_REPO_DIGEST" ;;
+  esac
+  case "$APP_IMAGE" in
+    *@"$accepted_manifest_digest") ;;
+    *) return 1 ;;
+  esac
+  green_container_ids=$("$DOCKER_CLI" ps \
+    --filter "label=com.docker.compose.service=accounting-mcp-green" \
+    --filter "publish=${GREEN_PORT}" \
+    --format '{{.ID}}') || return 1
+  test "$(printf '%s\n' "$green_container_ids" | sed '/^$/d' | wc -l | tr -d ' ')" = "1" || return 1
+  green_container_id=$(printf '%s\n' "$green_container_ids" | sed '/^$/d')
+  running_image_id=$("$DOCKER_CLI" inspect --format '{{.Image}}' "$green_container_id") || return 1
+  approved_image_id=$("$DOCKER_CLI" image inspect --format '{{.Id}}' "$APP_IMAGE") || return 1
+  test "$running_image_id" = "$approved_image_id" || return 1
+  repo_digests=$("$DOCKER_CLI" image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$APP_IMAGE") || return 1
+  printf '%s\n' "$repo_digests" | grep -Fx "$APP_IMAGE" >/dev/null || return 1
+  actual_build_hash=$("$DOCKER_CLI" image inspect --format '{{index .Config.Labels "io.zcloak.xero.build-identity-hash"}}' "$APP_IMAGE") || return 1
+  actual_source_hash=$("$DOCKER_CLI" image inspect --format '{{index .Config.Labels "io.zcloak.xero.acceptance-source-sha256"}}' "$APP_IMAGE") || return 1
+  actual_archive_hash=$("$DOCKER_CLI" image inspect --format '{{index .Config.Labels "io.zcloak.xero.source-archive-sha256"}}' "$APP_IMAGE") || return 1
+  test "$actual_build_hash" = "$XERO_APPROVED_BUILD_IDENTITY_HASH" || return 1
+  test "$actual_source_hash" = "$XERO_APPROVED_ACCEPTANCE_SOURCE_SHA256" || return 1
+  test "$actual_archive_hash" = "$XERO_APPROVED_SOURCE_ARCHIVE_SHA256" || return 1
+}
 
 exec 9>"$LOCK_FILE"
 flock -n 9 || fail "ANOTHER_UPSTREAM_SWITCH_IS_RUNNING"
@@ -70,14 +126,9 @@ current_xero_port() {
   esac
 }
 
-verify_quickbooks_unchanged() {
-  qb_ports=$(upstream_port "quickbooks_accounting_mcp_demo")
-  test "$qb_ports" = "18003" || fail "QUICKBOOKS_UPSTREAM_NOT_18003"
-}
-
 verify_blue_break_glass_container_read_only() {
-  command -v docker >/dev/null 2>&1 || return 1
-  blue_container_ids=$(docker ps \
+  test -x "$DOCKER_CLI" || return 1
+  blue_container_ids=$("$DOCKER_CLI" ps \
     --filter "label=com.docker.compose.service=accounting-mcp" \
     --filter "publish=${BLUE_PORT}" \
     --format '{{.ID}}') || return 1
@@ -85,13 +136,13 @@ verify_blue_break_glass_container_read_only() {
   test "$blue_container_count" = "1" || return 1
   blue_container_id=$(printf '%s\n' "$blue_container_ids" | sed '/^$/d')
 
-  blue_container_running=$(docker inspect --format '{{.State.Running}}' "$blue_container_id") || return 1
+  blue_container_running=$("$DOCKER_CLI" inspect --format '{{.State.Running}}' "$blue_container_id") || return 1
   test "$blue_container_running" = "true" || return 1
-  blue_container_bindings=$(docker inspect --format \
+  blue_container_bindings=$("$DOCKER_CLI" inspect --format \
     '{{range $port, $bindings := .NetworkSettings.Ports}}{{range $bindings}}{{printf "%s|%s|%s\n" $port .HostIp .HostPort}}{{end}}{{end}}' \
     "$blue_container_id") || return 1
   test "$blue_container_bindings" = "3000/tcp|127.0.0.1|${BLUE_PORT}" || return 1
-  blue_container_environment=$(docker inspect --format \
+  blue_container_environment=$("$DOCKER_CLI" inspect --format \
     '{{range .Config.Env}}{{println .}}{{end}}' \
     "$blue_container_id") || return 1
   blue_write_setting=$(printf '%s\n' "$blue_container_environment" | awk -F= '$1 == "XERO_WRITE_ENABLED" { print }')
@@ -150,10 +201,18 @@ check_loopback() {
       health=$(curl -fsS --max-time 15 -H "Host: ${PUBLIC_HOST}" "http://127.0.0.1:${target_port}/healthz")
       printf '%s' "$health" | grep -Fq '"status":"ok"' || fail "TARGET_HEALTH_NOT_OK"
       ready=$(curl -fsS --max-time 15 -H "Host: ${PUBLIC_HOST}" "http://127.0.0.1:${target_port}/readyz")
-      test "$ready" = "{\"status\":\"ready\",\"version\":\"${GREEN_VERSION}\"}" || fail "TARGET_READINESS_NOT_READY"
+      printf '%s' "$ready" | grep -Fq '"status":"ready"' || fail "TARGET_READINESS_NOT_READY"
+      printf '%s' "$ready" | grep -Fq '"activeAccountingCaseRecoveryProjection":{"status":"COMPATIBLE"' \
+        || fail "TARGET_ACTIVE_RECOVERY_PROJECTION_NOT_COMPATIBLE"
+      printf '%s' "$ready" | grep -Fq "\"version\":\"${GREEN_VERSION}\"" || fail "GREEN_READY_VERSION_MISMATCH"
+      printf '%s' "$ready" | grep -Fq "\"toolsetHash\":\"${GREEN_TOOLSET_HASH}\"" || fail "GREEN_READY_TOOLSET_HASH_MISMATCH"
+      printf '%s' "$ready" | grep -Fq "\"buildIdentityHash\":\"${XERO_APPROVED_BUILD_IDENTITY_HASH}\"" || fail "GREEN_READY_BUILD_IDENTITY_MISMATCH"
+      printf '%s' "$ready" | grep -Fq "\"acceptanceSourceSha256\":\"${XERO_APPROVED_ACCEPTANCE_SOURCE_SHA256}\"" || fail "GREEN_READY_SOURCE_IDENTITY_MISMATCH"
+      printf '%s' "$ready" | grep -Fq "\"sourceArchiveSha256\":\"${XERO_APPROVED_SOURCE_ARCHIVE_SHA256}\"" || fail "GREEN_READY_ARCHIVE_IDENTITY_MISMATCH"
       printf '%s' "$health" | grep -Fq "\"version\":\"${GREEN_VERSION}\"" || fail "GREEN_VERSION_MISMATCH"
       printf '%s' "$health" | grep -Fq "\"toolCount\":${GREEN_TOOL_COUNT}" || fail "GREEN_TOOL_COUNT_MISMATCH"
       printf '%s' "$health" | grep -Fq "\"toolsetHash\":\"${GREEN_TOOLSET_HASH}\"" || fail "GREEN_TOOLSET_HASH_MISMATCH"
+      printf '%s' "$health" | grep -Fq "\"buildIdentityHash\":\"${XERO_APPROVED_BUILD_IDENTITY_HASH}\"" || fail "GREEN_BUILD_IDENTITY_MISMATCH"
       ;;
     "$BLUE_PORT")
       fetch_blue_http_response \
@@ -181,10 +240,18 @@ check_public() {
       health=$(curl -fsS --max-time "$response_max_time" "${PUBLIC_BASE_URL}/healthz") || return 1
       printf '%s' "$health" | grep -Fq '"status":"ok"' || return 1
       ready=$(curl -fsS --max-time "$response_max_time" "${PUBLIC_BASE_URL}/readyz") || return 1
-      test "$ready" = "{\"status\":\"ready\",\"version\":\"${GREEN_VERSION}\"}" || return 1
+      printf '%s' "$ready" | grep -Fq '"status":"ready"' || return 1
+      printf '%s' "$ready" | grep -Fq '"activeAccountingCaseRecoveryProjection":{"status":"COMPATIBLE"' \
+        || return 1
+      printf '%s' "$ready" | grep -Fq "\"version\":\"${GREEN_VERSION}\"" || return 1
+      printf '%s' "$ready" | grep -Fq "\"toolsetHash\":\"${GREEN_TOOLSET_HASH}\"" || return 1
+      printf '%s' "$ready" | grep -Fq "\"buildIdentityHash\":\"${XERO_APPROVED_BUILD_IDENTITY_HASH}\"" || return 1
+      printf '%s' "$ready" | grep -Fq "\"acceptanceSourceSha256\":\"${XERO_APPROVED_ACCEPTANCE_SOURCE_SHA256}\"" || return 1
+      printf '%s' "$ready" | grep -Fq "\"sourceArchiveSha256\":\"${XERO_APPROVED_SOURCE_ARCHIVE_SHA256}\"" || return 1
       printf '%s' "$health" | grep -Fq "\"version\":\"${GREEN_VERSION}\"" || return 1
       printf '%s' "$health" | grep -Fq "\"toolCount\":${GREEN_TOOL_COUNT}" || return 1
       printf '%s' "$health" | grep -Fq "\"toolsetHash\":\"${GREEN_TOOLSET_HASH}\"" || return 1
+      printf '%s' "$health" | grep -Fq "\"buildIdentityHash\":\"${XERO_APPROVED_BUILD_IDENTITY_HASH}\"" || return 1
       ;;
     "$BLUE_PORT")
       fetch_blue_http_response "${PUBLIC_BASE_URL}/healthz" "$response_max_time" || return 1
@@ -198,29 +265,15 @@ check_public() {
   esac
 }
 
-check_quickbooks_public() {
-  response_max_time=${1:-15}
-  qb_health=$(curl -fsS --max-time "$response_max_time" "${PUBLIC_BASE_URL}/quickbooks/healthz") || return 1
-  qb_ready=$(curl -fsS --max-time "$response_max_time" "${PUBLIC_BASE_URL}/quickbooks/readyz") || return 1
-  printf '%s' "$qb_health" | grep -Fq '"status":"ok"' || return 1
-  printf '%s' "$qb_health" | grep -Fq '"provider":"quickbooks-online"' || return 1
-  printf '%s' "$qb_ready" | grep -Fq '"status":"ready"' || return 1
-}
-
 settle_public_after_reload() {
   target_port=$1
   settle_attempt=1
   while test "$settle_attempt" -le "$PUBLIC_SETTLE_ATTEMPTS"; do
     PUBLIC_SETTLE_XERO_OK=false
-    PUBLIC_SETTLE_QUICKBOOKS_OK=false
     if check_public "$target_port" "$PUBLIC_SETTLE_CURL_MAX_TIME_SECONDS"; then
       PUBLIC_SETTLE_XERO_OK=true
     fi
-    if check_quickbooks_public "$PUBLIC_SETTLE_CURL_MAX_TIME_SECONDS"; then
-      PUBLIC_SETTLE_QUICKBOOKS_OK=true
-    fi
-    if test "$PUBLIC_SETTLE_XERO_OK" = "true" \
-      && test "$PUBLIC_SETTLE_QUICKBOOKS_OK" = "true"; then
+    if test "$PUBLIC_SETTLE_XERO_OK" = "true"; then
       return 0
     fi
     test "$settle_attempt" -lt "$PUBLIC_SETTLE_ATTEMPTS" || return 1
@@ -256,8 +309,6 @@ restore_site() {
   # state, and treating that known state as restore failure would be misleading.
   restored_xero_ports=$(upstream_port "xero_accounting_mcp_demo") || return 1
   test "$restored_xero_ports" = "$expected_xero_port" || return 1
-  restored_quickbooks_ports=$(upstream_port "quickbooks_accounting_mcp_demo") || return 1
-  test "$restored_quickbooks_ports" = "18003" || return 1
   nginx -t || return 1
   systemctl reload nginx || return 1
 }
@@ -266,9 +317,10 @@ switch_to() {
   target_port=$1
   target_label=$2
   current_port=$(current_xero_port)
-  verify_quickbooks_unchanged
+  if test "$target_port" = "$GREEN_PORT"; then
+    verify_green_image_identity || fail "GREEN_IMAGE_IDENTITY_MISMATCH"
+  fi
   check_loopback "$target_port"
-  check_quickbooks_public || fail "QUICKBOOKS_PUBLIC_PREFLIGHT_FAILED"
 
   if test "$current_port" = "$target_port"; then
     check_public "$target_port" || fail "PUBLIC_CHECK_FAILED_WITH_TARGET_ALREADY_ACTIVE"
@@ -305,18 +357,11 @@ switch_to() {
   fi
 
   if ! settle_public_after_reload "$target_port"; then
-    if test "$PUBLIC_SETTLE_XERO_OK" != "true"; then
-      if restore_site "$backup_file" "$current_port"; then
-        fail "PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORED"
-      fi
-      fail "PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORE_FAILED"
-    fi
     if restore_site "$backup_file" "$current_port"; then
-      fail "QUICKBOOKS_PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORED"
+      fail "PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORED"
     fi
-    fail "QUICKBOOKS_PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORE_FAILED"
+    fail "PUBLIC_CHECK_FAILED_AND_UPSTREAM_RESTORE_FAILED"
   fi
-  verify_quickbooks_unchanged
   test "$(current_xero_port)" = "$target_port" || fail "POST_SWITCH_PORT_MISMATCH"
   audit_blue_rollback_warning "$target_port"
   audit "XERO_UPSTREAM" "$target_label"
@@ -326,16 +371,18 @@ switch_to() {
 
 case "${1:-}" in
   status)
-    verify_quickbooks_unchanged
     case "$(current_xero_port)" in
       "$BLUE_PORT") audit "XERO_UPSTREAM" "BLUE_18002" ;;
       "$GREEN_PORT") audit "XERO_UPSTREAM" "GREEN_18004" ;;
     esac
     ;;
-  green) switch_to "$GREEN_PORT" "GREEN_18004" ;;
+  green)
+    load_green_release_environment "$@"
+    switch_to "$GREEN_PORT" "GREEN_18004"
+    ;;
   blue) switch_to "$BLUE_PORT" "BLUE_18002" ;;
   *)
-    printf 'usage: %s {status|green|blue}\n' "$0" >&2
+    printf 'usage: %s {status|blue|green}\n' "$0" >&2
     exit 2
     ;;
 esac

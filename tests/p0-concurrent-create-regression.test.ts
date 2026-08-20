@@ -34,6 +34,7 @@ function token(tenantId: string): ResolvedMcpAccessToken {
     installationId: "installation_concurrency_regression",
     bindingId: "binding_concurrency_regression",
     connectionId: "connection_xero_harness_001",
+    bindingRevision: 1,
     authorizationId: "authorization_concurrency_regression",
     workspaceId: "workspace_concurrency_regression",
     subjectType: "USER",
@@ -58,6 +59,7 @@ function service(
     },
     logger: logger(),
     connectionTickets: new ConnectionTicketService(repository, "https://p0-concurrency.invalid"),
+    unsafeAllowDirectMutationForTests: true,
   });
 }
 
@@ -73,6 +75,7 @@ function input(overrides: Partial<CreateDraftSupplierBillInput> = {}): CreateDra
     due_date: "2026-08-31",
     currency: "HKD",
     reference: "P0-CONCURRENT-REGRESSION",
+    authoritative_provider_field: "INVOICE_NUMBER",
     line_amount_type: "NoTax",
     lines: [{
       description: "Concurrent regression fixture",

@@ -77,9 +77,18 @@ export const prepareCreditNoteDraftInputSchema = z.object({
   credit_note_date: realDate,
   currency,
   reference: safeCompactText(255),
+  authoritative_provider_field: z.enum(["CREDIT_NOTE_NUMBER", "REFERENCE"]),
   line_amount_type: z.enum(["Exclusive", "Inclusive", "NoTax"]),
   lines: z.array(creditNoteLineSchema).min(1).max(20),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.credit_note_type === "ACCPAYCREDIT" && value.authoritative_provider_field !== "CREDIT_NOTE_NUMBER") {
+    context.addIssue({
+      code: "custom",
+      path: ["authoritative_provider_field"],
+      message: "supplier credits must use Xero CreditNoteNumber",
+    });
+  }
+});
 
 export const prepareManualJournalDraftInputSchema = z.object({
   source_ref: safeCompactText(512),
@@ -132,6 +141,7 @@ export interface CanonicalCreditNoteDraftPayload {
   creditNoteDate: string;
   currency: string;
   reference: string;
+  authoritativeProviderField: "CREDIT_NOTE_NUMBER" | "REFERENCE";
   lineAmountType: CanonicalDraftLineAmountType;
   lines: CanonicalCreditNoteDraftLine[];
   enteredLineSubtotal: string;
@@ -279,10 +289,19 @@ export const canonicalCreditNoteDraftPayloadSchema = z.object({
   creditNoteDate: realDate,
   currency,
   reference: canonicalCompactText(255),
+  authoritativeProviderField: z.enum(["CREDIT_NOTE_NUMBER", "REFERENCE"]),
   lineAmountType: z.enum(["EXCLUSIVE", "INCLUSIVE", "NO_TAX"]),
   lines: z.array(canonicalCreditNoteLineSchema).min(1).max(20),
   enteredLineSubtotal: canonicalDocumentAmount,
-}).strict().refine(creditAmountsAreConsistent, {
+}).strict().superRefine((value, context) => {
+  if (value.creditNoteType === "ACCPAYCREDIT" && value.authoritativeProviderField !== "CREDIT_NOTE_NUMBER") {
+    context.addIssue({
+      code: "custom",
+      path: ["authoritativeProviderField"],
+      message: "supplier credits must use Xero CreditNoteNumber",
+    });
+  }
+}).refine(creditAmountsAreConsistent, {
   path: ["enteredLineSubtotal"],
   message: "canonical line amounts and subtotal must be internally consistent",
 });
@@ -397,6 +416,7 @@ export function buildCreditNoteDraftPrimitive(input: unknown): PreparedCreditNot
     creditNoteDate: value.credit_note_date,
     currency: value.currency,
     reference: value.reference,
+    authoritativeProviderField: value.authoritative_provider_field,
     lineAmountType: LINE_AMOUNT_TYPE_CANONICAL[value.line_amount_type],
     lines,
     enteredLineSubtotal: fixedFour(subtotal),

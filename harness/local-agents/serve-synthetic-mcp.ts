@@ -7,6 +7,7 @@ import type { AccountingRepository } from "../../src/db/repository.js";
 import type { ResolvedMcpAccessToken } from "../../src/domain/models.js";
 import type { Logger } from "../../src/logging.js";
 import { createAccountingMcpServer } from "../../src/mcp/createServer.js";
+import { hashObject } from "../../src/security/hash.js";
 import { createOAuthRequestContext } from "../../src/security/requestContext.js";
 import { AccountingService } from "../../src/services/accountingService.js";
 import { ConnectionTicketService } from "../../src/services/connectionTicketService.js";
@@ -45,6 +46,7 @@ function resolvedToken(tenantId: string): ResolvedMcpAccessToken {
     installationId: "installation_local_agent_001",
     bindingId: "binding_local_agent_001",
     connectionId: SYNTHETIC_CONNECTION_ID,
+    bindingRevision: 1,
     authorizationId: "authorization_local_agent_001",
     workspaceId: "workspace_local_agent",
     subjectType: "USER",
@@ -89,6 +91,7 @@ function repositoryWithExactBinding(
             subjectId: token.subjectId,
             agentId: token.agentId,
             connectionId: token.connectionId,
+            bindingRevision: token.bindingRevision,
             authorizationId: token.authorizationId,
             tenantId: token.tenantId,
             tenantName,
@@ -122,7 +125,17 @@ async function main(): Promise<void> {
       repository,
       "https://xero-synthetic-business-uat.invalid",
     ),
-    mutationFoundation: new XeroMutationService(repository, { confirmationSecret }),
+    mutationFoundation: new XeroMutationService(repository, {
+      confirmationSecret,
+      writeEnabled,
+      providerCapabilityEvaluator: {
+        evaluate: async (_context, actionId) => ({
+          allowed: writeEnabled,
+          denyReasons: writeEnabled ? [] : ["WRITE_GATE_CLOSED"],
+          receiptHash: hashObject({ actionId, writeEnabled, provider: "synthetic-xero" }),
+        }),
+      },
+    }),
   });
   const context = createOAuthRequestContext({
     issuer: "https://issuer.xero-synthetic-business-uat.invalid",

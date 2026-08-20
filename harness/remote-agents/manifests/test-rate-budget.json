@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "lifecycle": "LEGACY_OBJECT_PREPARE_RUNNER_TEST_ONLY",
   "name": "offline-live-transport-rate-budget-regression",
   "settings": {
     "concurrency": 1,

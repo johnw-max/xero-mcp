@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "evidence_boundary",
+    "completion_claim",
+    "case_id",
+    "case_version",
+    "provider_object_id",
+    "provider_receipt_recorded",
+    "exact_same_id_readback_verified",
+    "source_truth_claim",
+    "original_file_verified",
+    "message"
+  ],
+  "properties": {
+    "evidence_boundary": { "type": "string", "const": "LOCAL" },
+    "completion_claim": {
+      "type": "string",
+      "enum": ["COMPLETED_WITH_PROVIDER_ID_RECEIPT_EXACT_READBACK", "NOT_COMPLETED"]
+    },
+    "case_id": { "type": "string", "minLength": 1 },
+    "case_version": { "type": "integer", "minimum": 1 },
+    "provider_object_id": { "type": "string", "minLength": 1 },
+    "provider_receipt_recorded": { "type": "boolean" },
+    "exact_same_id_readback_verified": { "type": "boolean" },
+    "source_truth_claim": { "type": "string", "const": "NOT_VERIFIED" },
+    "original_file_verified": { "type": "boolean", "const": false },
+    "message": { "type": "string", "minLength": 1 }
+  }
+}

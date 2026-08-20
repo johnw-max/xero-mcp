@@ -13,6 +13,7 @@ import {
   verifyPurchaseOrderDraftReadback,
   verifyQuoteDraftReadback,
 } from "../src/providers/xeroQuotePurchaseOrderDraft.js";
+import { loadXeroResponse } from "./fixtures/xero-provider-responses/index.js";
 
 const contactId = "11111111-1111-4111-8111-111111111111";
 const trackingOptionId = "22222222-2222-4222-8222-222222222222";
@@ -450,6 +451,92 @@ describe("Quote and purchase-order draft schemas", () => {
     });
   });
 
+  it("accepts a native Date object for date fields exactly like the equivalent plain string (live Xero returns Date, not string, for these fields)", () => {
+    const quote = buildQuoteDraftPrimitive(quoteInput);
+    const purchaseOrder = buildPurchaseOrderDraftPrimitive(purchaseOrderInput);
+
+    const quoteDateVariants = [
+      { ...quoteReadback(), date: new Date("2026-08-07T00:00:00.000Z") },
+      { ...quoteReadback(), expiryDate: new Date("2026-08-21T00:00:00.000Z") },
+      {
+        ...quoteReadback(),
+        date: new Date("2026-08-07T00:00:00.000Z"),
+        expiryDate: new Date("2026-08-21T00:00:00.000Z"),
+      },
+    ];
+    for (const candidate of quoteDateVariants) {
+      expect(mapQuoteDraftReadback(candidate)).toMatchObject({
+        ok: true,
+        snapshot: {
+          objectType: "QUOTE",
+          quoteId,
+          canonicalPayload: { quoteDate: "2026-08-07", expiryDate: "2026-08-21" },
+        },
+      });
+      expect(verifyQuoteDraftReadback(quoteId, quote.canonicalPayload, candidate)).toMatchObject({
+        ok: true,
+        readbackCanonicalPayloadHash: quote.canonicalPayloadHash,
+      });
+    }
+
+    const purchaseOrderDateVariants = [
+      { ...purchaseOrderReadback(), date: new Date("2026-08-07T00:00:00.000Z") },
+      { ...purchaseOrderReadback(), expectedArrivalDate: new Date("2026-08-14T00:00:00.000Z") },
+      { ...purchaseOrderReadback(), deliveryDate: new Date("2026-08-21T00:00:00.000Z") },
+      {
+        ...purchaseOrderReadback(),
+        date: new Date("2026-08-07T00:00:00.000Z"),
+        expectedArrivalDate: new Date("2026-08-14T00:00:00.000Z"),
+        deliveryDate: new Date("2026-08-21T00:00:00.000Z"),
+      },
+    ];
+    for (const candidate of purchaseOrderDateVariants) {
+      expect(mapPurchaseOrderDraftReadback(candidate)).toMatchObject({
+        ok: true,
+        snapshot: {
+          objectType: "PURCHASE_ORDER",
+          purchaseOrderId,
+          canonicalPayload: {
+            purchaseOrderDate: "2026-08-07",
+            expectedArrivalDate: "2026-08-14",
+            deliveryDate: "2026-08-21",
+          },
+        },
+      });
+      expect(verifyPurchaseOrderDraftReadback(purchaseOrderId, purchaseOrder.canonicalPayload, candidate))
+        .toMatchObject({ ok: true, readbackCanonicalPayloadHash: purchaseOrder.canonicalPayloadHash });
+    }
+  });
+
+  it("normalizes a Date instance the live Xero SDK actually produced, not only a hand-typed `new Date(...)`", () => {
+    // proves: this module's own history is why xeroProviderDate.ts exists -
+    // its doc comment names xeroQuotePurchaseOrderDraft.ts's date handling as
+    // one of two call sites that "never learned the Date branch at all...
+    // turning every live CreditNote / Quote / PurchaseOrder / ManualJournal
+    // draft-write readback into MALFORMED_PROVIDER_READBACK." The test above
+    // covers the mechanism with `new Date(...)` literals a test author typed
+    // by hand; this one feeds in a Date object captured from a genuine Xero
+    // response body (organisation.periodLockDate) instead, so it cannot pass
+    // by coincidentally matching whatever shape a hand-typed Date happens to
+    // have.
+    const [organisation] = loadXeroResponse("organisation").organisations as Array<{ periodLockDate: unknown }>;
+    const realDate = organisation.periodLockDate;
+    expect(realDate).toBeInstanceOf(Date);
+
+    expect(mapQuoteDraftReadback({ ...quoteReadback(), date: realDate })).toMatchObject({
+      ok: true,
+      snapshot: { objectType: "QUOTE", quoteId, canonicalPayload: { quoteDate: "2008-09-30" } },
+    });
+    expect(mapPurchaseOrderDraftReadback({ ...purchaseOrderReadback(), date: realDate })).toMatchObject({
+      ok: true,
+      snapshot: {
+        objectType: "PURCHASE_ORDER",
+        purchaseOrderId,
+        canonicalPayload: { purchaseOrderDate: "2008-09-30" },
+      },
+    });
+  });
+
   it("requires provider lineAmount while tolerating normal currency rounding", () => {
     const quote = buildQuoteDraftPrimitive(quoteInput);
     const raw = quoteReadback();
@@ -493,6 +580,68 @@ describe("Quote and purchase-order draft schemas", () => {
       ...raw,
       total: 999,
     })).toEqual({ ok: false, reasons: ["MALFORMED_PROVIDER_READBACK"] });
+  });
+
+  it("keeps a canonical zero unit amount economically zero in exact provider readback", () => {
+    const zeroQuote = buildQuoteDraftPrimitive({
+      ...quoteInput,
+      lines: [{ ...quoteInput.lines[0], unit_amount: 0 }],
+    });
+    const zeroQuoteReadback = {
+      ...quoteReadback(),
+      lineItems: [{ ...quoteReadback().lineItems[0], unitAmount: 0, lineAmount: 0 }],
+      subTotal: 0,
+      totalTax: 0,
+      total: 0,
+    };
+    expect(verifyQuoteDraftReadback(quoteId, zeroQuote.canonicalPayload, zeroQuoteReadback)).toMatchObject({ ok: true });
+    expect(verifyQuoteDraftReadback(quoteId, zeroQuote.canonicalPayload, {
+      ...zeroQuoteReadback,
+      lineItems: [{ ...zeroQuoteReadback.lineItems[0], lineAmount: 0.01 }],
+      subTotal: 0.01,
+      total: 0.01,
+    })).toEqual({ ok: false, reasons: ["PROVIDER_LINE_ECONOMICS_MISMATCH"] });
+    expect(verifyQuoteDraftReadback(quoteId, zeroQuote.canonicalPayload, {
+      ...zeroQuoteReadback,
+      subTotal: 0.01,
+      total: 0.01,
+    })).toEqual({ ok: false, reasons: ["PROVIDER_TOTALS_MISMATCH"] });
+
+    const zeroPurchaseOrder = buildPurchaseOrderDraftPrimitive({
+      ...purchaseOrderInput,
+      lines: [{ ...purchaseOrderInput.lines[0], unit_amount: 0 }],
+    });
+    const zeroPurchaseOrderReadback = {
+      ...purchaseOrderReadback(),
+      lineItems: [{ ...purchaseOrderReadback().lineItems[0], unitAmount: 0, lineAmount: 0 }],
+      subTotal: 0,
+      totalTax: 0,
+      total: 0,
+    };
+    expect(verifyPurchaseOrderDraftReadback(
+      purchaseOrderId,
+      zeroPurchaseOrder.canonicalPayload,
+      zeroPurchaseOrderReadback,
+    )).toMatchObject({ ok: true });
+    expect(verifyPurchaseOrderDraftReadback(
+      purchaseOrderId,
+      zeroPurchaseOrder.canonicalPayload,
+      {
+        ...zeroPurchaseOrderReadback,
+        lineItems: [{ ...zeroPurchaseOrderReadback.lineItems[0], lineAmount: 0.01 }],
+        subTotal: 0.01,
+        total: 0.01,
+      },
+    )).toEqual({ ok: false, reasons: ["PROVIDER_LINE_ECONOMICS_MISMATCH"] });
+    expect(verifyPurchaseOrderDraftReadback(
+      purchaseOrderId,
+      zeroPurchaseOrder.canonicalPayload,
+      {
+        ...zeroPurchaseOrderReadback,
+        subTotal: 0.01,
+        total: 0.01,
+      },
+    )).toEqual({ ok: false, reasons: ["PROVIDER_TOTALS_MISMATCH"] });
   });
 
   it("fails exact verification for IDs, object type, status, contacts, dates, currency, references, line mode, and every line field", () => {
@@ -581,6 +730,68 @@ describe("Quote and purchase-order draft schemas", () => {
       quote.canonicalPayload,
       { ...rawQuote, quoteID: quoteId.toUpperCase() },
     )).toMatchObject({ ok: true });
+  });
+
+  it("names the exact canonical-payload field that disagreed, and never the disagreeing value, on CANONICAL_PAYLOAD_MISMATCH", () => {
+    // proves: CANONICAL_PAYLOAD_MISMATCH used to be the entire report - no
+    // field name, just the bucket. A single header-field change is now named
+    // exactly ("reference"), a single line-field change carries the
+    // array-index path shape the implementation plan specifies
+    // ("lines[0].accountCode"), and a provider-controlled value injected into
+    // that same field never appears inside mismatchFields - the only piece of
+    // this result the MCP failure envelope actually projects to the agent.
+    const quote = buildQuoteDraftPrimitive(quoteInput);
+    const purchaseOrder = buildPurchaseOrderDraftPrimitive(purchaseOrderInput);
+    const rawQuote = quoteReadback();
+    const rawPurchaseOrder = purchaseOrderReadback();
+
+    const quoteHeaderResult = verifyQuoteDraftReadback(
+      quoteId,
+      quote.canonicalPayload,
+      { ...rawQuote, reference: "SECRET-LEAK-FROM-PROVIDER" },
+    );
+    expect(quoteHeaderResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["reference"],
+    });
+    if (quoteHeaderResult.ok) throw new Error("expected a mismatch");
+    expect(JSON.stringify(quoteHeaderResult.mismatchFields)).not.toContain("SECRET-LEAK");
+
+    const quoteLineResult = verifyQuoteDraftReadback(
+      quoteId,
+      quote.canonicalPayload,
+      { ...rawQuote, lineItems: [{ ...rawQuote.lineItems[0], accountCode: "201" }] },
+    );
+    expect(quoteLineResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["lines[0].accountCode"],
+    });
+
+    const purchaseOrderHeaderResult = verifyPurchaseOrderDraftReadback(
+      purchaseOrderId,
+      purchaseOrder.canonicalPayload,
+      { ...rawPurchaseOrder, reference: "SECRET-LEAK-FROM-PROVIDER" },
+    );
+    expect(purchaseOrderHeaderResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["reference"],
+    });
+    if (purchaseOrderHeaderResult.ok) throw new Error("expected a mismatch");
+    expect(JSON.stringify(purchaseOrderHeaderResult.mismatchFields)).not.toContain("SECRET-LEAK");
+
+    const purchaseOrderLineResult = verifyPurchaseOrderDraftReadback(
+      purchaseOrderId,
+      purchaseOrder.canonicalPayload,
+      { ...rawPurchaseOrder, lineItems: [{ ...rawPurchaseOrder.lineItems[0], accountCode: "454" }] },
+    );
+    expect(purchaseOrderLineResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["lines[0].accountCode"],
+    });
   });
 
   it("fails closed on missing, malformed, non-finite, over-precise, duplicate, or provider-error readbacks", () => {

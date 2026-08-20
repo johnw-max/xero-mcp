@@ -1,0 +1,492 @@
+{
+  "schema_version": "1.0",
+  "catalog_id": "ledger-control-clauses-2026-08-14-v1",
+  "source_documents": [
+    {
+      "path": "docs/LEDGER-CONTROL-KERNEL-AUTONOMOUS-WRITE-SPEC-2026-08-13.md",
+      "sha256": "acf348059a42cbda9060f23008135465e6645b290496fffa60228195ea6ea904"
+    },
+    {
+      "path": "docs/LOCAL-ANTI-LAZINESS-ACCEPTANCE-MECHANISM.md",
+      "sha256": "63b8bbf1a75872cd8eaa3dd78b1ea3a1bd28fbe80e26ddcee991b3c0de9dc631"
+    },
+    {
+      "path": "docs/XERO-0.4.0-RC1-LOCAL-MULTI-ORGANISATION-TARGET-SESSIONS-2026-08-12.md",
+      "sha256": "c311d09d5e5d9a838281667ca6d8d4d1433e23acd4d92ae6a3ab68a6e4eeeb0f"
+    },
+    {
+      "path": "docs/LEDGER-KERNEL-ITERATIVE-REVIEW-AND-ACCEPTANCE-2026-08-13.md",
+      "sha256": "8f3f3c61f596526861acf5900349ea17d9351737965c17dea4db6a801a7c6ef8"
+    }
+  ],
+  "requirements": [
+    {
+      "requirement_id": "K-001",
+      "business_risk": "Cross-tenant or stale-binding mutation",
+      "clauses": [
+        {
+          "clause_id": "K-001-C01",
+          "control": "Every mutation must match the complete live actor, workspace, subject, agent, installation, binding revision, connection and tenant tuple sealed by the Case."
+        },
+        {
+          "clause_id": "K-001-C02",
+          "control": "The target reference must be server-issued, unexpired and resolve to the exact live target-session capability used by every ledger tool call."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-002",
+      "business_risk": "Write after delegation, kill-switch, target, policy or capability changed",
+      "clauses": [
+        {
+          "clause_id": "K-002-C01",
+          "control": "Authorization is the intersection of live authority, capability, target and action; removal or mismatch of any dimension blocks before provider access."
+        },
+        {
+          "clause_id": "K-002-C02",
+          "control": "Durable authority snapshot revision and hash are monotonic, and one revision may never identify different authority bytes."
+        },
+        {
+          "clause_id": "K-002-C03",
+          "control": "The exact authority revision and hash are reread after preflight and immediately before the final write claim."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-003",
+      "business_risk": "Model changes payload, amount, action or tenant after prepare",
+      "clauses": [
+        {
+          "clause_id": "K-003-C01",
+          "control": "The public execute schema accepts only case_id, case_version and request_id and rejects every client-supplied operation, action, tenant, provider or payload field."
+        },
+        {
+          "clause_id": "K-003-C02",
+          "control": "Execute loads immutable operations only from the exact persisted Case version and rejects stale or cross-Case replay."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-004",
+      "business_risk": "False totals such as 800 plus 7.20 reported as 87.20",
+      "clauses": [
+        {
+          "clause_id": "K-004-C01",
+          "control": "Every line and declared amount uses bounded fixed-decimal syntax and rejects floating-point, alternate-zero and excess-precision representations."
+        },
+        {
+          "clause_id": "K-004-C02",
+          "control": "An independent source-to-canonical line and document bridge recomputes amounts and binds the result into source and operation hashes."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-005",
+      "business_risk": "Wrong tax, tax period, date, FX or economic readback",
+      "clauses": [
+        {
+          "clause_id": "K-005-C01",
+          "control": "A versioned accounting-policy projection and the applicable document or original-transaction date uniquely determine supported tax periods and rates."
+        },
+        {
+          "clause_id": "K-005-C02",
+          "control": "A live tax rate must resolve to exactly one active provider rate whose direction, numeric rate and account applicability all match the sealed policy."
+        },
+        {
+          "clause_id": "K-005-C03",
+          "control": "Document, due and lock dates are canonical valid dates, and every date at or before an applicable lock boundary is blocked."
+        },
+        {
+          "clause_id": "K-005-C04",
+          "control": "Every foreign-currency route requires typed supported FX evidence and the adapter may not omit or reinterpret the sealed rate."
+        },
+        {
+          "clause_id": "K-005-C05",
+          "control": "Readback quantity, net, tax, account and tax type match the sealed policy projection for every line."
+        },
+        {
+          "clause_id": "K-005-C06",
+          "control": "Readback document net, tax, gross, currency and aggregation match exactly, including a one-minor-unit adversarial difference."
+        },
+        {
+          "clause_id": "K-005-C07",
+          "control": "A credit may reference a historical provider transaction only through server-resolved, exact-readback original-transaction evidence that is sealed and rechecked; the historical original is evidence-only and never compiled as a new write."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-006",
+      "business_risk": "Guessed or drifting contact, account, tax or provider route",
+      "clauses": [
+        {
+          "clause_id": "K-006-C01",
+          "control": "Typed contact namespaces require external or durable registry authority; a provider bare-number match proves continuity only and never upgrades source truth."
+        },
+        {
+          "clause_id": "K-006-C02",
+          "control": "The same exact verified contact tuple is idempotent, while a different unauthorised namespace tuple sharing a bare number is blocked before preparation, permit and create."
+        },
+        {
+          "clause_id": "K-006-C03",
+          "control": "Every semantic account category resolves through one server-owned tenant, jurisdiction and revision profile to an exact live AccountID, code, type, class and configured semantics."
+        },
+        {
+          "clause_id": "K-006-C04",
+          "control": "Every semantic tax key resolves to one live exact provider rate and is sealed and rechecked before the write claim."
+        },
+        {
+          "clause_id": "K-006-C05",
+          "control": "One provider route and capability contract decides every action and bound; unsupported routes, shapes or bounds never fall back to another writer."
+        },
+        {
+          "clause_id": "K-006-C06",
+          "control": "Contact identity collision discovery covers the complete provider lifecycle, including active, archived and privacy-erased or unknown states; only an exact active authoritative object may be reused and every inactive or incomplete result blocks create."
+        },
+        {
+          "clause_id": "K-006-C07",
+          "control": "A legal contact identity is provider-role-neutral with a set of usage roles, so one verified entity shared by receivables and payables creates or reuses one provider contact and supplies every dependent document exactly once."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-007",
+      "business_risk": "Recognized source events disappear behind a completion claim",
+      "clauses": [
+        {
+          "clause_id": "K-007-C01",
+          "control": "Source manifest, unit, fact and event identities and source bytes or revisions are frozen and included in the source hash."
+        },
+        {
+          "clause_id": "K-007-C02",
+          "control": "Every expected fact and event has exact source-unit coverage and generic evidence cannot cover an unrelated set or collision."
+        },
+        {
+          "clause_id": "K-007-C03",
+          "control": "Submitted-set completeness, write eligibility and residual disposition are independent dimensions and none may be inferred from another."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-008",
+      "business_risk": "Retry after timeout creates a duplicate provider object",
+      "clauses": [
+        {
+          "clause_id": "K-008-C01",
+          "control": "Operation request identity is deterministically derived from the full server-owned Case, version, operation and action identity without collision."
+        },
+        {
+          "clause_id": "K-008-C02",
+          "control": "The repository atomically grants one request owner; the same request is resumable and a different request conflicts."
+        },
+        {
+          "clause_id": "K-008-C03",
+          "control": "A one-shot provider permit is durably consumed before any consumer call and remains consumed if the consumer throws or races."
+        },
+        {
+          "clause_id": "K-008-C04",
+          "control": "Any possibly-sent or insufficiently-proven failure becomes write-uncertain and permits exact GET recovery only, never a second create."
+        },
+        {
+          "clause_id": "K-008-C05",
+          "control": "Only a structured definite pre-write provider validation rejection may release a reservation as definitely failed."
+        },
+        {
+          "clause_id": "K-008-C06",
+          "control": "Before preparation and again immediately before the provider write claim, a complete provider-history business-coordinate lookup returns NONE, EXACT_ONE, AMBIGUOUS or INCOMPLETE: NONE alone permits create; an EXACT_ONE object whose exact GET and canonical economic readback are identical yields NO_WRITE_REQUIRED_EXISTING without claiming a Case write receipt; every revised, mismatched, ambiguous or incomplete result is sealed and blocked without a provider write."
+        },
+        {
+          "clause_id": "K-008-C07",
+          "control": "A submitted or model-extracted reference classification never grants a narrower duplicate scope: untrusted references reserve all occurrences, and dated recurring occurrences require a server-owned versioned recurring-series authority whose identity and occurrence key are sealed into the plan."
+        },
+        {
+          "clause_id": "K-008-C08",
+          "control": "Each provider route has one server-authoritative business-coordinate projection that binds the trusted issuer, exact provider-persisted field, normalization and occurrence scope across all writer representations; mutable economic fields never define the coordinate, and a route whose authoritative field cannot be written and read exactly is blocked."
+        },
+        {
+          "clause_id": "K-008-C09",
+          "control": "A provider route without a provider-enforced unique business coordinate permits autonomous create only under a server-verified exclusive governed-writer authority covering every tenant writer; absent that authority, the cross-system lookup-to-create race is blocked for manual review rather than represented as exactly-once."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-009",
+      "business_risk": "Provider accepted a write without durable object ID, receipt and exact readback",
+      "clauses": [
+        {
+          "clause_id": "K-009-C01",
+          "control": "After provider create, only a durable exact provider object identifier and mutation receipt can advance recovery or success."
+        },
+        {
+          "clause_id": "K-009-C02",
+          "control": "READBACK_VERIFIED requires the same provider object identifier and an exact canonical and economic projection."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-010",
+      "business_risk": "Evidence from different case, payload, target or authority is combined",
+      "clauses": [
+        {
+          "clause_id": "K-010-C01",
+          "control": "The compiled-plan hash exactly binds access binding, Case, version and every compiled operation."
+        },
+        {
+          "clause_id": "K-010-C02",
+          "control": "The preflight receipt exactly binds plan, binding, Case, version and every operation preparation, payload and source identity."
+        },
+        {
+          "clause_id": "K-010-C03",
+          "control": "The durable preparation-to-mutation join requires the same owner, action, target, session, source and payload."
+        },
+        {
+          "clause_id": "K-010-C04",
+          "control": "A provider permit is issued only from a hash-valid persisted authorization receipt and exact mutation request projection."
+        },
+        {
+          "clause_id": "K-010-C05",
+          "control": "Mutation and readback evidence can update only the same Case operation and same provider object and receipt identity."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-011",
+      "business_risk": "Connection, permission and provider failures collapse into a misleading generic error",
+      "clauses": [
+        {
+          "clause_id": "K-011-C01",
+          "control": "Every failure maps to a fixed layer, reason, recovery action and provider-mutation-possible classification, and post-send unknown never becomes safe retry."
+        },
+        {
+          "clause_id": "K-011-C02",
+          "control": "The public failure envelope contains only allowlisted bounded fields and never provider bodies, secrets or arbitrary internal details."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-012",
+      "business_risk": "Credential-backed provider access occurs before the kernel write permit is consumed",
+      "clauses": [
+        {
+          "clause_id": "K-012-C01",
+          "control": "An invalid, missing or consumed permit fails before provider client initialization."
+        },
+        {
+          "clause_id": "K-012-C02",
+          "control": "An invalid, missing or consumed permit causes zero credential decryption, token-state or OAuth-refresh calls."
+        },
+        {
+          "clause_id": "K-012-C03",
+          "control": "An invalid, missing or consumed permit causes zero provider network and SDK mutation calls, while a valid permit authorizes one exact adapter, action and payload."
+        },
+        {
+          "clause_id": "K-012-C04",
+          "control": "A read-only provider client exposes no mutation-capable SDK method."
+        },
+        {
+          "clause_id": "K-012-C05",
+          "control": "The production public tool allowlist exposes only the governed Case mutation choreography and no raw object or manual-journal writer."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-013",
+      "business_risk": "UAT exercises a stale toolset, policy, migration, authority state or unidentifiable worktree",
+      "clauses": [
+        {
+          "clause_id": "K-013-C01",
+          "control": "Static attestation exactly binds release, toolset, kernel, compiler, policy, provider, validator and required migration head."
+        },
+        {
+          "clause_id": "K-013-C02",
+          "control": "The acceptance snapshot captures every source path, byte, mode and hash once and detects worktree or snapshot mutation including mutate-and-restore."
+        },
+        {
+          "clause_id": "K-013-C03",
+          "control": "Source archive, source manifest, bundle manifest and build identity are mechanically rebuilt from and match the immutable snapshot."
+        },
+        {
+          "clause_id": "K-013-C04",
+          "control": "Every build stage and Dockerfile frontend is identified by an approved immutable digest rather than a mutable tag."
+        },
+        {
+          "clause_id": "K-013-C05",
+          "control": "Buildx receives only one sealed deterministic context tar through stdin, never a second filesystem path read, and stdin failure is fatal."
+        },
+        {
+          "clause_id": "K-013-C06",
+          "control": "The trusted verifier parses and hashes the OCI layout, manifest, config and every layer and rejects unsafe, duplicate, missing or extra archive entries and blobs."
+        },
+        {
+          "clause_id": "K-013-C07",
+          "control": "OCI labels and embedded identity exactly equal the accepted source, archive, manifest and semantic build digests."
+        },
+        {
+          "clause_id": "K-013-C08",
+          "control": "Readiness succeeds only when runtime build identity, repository schema and migration head and authority snapshot evidence all match."
+        },
+        {
+          "clause_id": "K-013-C09",
+          "control": "Every production deployment path uses only the accepted repo-at-digest image, and cutover verifies RepoDigest, running image identity, labels and runtime readiness without rebuilding."
+        },
+        {
+          "clause_id": "K-013-C10",
+          "control": "The Gate independently reconstructs the deterministic context identity and exactly matches every OCI receipt hash, size, count and source-manifest digest."
+        },
+        {
+          "clause_id": "K-013-C11",
+          "control": "Release readiness and cutover fail while any active write-in-flight, write-uncertain or readback-mismatch Case uses a policy or provider projection that the candidate image cannot recover; compatible recovery must drain those Cases before the candidate becomes ready."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-014",
+      "business_risk": "Agent claims a write without a tool receipt and exact readback",
+      "clauses": [
+        {
+          "clause_id": "K-014-C01",
+          "control": "Completion is mechanically derived from one durable Case, version and operation chain containing provider ID, mutation receipt and exact readback receipt."
+        },
+        {
+          "clause_id": "K-014-C02",
+          "control": "Agent final output may repeat only the mechanical ledger claim and must never turn ledger readback into verified source truth."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-015",
+      "business_risk": "A release is declared locally acceptable after running only convenient checks or omitting product, architecture or evidence review",
+      "clauses": [
+        {
+          "clause_id": "K-015-C01",
+          "control": "The Gate executes from a digest-named immutable snapshot and verifies source, inputs and mutation journals before, between and after every step."
+        },
+        {
+          "clause_id": "K-015-C02",
+          "control": "The required deterministic suite set and order are fixed, and nonzero exit, collection error, timeout, overflow, skip or zero tests fail closed."
+        },
+        {
+          "clause_id": "K-015-C03",
+          "control": "Canonical external control clauses exactly define all traceability claims and cannot be deleted or rewritten together with an implementation-authored summary."
+        },
+        {
+          "clause_id": "K-015-C04",
+          "control": "The review universe is derived bottom-up from accepted release, runtime, deployment, migration, review tooling and fixed-baseline worktree state including additions and deletions."
+        },
+        {
+          "clause_id": "K-015-C05",
+          "control": "Each atomic claim is partitioned into bounded semantic shards whose union covers every required vertex and dependency edge without omission."
+        },
+        {
+          "clause_id": "K-015-C06",
+          "control": "Every review shard runs in a distinct fixed read-only approved Codex process whose executable, prompt, nonce and execution identity are replayable."
+        },
+        {
+          "clause_id": "K-015-C07",
+          "control": "Every actual-content chunk is nonce, path, offset, size and hash bound and must be complete, ordered, untruncated and within encoded-output capacity."
+        },
+        {
+          "clause_id": "K-015-C08",
+          "control": "Every probe obligation runs a fixed in-memory implementation mutation after a green baseline and must fail the specified collected assertion with zero skip or collection error."
+        },
+        {
+          "clause_id": "K-015-C09",
+          "control": "Every cited positive and adversarial executable test is rerun by the Gate from current bytes with zero skip."
+        },
+        {
+          "clause_id": "K-015-C10",
+          "control": "Each structured reviewer verdict reports all mandated review axes, concrete evidence, adversarial checks, rationale and residual risk; prose placeholders cannot close."
+        },
+        {
+          "clause_id": "K-015-C11",
+          "control": "The aggregator requires the exact expected set of requirement, claim, shard and probe-obligation artifacts under one source, subject, universe, graph and partition identity."
+        },
+        {
+          "clause_id": "K-015-C12",
+          "control": "Current local-Agent raw events and final output mechanically bind target choreography, writes, receipts, exact readback and source-truth boundaries."
+        },
+        {
+          "clause_id": "K-015-C13",
+          "control": "Crash evidence uses real independent processes and current generator and source fingerprints at each governed crash boundary."
+        },
+        {
+          "clause_id": "K-015-C14",
+          "control": "Redacted raw command, output, final, invocation and artifact bytes are individually hashed and any byte change invalidates closure."
+        },
+        {
+          "clause_id": "K-015-C15",
+          "control": "The local Gate cannot self-close Gate L or substitute its own evidence for independent external approval."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-016",
+      "business_risk": "An ordinary business request cannot be converted into the strict Accounting Case contract without repeated schema guessing, or the convenience intake silently weakens authority and accounting controls",
+      "clauses": [
+        {
+          "clause_id": "K-016-C01",
+          "control": "Business intake is a strict allowlist and rejects tenant, provider, operation, authority, payload, receipt and internal identifiers."
+        },
+        {
+          "clause_id": "K-016-C02",
+          "control": "The same ordinary business input deterministically produces the same artifact, unit, fact and event identities independent of field order."
+        },
+        {
+          "clause_id": "K-016-C03",
+          "control": "Every normalized intake output must pass the canonical public prepare schema before compilation."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-017",
+      "business_risk": "Xero, Singapore tax or chart-of-accounts assumptions are hard-coded into the shared control kernel and make the claimed solution provider-specific or unsafe to extend",
+      "clauses": [
+        {
+          "clause_id": "K-017-C01",
+          "control": "Provider identity and accounting policy are separate injected contracts and a non-Xero provider and policy run the shared compiler without source changes."
+        },
+        {
+          "clause_id": "K-017-C02",
+          "control": "The provider projection is sealed into source, plan and operation hashes and any provider binding or capability change invalidates the old plan."
+        },
+        {
+          "clause_id": "K-017-C03",
+          "control": "The policy projection is independently sealed into source, plan and operation hashes and policy change invalidates the old plan."
+        },
+        {
+          "clause_id": "K-017-C04",
+          "control": "The shared transitive dependency closure contains no Xero, Singapore, tax-code, tax-rate or tenant chart literal or provider import."
+        },
+        {
+          "clause_id": "K-017-C05",
+          "control": "Provider route and capability bounds are interpreted only by the injected adapter contract and the shared kernel has no provider-specific fallback."
+        }
+      ]
+    },
+    {
+      "requirement_id": "K-018",
+      "business_risk": "A valid currency amount is rejected, rounded inconsistently, or read back against a different line/document rounding rule",
+      "clauses": [
+        {
+          "clause_id": "K-018-C01",
+          "control": "Every currency resolves through a versioned policy minor scale and unsupported currencies fail closed."
+        },
+        {
+          "clause_id": "K-018-C02",
+          "control": "The policy selects one integer rounding mode and no floating-point or implicit provider rounding is used."
+        },
+        {
+          "clause_id": "K-018-C03",
+          "control": "Tax aggregation follows the sealed per-line rule and document-total rounding cannot replace line aggregation."
+        },
+        {
+          "clause_id": "K-018-C04",
+          "control": "Compiler, service preparation and readback use the same sealed quantizer, scale and aggregation rule."
+        },
+        {
+          "clause_id": "K-018-C05",
+          "control": "Monetary rule version, scale, mode and aggregation are fully included in policy, source and plan identities and old rules are never silently reinterpreted."
+        }
+      ]
+    }
+  ]
+}

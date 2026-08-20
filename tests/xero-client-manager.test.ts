@@ -4,8 +4,8 @@ import type { ProviderConnection } from "../src/domain/models.js";
 import type { Logger } from "../src/logging.js";
 import {
   XeroClientManager,
-  type XeroActionConnection,
 } from "../src/providers/xeroClientManager.js";
+import type { XeroTrialBalanceTransport } from "../src/providers/xeroTrialBalanceTransport.js";
 import { Aes256GcmTokenCipher } from "../src/security/tokenCipher.js";
 
 const requiredScopes = [
@@ -20,10 +20,16 @@ const requiredScopes = [
   "accounting.invoices.read",
   "accounting.invoices",
   "accounting.payments.read",
+  "accounting.payments",
   "accounting.manualjournals.read",
   "accounting.manualjournals",
   "accounting.banktransactions.read",
+  "accounting.banktransactions",
+  "accounting.journals.read",
   "accounting.reports.trialbalance.read",
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.balancesheet.read",
+  "accounting.reports.aged.read",
 ];
 const readOnlyScopes = [
   "openid",
@@ -36,7 +42,11 @@ const readOnlyScopes = [
   "accounting.payments.read",
   "accounting.manualjournals.read",
   "accounting.banktransactions.read",
+  "accounting.journals.read",
   "accounting.reports.trialbalance.read",
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.balancesheet.read",
+  "accounting.reports.aged.read",
 ];
 
 function logger(): Logger {
@@ -51,6 +61,7 @@ function logger(): Logger {
 async function setup(options: {
   scopes?: string[];
   legacyWriteEnabled?: boolean;
+  trialBalanceTransport?: XeroTrialBalanceTransport;
 } = {}) {
   const scopes = options.scopes ?? requiredScopes;
   const repository = new InMemoryAccountingRepository();
@@ -88,7 +99,8 @@ async function setup(options: {
       scopes: requiredScopes,
     },
     logger: testLogger,
-    legacyWriteEnabled: options.legacyWriteEnabled,
+    legacyWriteEnabled: options.legacyWriteEnabled ?? true,
+    trialBalanceTransport: options.trialBalanceTransport,
   });
   return { repository, cipher, connection, manager, testLogger };
 }
@@ -121,8 +133,14 @@ describe("Xero token refresh concurrency", () => {
     });
   });
 
-  it("exposes only the refreshed request-scoped access token to bounded transports", async () => {
-    const { repository, manager } = await setup();
+  it("keeps the refreshed access token inside the manager-owned bounded transport", async () => {
+    const getTrialBalance = vi.fn(async (input: { tenantId: string; accessToken: string }) => ({
+      tenantId: input.tenantId,
+      tokenObservedInsideManagerTransport: input.accessToken,
+    }));
+    const { repository, manager } = await setup({
+      trialBalanceTransport: { getTrialBalance },
+    });
     let activeTokenSet: Record<string, unknown> = {};
     const refreshed = {
       access_token: "test-access-refreshed",
@@ -142,16 +160,11 @@ describe("Xero token refresh concurrency", () => {
       readTokenSet: vi.fn(() => activeTokenSet),
     };
     vi.spyOn(manager, "createOAuthClient").mockReturnValue(client as never);
-    const action = vi.fn(async (accessToken: string, connection: XeroActionConnection) => ({
-      accessToken,
-      tenantId: connection.tenantId,
-    }));
-
-    await expect(manager.withAccessToken("actor-a", action)).resolves.toEqual({
-      accessToken: "test-access-refreshed",
+    await expect(manager.getTrialBalance("actor-a")).resolves.toEqual({
       tenantId: "tenant-a",
+      tokenObservedInsideManagerTransport: "test-access-refreshed",
     });
-    expect(action).toHaveBeenCalledOnce();
+    expect(getTrialBalance).toHaveBeenCalledOnce();
     expect(client.refreshToken).toHaveBeenCalledOnce();
     await expect(repository.getConnectionByActorTenant("actor-a", "tenant-a")).resolves.toMatchObject({
       refreshVersion: 1,
@@ -201,7 +214,11 @@ describe("Xero token refresh concurrency", () => {
     vi.spyOn(manager, "createOAuthClient").mockReturnValue(client as never);
 
     await expect(manager.withClient("actor-a", async () => "unreachable")).rejects.toMatchObject({
-      code: "NOT_CONNECTED",
+      code: "OAUTH_REFRESH_FAILED",
+      details: {
+        failureLayer: "PROVIDER_OAUTH_REFRESH",
+        recoveryAction: "RECONNECT_XERO",
+      },
     });
     await expect(repository.getConnectionByActorTenant("actor-a", "tenant-a")).resolves.toMatchObject({
       status: "TOKEN_REFRESH_FAILED",

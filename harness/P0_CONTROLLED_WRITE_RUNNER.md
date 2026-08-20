@@ -1,87 +1,72 @@
-# Local P0 controlled-write runner
+# Accounting Case P0 controlled-write release runner
 
-This runner executes only the six `CONTROLLED_WRITE` cases selected from
-`harness/scenarios/deterministic-contract.p0.json`:
+The current `0.4.0-rc.1` release gate is
+`harness/runners/run-p0-accounting-case.ts`. It exercises the production MCP
+server over an in-memory MCP transport and exposes only the reviewed 28-tool
+Agent surface. The governed write traverses the production
+`XeroAccountingCaseService -> AccountingService -> XeroMutationService` stack.
+Only the final Xero provider adapter is a deterministic fake; it consumes the
+real one-shot provider permit and returns its stored provider record through
+exact GET with line, net, tax, and gross economics.
 
-- `DC-IDEMPOTENCY-012`
-- `DC-CONCURRENT-012B`
-- `DC-DUPLICATE-013`
-- `DC-RECOVERY-014`
-- `DC-READBACK-014B`
-- `DC-REPOSITORY-014C`
+It proves three current contract cases from
+`harness/scenarios/accounting-case-deterministic.p0.json`:
 
-It uses the production MCP server, `AccountingService`, and
-`InMemoryAccountingRepository` behind a network-free synthetic Xero Provider.
-Every case starts with the write gate closed, opens it only for one synthetic
-ACCPAY DRAFT scenario, and closes it before the case ends. AUTHORISE and payment
-tools are forbidden. The runner never calls Agent2, a browser, or live Xero.
+- `AC-SURFACE-001`: the public surface is exactly 28 tools; all object-level
+  mutation tools are absent and a direct bypass call is rejected;
+- `AC-CASE-PREPARE-002`: ordinary business-document intake is normalized into
+  a tenant-bound immutable Accounting Case without exposing internal identity,
+  target, route or Provider fields, with `ledger_write_claim=NOT_WRITTEN` and
+  zero Provider writes;
+- `AC-DELEGATION-003`: execute accepts only `case_id`, `case_version`, and
+  `request_id`; the stored plan passes exact Standing Delegation preflight;
+  one synthetic Xero DRAFT is reported successful only after Provider receipt
+  and exact same-ID readback; replay of the same request performs no second
+  Provider write.
 
-Run it from the Xero MCP project directory:
+Every run starts with its synthetic write gate closed, opens it only around the
+single isolated Provider write, and closes it in `finally`. AUTHORISE and
+payment operations remain zero. No browser, Agent2 API, or live Xero tenant is
+contacted.
+
+Run from the repository root:
 
 ```bash
-npx tsx harness/runners/run-p0-controlled-write.ts \
-  --run-id p0-controlled-write-20260806
+node --import tsx harness/runners/run-p0-accounting-case.ts \
+  --run-id p0-accounting-case-local-001
 ```
 
 By default, artifacts are written under:
 
 ```text
-artifacts/harness-runs/<run-id>/p0-controlled-write/
-  oracle-results.jsonl
+artifacts/harness-runs/<run-id>/p0-accounting-case/
+  oracle-results.json
   evidence.jsonl
-  provider-records.jsonl
-  write-gate-events.jsonl
+  provider-records.json
   summary.md
 ```
 
-The process exits non-zero when any hard oracle fails. This is intentional: an
-unproven case remains `FAIL` rather than being converted into a pass.
-
-Preserved pre-fix evidence (`p0-controlled-write-20260806`):
-
-- 5 PASS / 1 FAIL
-- six Provider create calls across six isolated cases
-- six Provider DRAFT records
-- zero Provider AUTHORISE calls
-- all six gates end closed
-- the only failure is `DC-CONCURRENT-012B`: one of two barrier-released,
-  identical requests sees the first posting in `VALIDATED` and returns
-  `CONFLICT`; nevertheless only one Provider write and one record occur
-
-Post-fix evidence (`p0-controlled-write-after-20260806`):
-
-- 6 PASS / 0 FAIL
-- the two simultaneous identical requests return the same PostingRequestID and
-  InvoiceID, with one new result and one idempotent replay
-- exactly one Provider create and one DRAFT record remain in the concurrency
-  case
-- all six case-scoped write gates finish closed and Provider AUTHORISE remains
-  zero
-
-The independently reviewed 0.3.0 final rerun is preserved at
-`artifacts/harness-runs/xero-0.3.0-p0-controlled-write-final-20260808/p0-controlled-write/`
-and reports 6/6 PASS, six synthetic Provider create calls, six DRAFT records,
-zero AUTHORISE calls, and a final closed gate. The full default suite reports
-780 PASS with 37 conditional skips; those skipped boundaries were run separately
-as required gates: HTTP/OAuth 2/2 PASS and fresh PostgreSQL 35/35 PASS. This still
-does not prove the target VPS deployment, Agent2 behavior, or a live Xero
-write/read-back.
-
-The pre-fix artifacts are intentionally retained instead of being overwritten,
-so the concurrency failure and its correction remain auditable.
-
-Targeted verification:
+The release regression is:
 
 ```bash
-npx tsc --noEmit \
-  --target ES2023 --module NodeNext --moduleResolution NodeNext \
-  --strict --noUncheckedIndexedAccess --exactOptionalPropertyTypes \
-  --noImplicitOverride --noUnusedLocals --noUnusedParameters \
-  --verbatimModuleSyntax --esModuleInterop --skipLibCheck \
-  --types node,vitest/globals \
-  harness/lib/syntheticXeroWriteProvider.ts \
-  harness/runners/run-p0-controlled-write.ts \
-  tests/p0-controlled-write-scenario-runner.test.ts
-
 npx vitest run tests/p0-controlled-write-scenario-runner.test.ts
 ```
+
+The regression also mutates the provider GET to an internally consistent but
+wrong `100.0000 + 7.2000 = 107.2000` readback. That run must fail its success
+oracle, persist `READBACK_MISMATCH`, finalize the Case as
+`RECOVERY_REQUIRED`, and keep the provider create count at one across the
+runner's second execute call.
+
+The test filename is retained for CI compatibility, but it now imports the
+current Accounting Case runner. It does not expose legacy object tools.
+
+## Historical internal runner
+
+`harness/runners/run-p0-controlled-write.ts` and the old `DC-*` scenarios are
+**legacy internal mutation-kernel regressions, not a 0.4 release gate**. They
+use `unsafeExposeLegacyObjectMutationToolsForTests=true` so historical
+idempotency, duplicate, and recovery fixtures remain reproducible. Their
+0.3.0 artifacts and six-case results are retained unchanged as historical
+evidence; they must not be cited as proof of the current Agent-facing Case
+contract.

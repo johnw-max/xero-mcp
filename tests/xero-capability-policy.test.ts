@@ -22,20 +22,50 @@ describe("Xero capability and risk policy", () => {
 
   it("separates current availability from the risk control required", () => {
     expect(policy("supplier_bill.create_draft")).toMatchObject({
-      riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+      riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
       releaseDecision: "AVAILABLE_NOW",
     });
     expect(policy("customer_invoice.create_draft")).toMatchObject({
-      riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+      riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
       releaseDecision: "AVAILABLE_NOW",
     });
     expect(policy("manual_journal.post")).toMatchObject({
-      riskClass: "DUAL_APPROVAL",
-      releaseDecision: "PREPARE_ONLY",
+      riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+      releaseDecision: "AVAILABLE_NOW",
     });
+    for (const actionId of [
+      "customer_invoice.update_draft",
+      "supplier_bill.update_draft",
+      "quote.update_draft",
+      "purchase_order.update_draft",
+      "credit_note.update_draft",
+      "manual_journal.update_draft",
+      "tracking_category.create",
+      "tracking_category.update",
+      "tracking_option.create",
+      "tracking_option.update",
+      "customer_invoice.void",
+      "supplier_bill.void",
+      "credit_note.authorise",
+      "credit_note.allocate",
+      "credit_note.unallocate",
+      "credit_note.refund",
+      "credit_note.void",
+      "manual_journal.void",
+      "payment.create",
+      "payment.reverse",
+      "bank_transaction.create",
+      "bank_transaction.update",
+      "bank_transaction.reverse",
+    ] as const) {
+      expect(policy(actionId), actionId).toMatchObject({
+        riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+        releaseDecision: "AVAILABLE_NOW",
+      });
+    }
     expect(policy("payment.create")).toMatchObject({
-      riskClass: "DISABLED",
-      releaseDecision: "NOT_EXPOSED",
+      riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+      releaseDecision: "AVAILABLE_NOW",
     });
   });
 
@@ -75,14 +105,14 @@ describe("Xero capability and risk policy", () => {
       knownAction: true,
       policyAllowsExecution: true,
       policyAllowsMutation: true,
-      controlRequirement: "EXPLICIT_CONFIRMATION",
+      controlRequirement: "TYPED_CASE_WRITE_GATE",
       requiredScopes: ["xero.draft.write"],
       requiredPermissions: ["XERO_DRAFT_WRITE"],
     });
     expect(invoiceDraft).toMatchObject({
       policyAllowsExecution: true,
       policyAllowsMutation: true,
-      controlRequirement: "EXPLICIT_CONFIRMATION",
+      controlRequirement: "TYPED_CASE_WRITE_GATE",
       requiredScopes: ["xero.draft.write"],
       requiredPermissions: ["XERO_DRAFT_WRITE"],
     });
@@ -94,11 +124,11 @@ describe("Xero capability and risk policy", () => {
       requiredPermissions: ["XERO_ACCOUNTING_READ"],
     });
     expect(journalPost).toMatchObject({
-      policyAllowsExecution: false,
-      policyAllowsMutation: false,
-      controlRequirement: "DUAL_APPROVAL",
-      requiredScopes: [],
-      requiredPermissions: ["XERO_DUAL_APPROVAL"],
+      policyAllowsExecution: true,
+      policyAllowsMutation: true,
+      controlRequirement: "TYPED_CASE_WRITE_GATE",
+      requiredScopes: ["xero.draft.write"],
+      requiredPermissions: ["XERO_DRAFT_WRITE"],
     });
     expect(supplierDraft).not.toHaveProperty("officialSupport");
     expect(agentPolicies).toHaveLength(XERO_CAPABILITY_POLICIES.length);
@@ -121,9 +151,9 @@ describe("Xero capability and risk policy", () => {
     });
   });
 
-  it("never marks a disabled, dual-approval, or unreleased action executable", () => {
+  it("never marks a disabled or unreleased action executable", () => {
     for (const entry of listAgentFacingXeroCapabilityPolicies()) {
-      if (entry.riskClass === "DISABLED" || entry.riskClass === "DUAL_APPROVAL") {
+      if (entry.riskClass === "DISABLED") {
         expect(entry.policyAllowsExecution, entry.actionId).toBe(false);
         expect(entry.policyAllowsMutation, entry.actionId).toBe(false);
       }
@@ -133,7 +163,7 @@ describe("Xero capability and risk policy", () => {
       }
       if (entry.policyAllowsMutation) {
         expect(entry.riskClass, entry.actionId).toBe(
-          "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+          "AUTONOMOUS_CONTROLLED_WRITE",
         );
       }
     }
@@ -141,7 +171,7 @@ describe("Xero capability and risk policy", () => {
 
   it("separates mark-sent state from actual quote and purchase-order delivery", () => {
     expect(policy("quote.mark_sent")).toMatchObject({
-      releaseDecision: "PREPARE_ONLY",
+      releaseDecision: "NOT_EXPOSED",
       label: "Mark a quote as SENT without delivering it",
     });
     expect(policy("quote.email_or_dispatch").officialSupport).toMatchObject({
@@ -159,8 +189,15 @@ describe("Xero capability and risk policy", () => {
       "quote.read_prepare",
       "purchase_order.read_prepare",
       "manual_journal.read_prepare",
+      "journal.read_prepare",
+      "report.profit_and_loss_read",
+      "report.balance_sheet_read",
+      "report.aged_receivables_read",
+      "report.aged_payables_read",
       "item.read_prepare",
       "bank_transaction.read_prepare",
+      "tracking_category.read_prepare",
+      "contact_group.read_prepare",
     ] as const) {
       expect(policy(actionId)).toMatchObject({
         riskClass: "READ_PREPARE",
@@ -179,15 +216,19 @@ describe("Xero capability and risk policy", () => {
       "credit_note.create_draft",
     ] as const) {
       expect(policy(actionId)).toMatchObject({
-        riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+        riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
         releaseDecision: "AVAILABLE_NOW",
       });
     }
 
     for (const actionId of [
-      "bank_transaction.create",
+      "payment.allocate",
+      "payment.refund",
     ] as const) {
-      expect(policy(actionId).releaseDecision, actionId).not.toBe("AVAILABLE_NOW");
+      expect(policy(actionId), actionId).toMatchObject({
+        riskClass: "DISABLED",
+        releaseDecision: "NOT_EXPOSED",
+      });
     }
   });
 
@@ -203,5 +244,59 @@ describe("Xero capability and risk policy", () => {
         releaseDecision: "AVAILABLE_NOW",
       });
     }
+  });
+
+  it("reports which write actions a tool can actually reach, separately from policy", () => {
+    // proves: the catalog cannot describe a capability as available while
+    // nothing can call it. The only exposed write tools bind to the Accounting
+    // Case, whose closed action union now includes normal document DRAFTs,
+    // exact DRAFT replacements, ledger adjustments, and safe Contact/Item/
+    // Tracking primitives.
+    for (const actionId of [
+      "contact.create_basic",
+      "contact.update_basic",
+      "credit_note.create_draft",
+      "customer_invoice.create_draft",
+      "customer_invoice.update_draft",
+      "item.create_basic_untracked",
+      "item.update_basic_untracked",
+      "manual_journal.create_draft",
+      "manual_journal.update_draft",
+      "supplier_bill.create_draft",
+      "supplier_bill.update_draft",
+      "quote.create_draft",
+      "quote.update_draft",
+      "purchase_order.create_draft",
+      "purchase_order.update_draft",
+      "tracking_category.create",
+      "tracking_category.update",
+      "tracking_option.create",
+      "tracking_option.update",
+      "customer_invoice.void",
+      "supplier_bill.void",
+      "credit_note.authorise",
+      "credit_note.allocate",
+      "credit_note.unallocate",
+      "credit_note.refund",
+      "credit_note.void",
+      "manual_journal.void",
+      "payment.create",
+      "payment.reverse",
+      "bank_transaction.create",
+      "bank_transaction.update",
+      "bank_transaction.reverse",
+    ] as const) {
+      expect(lookupAgentFacingXeroCapabilityDecision(actionId))
+        .toMatchObject({ agentReachableWriteAction: true });
+    }
+    // Policy permission remains separate from the runtime proof that this Case
+    // action union and its receipt/read-back path are publicly reachable.
+    expect(lookupAgentFacingXeroCapabilityDecision("quote.create_draft")).toMatchObject({
+      releaseDecision: "AVAILABLE_NOW",
+      policyAllowsMutation: true,
+    });
+    // Reads are not write actions, so the field does not apply to them.
+    expect(lookupAgentFacingXeroCapabilityDecision("report.trial_balance_read"))
+      .not.toHaveProperty("agentReachableWriteAction");
   });
 });

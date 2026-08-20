@@ -1,6 +1,6 @@
 # Xero MCP 连接生命周期（通俗版）
 
-核对日期：2026-08-07
+核对日期：2026-08-10
 
 ## 一句话结论
 
@@ -16,6 +16,19 @@ Xero 的 30 分钟不是“30 分钟后用户被踢下线”，而是 Xero 上�
 | Work/Agent2 → MCP Refresh Token | 30 天滚动闲置窗口 | 正常使用会轮换并重置 30 天；连续 30 天未续期后不能再换新，需要重新连接 | 仅闲置到期时 |
 
 Xero Refresh Token 的上游策略由 Xero 管理；本项目不把它暴露给 Agent 或浏览器，也不把 Xero Token 存进对话。
+
+## 同一会计如何切换代理公司
+
+用户不需要先理解 MCP 管理页或手动断开连接。对于同一 Xero OAuth 已经授权的 Organisation，可以直接在对话里说“切换到某某公司”：
+
+1. Agent 调用 `xero_start_organisation_switch`，返回 10 分钟有效的一次性确认链接；
+2. 用户在 MCP 自己的页面中明确选择一家 Organisation；
+3. MCP 原子更新该 installation 的当前 binding；
+4. Agent 重新读取连接状态，确认公司名称后继续工作。
+
+Agent 不能仅凭聊天文本静默切换，也不能把用户上传文件中的公司名当成授权。目标 Organisation 不在当前已授权列表时，才需要重新走 Xero OAuth。详细控制见 [Organisation 切换与治理审计设计](./XERO-ORGANISATION-SWITCH-AND-GOVERNANCE-AUDIT-ZH.md)。
+
+2026-08-10 线上验收已证明：同一个 Agent2 installation 可以从 `Demo Company (Global)` 切到 `zcloak`，按工具回读得到 HKD，再切回 Demo Company 并回读 USD；Work 的独立 OAuth client 同时保持自己的 Demo Company binding，不会被另一个 Host 的切换覆盖。
 
 ## 主动断开做什么
 
@@ -51,3 +64,4 @@ Xero Refresh Token 的上游策略由 Xero 管理；本项目不把它暴露给 
 - 30 天是当前 MCP Refresh Token 的滚动闲置期，不是活跃连接的绝对寿命，也不代表每 30 天必然重新弹出 Xero consent；若服务端 Xero 授权仍有效，只需重建 Work/Agent2 installation。
 - 数据库是授权、幂等与审计控制面，不是 Ledger；Xero 仍是正式账本。
 - Demo 可以用数据库保持重启后的连接状态。正式平台可替换为已有的通用 OAuth/Connector 存储，只要保留精确 installation/binding、加密 Token、原子 rotation/revoke 和审计语义。
+- Organisation 切换后，旧 binding 只作为历史授权和 token family 证据保留，不再是运行时 current binding；旧账套上的未完成准备不能在新账套执行。

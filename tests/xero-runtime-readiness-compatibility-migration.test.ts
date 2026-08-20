@@ -57,7 +57,7 @@ describe("Xero runtime-readiness compatibility migration", () => {
     expect(migration).not.toMatch(/\b(?:DELETE|UPDATE)\s+posting_requests\b/i);
   });
 
-  it("also restores the actor-scoped definitions checked by the QuickBooks 0.2.12 shared repository", () => {
+  it("also restores the actor-scoped definitions checked by the legacy Xero runtime", () => {
     expect(migration).toMatch(
       /ALTER INDEX posting_requests_active_source_unique_idx\s+RENAME TO posting_requests_active_source_v030_unique_idx/,
     );

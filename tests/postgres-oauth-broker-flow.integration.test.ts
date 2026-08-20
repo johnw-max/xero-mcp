@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations } from "../src/db/migrate.js";
 import { PostgresAccountingRepository } from "../src/db/postgresRepository.js";
 import type {
@@ -18,6 +18,11 @@ const hash = (label: string): string => `${label}-${"h".repeat(48)}`;
 
 describeWithPostgres("Postgres OAuth Broker V2 flow integration", () => {
   const repository = databaseUrl ? new PostgresAccountingRepository(databaseUrl) : undefined;
+  const cleanupFlows = new Map<string, {
+    browserSessionHash: string;
+    installationId: string;
+    workspaceId: string;
+  }>();
 
   interface FlowIdentityOverride {
     workspaceId: string;
@@ -33,6 +38,25 @@ describeWithPostgres("Postgres OAuth Broker V2 flow integration", () => {
 
   afterAll(async () => {
     await repository?.close();
+  });
+
+  afterEach(async () => {
+    if (!repository) return;
+    const revokedAt = new Date();
+    for (const [flowHash, cleanup] of cleanupFlows) {
+      await repository.terminateBrokerAuthorizationFlow({
+        flowHash,
+        browserSessionHash: cleanup.browserSessionHash,
+        terminalStatus: "FAILED",
+        now: revokedAt,
+      });
+      await repository.revokeOAuthInstallation(
+        cleanup.installationId,
+        cleanup.workspaceId,
+        revokedAt,
+      );
+    }
+    cleanupFlows.clear();
   });
 
   function createFlowInput(
@@ -76,6 +100,11 @@ describeWithPostgres("Postgres OAuth Broker V2 flow integration", () => {
       createdAt,
       updatedAt: createdAt,
     };
+    cleanupFlows.set(flow.flowHash, {
+      browserSessionHash: flow.browserSessionHash,
+      installationId: installation.installationId,
+      workspaceId: installation.workspaceId,
+    });
     return { installation, flow };
   }
 
@@ -597,19 +626,173 @@ describeWithPostgres("Postgres OAuth Broker V2 flow integration", () => {
     });
   });
 
-  it("serializes Personal POC selections globally and terminates the losing browser flow", async () => {
+  it("keeps distinct Personal POC MCP clients connected independently", async () => {
     if (!repository) throw new Error("TEST_DATABASE_URL is required");
     const first = await advanceToSelection(randomUUID(), true, 1);
     const second = await advanceToSelection(randomUUID(), true, 1);
     const selectedAt = new Date(Math.max(first.exchangeAt.getTime(), second.exchangeAt.getTime()) + 30_000);
+    const complete = (context: typeof first, suffix: string) => repository.completeBrokerOrganisationSelection({
+      flowHash: context.flow.flowHash,
+      browserSessionHash: context.flow.browserSessionHash,
+      selectionCsrfHash: context.selectionCsrfHash,
+      selectedConnectionId: context.connections[0]!.connectionId,
+      bindingId: `v2-independent-binding-${suffix}`,
+      policyId: `v2-independent-policy-${suffix}`,
+      authorizationCodeHash: hash(`v2-independent-code-${suffix}`),
+      authorizationCodeExpiresAt: new Date(selectedAt.getTime() + 5 * 60_000),
+      now: selectedAt,
+    });
+    const firstResult = await complete(first, randomUUID());
+    const secondResult = await complete(second, randomUUID());
+    expect(firstResult).toMatchObject({ installation: { status: "ACTIVE" } });
+    expect(secondResult).toMatchObject({ installation: { status: "ACTIVE" } });
+    const active = await repository.pool.query(
+      `SELECT installation_id FROM oauth_installations
+       WHERE installation_id = ANY($1::text[]) AND installation_status = 'ACTIVE'
+       ORDER BY installation_id`,
+      [[first.installation.installationId, second.installation.installationId]],
+    );
+    expect(active.rows).toHaveLength(2);
+    await repository.revokeOAuthInstallation(first.installation.installationId, first.installation.workspaceId, selectedAt);
+    await repository.revokeOAuthInstallation(second.installation.installationId, second.installation.workspaceId, selectedAt);
+  });
+
+  it("atomically replaces an established Personal POC grant for the same MCP client", async () => {
+    if (!repository) throw new Error("TEST_DATABASE_URL is required");
+    const identity: FlowIdentityOverride = {
+      workspaceId: `v2-poc-reconnect-workspace-${randomUUID()}`,
+      subjectId: `v2-poc-reconnect-user-${randomUUID()}`,
+      agentId: `v2-poc-reconnect-agent-${randomUUID()}`,
+      clientId: `v2-poc-reconnect-client-${randomUUID()}`,
+    };
+    const first = await advanceToSelection(randomUUID(), true, 1, identity);
+    const firstSelectedAt = new Date(first.exchangeAt.getTime() + 30_000);
+    const firstResult = await repository.completeBrokerOrganisationSelection({
+      flowHash: first.flow.flowHash,
+      browserSessionHash: first.flow.browserSessionHash,
+      selectionCsrfHash: first.selectionCsrfHash,
+      selectedConnectionId: first.connections[0]!.connectionId,
+      bindingId: `v2-poc-reconnect-first-binding-${randomUUID()}`,
+      policyId: `v2-poc-reconnect-first-policy-${randomUUID()}`,
+      authorizationCodeHash: hash(`v2-poc-reconnect-first-code-${randomUUID()}`),
+      authorizationCodeExpiresAt: new Date(firstSelectedAt.getTime() + 5 * 60_000),
+      now: firstSelectedAt,
+    });
+    if (!firstResult) throw new Error("expected first Personal POC grant to complete");
+    const familyId = `v2-poc-reconnect-family-${randomUUID()}`;
+    await repository.createMcpRefreshTokenFamily({
+      family: {
+        familyId,
+        installationId: firstResult.installation.installationId,
+        bindingId: firstResult.binding.bindingId,
+        connectionId: firstResult.binding.connectionId,
+        clientId: first.flow.clientId,
+        resource: first.flow.resource,
+        audience: first.flow.audience,
+        grantedScopes: first.flow.requestedScopes,
+        status: "ACTIVE",
+        createdAt: firstSelectedAt,
+        updatedAt: firstSelectedAt,
+      },
+      initialToken: {
+        tokenHash: hash(`v2-poc-reconnect-refresh-${randomUUID()}`),
+        tokenId: `v2-poc-reconnect-refresh-${randomUUID()}`,
+        familyId,
+        issuedAt: firstSelectedAt,
+        expiresAt: new Date(firstSelectedAt.getTime() + 30 * 60_000),
+      },
+    });
+    const second = await advanceToSelection(randomUUID(), true, 1, identity);
+    const secondSelectedAt = new Date(Math.max(firstSelectedAt.getTime(), second.exchangeAt.getTime()) + 30_000);
+    const secondResult = await repository.completeBrokerOrganisationSelection({
+      flowHash: second.flow.flowHash,
+      browserSessionHash: second.flow.browserSessionHash,
+      selectionCsrfHash: second.selectionCsrfHash,
+      selectedConnectionId: second.connections[0]!.connectionId,
+      bindingId: `v2-poc-reconnect-second-binding-${randomUUID()}`,
+      policyId: `v2-poc-reconnect-second-policy-${randomUUID()}`,
+      authorizationCodeHash: hash(`v2-poc-reconnect-second-code-${randomUUID()}`),
+      authorizationCodeExpiresAt: new Date(secondSelectedAt.getTime() + 5 * 60_000),
+      now: secondSelectedAt,
+    });
+    expect(secondResult).toMatchObject({ installation: { status: "ACTIVE" } });
+    await expect(repository.pool.query(
+      "SELECT installation_status FROM oauth_installations WHERE installation_id = $1",
+      [first.installation.installationId],
+    )).resolves.toMatchObject({ rows: [{ installation_status: "REVOKED" }] });
+    if (secondResult) {
+      await repository.revokeOAuthInstallation(
+        secondResult.installation.installationId,
+        secondResult.installation.workspaceId,
+        secondSelectedAt,
+      );
+    }
+  });
+
+  it("replaces a stranded Personal POC selection after its unexchanged code expires", async () => {
+    if (!repository) throw new Error("TEST_DATABASE_URL is required");
+    const identity: FlowIdentityOverride = {
+      workspaceId: `v2-poc-stranded-workspace-${randomUUID()}`,
+      subjectId: `v2-poc-stranded-user-${randomUUID()}`,
+      agentId: `v2-poc-stranded-agent-${randomUUID()}`,
+      clientId: `v2-poc-stranded-client-${randomUUID()}`,
+    };
+    const first = await advanceToSelection(randomUUID(), true, 1, identity);
+    const firstSelectedAt = new Date(first.exchangeAt.getTime() + 30_000);
+    const firstCodeExpiresAt = new Date(firstSelectedAt.getTime() + 1_000);
+    const firstResult = await repository.completeBrokerOrganisationSelection({
+      flowHash: first.flow.flowHash,
+      browserSessionHash: first.flow.browserSessionHash,
+      selectionCsrfHash: first.selectionCsrfHash,
+      selectedConnectionId: first.connections[0]!.connectionId,
+      bindingId: `v2-poc-stranded-first-binding-${randomUUID()}`,
+      policyId: `v2-poc-stranded-first-policy-${randomUUID()}`,
+      authorizationCodeHash: hash(`v2-poc-stranded-first-code-${randomUUID()}`),
+      authorizationCodeExpiresAt: firstCodeExpiresAt,
+      now: firstSelectedAt,
+    });
+    if (!firstResult) throw new Error("expected stranded grant to complete selection");
+
+    const second = await advanceToSelection(randomUUID(), true, 1, identity);
+    const secondSelectedAt = new Date(Math.max(firstCodeExpiresAt.getTime(), second.exchangeAt.getTime()) + 30_000);
+    const secondResult = await repository.completeBrokerOrganisationSelection({
+      flowHash: second.flow.flowHash,
+      browserSessionHash: second.flow.browserSessionHash,
+      selectionCsrfHash: second.selectionCsrfHash,
+      selectedConnectionId: second.connections[0]!.connectionId,
+      bindingId: `v2-poc-stranded-second-binding-${randomUUID()}`,
+      policyId: `v2-poc-stranded-second-policy-${randomUUID()}`,
+      authorizationCodeHash: hash(`v2-poc-stranded-second-code-${randomUUID()}`),
+      authorizationCodeExpiresAt: new Date(secondSelectedAt.getTime() + 5 * 60_000),
+      now: secondSelectedAt,
+    });
+    expect(secondResult).toMatchObject({ installation: { status: "ACTIVE" } });
+    await expect(repository.pool.query(
+      "SELECT installation_status FROM oauth_installations WHERE installation_id = $1",
+      [first.installation.installationId],
+    )).resolves.toMatchObject({ rows: [{ installation_status: "REVOKED" }] });
+  });
+
+  it("serializes Personal POC selections for the same MCP client and terminates the losing browser flow", async () => {
+    if (!repository) throw new Error("TEST_DATABASE_URL is required");
+    const identity: FlowIdentityOverride = {
+      workspaceId: `v2-poc-race-workspace-${randomUUID()}`,
+      subjectId: `v2-poc-race-user-${randomUUID()}`,
+      agentId: `v2-poc-race-agent-${randomUUID()}`,
+      clientId: `v2-poc-race-client-${randomUUID()}`,
+    };
+    const first = await advanceToSelection(randomUUID(), true, 1, identity);
+    const second = await advanceToSelection(randomUUID(), true, 1, identity);
+    const selectedAt = new Date(Math.max(first.exchangeAt.getTime(), second.exchangeAt.getTime()) + 30_000);
+    const raceId = randomUUID();
     const selectionFor = (context: typeof first, suffix: string) => ({
       flowHash: context.flow.flowHash,
       browserSessionHash: context.flow.browserSessionHash,
       selectionCsrfHash: context.selectionCsrfHash,
       selectedConnectionId: context.connections[0]!.connectionId,
-      bindingId: `v2-poc-binding-${suffix}`,
-      policyId: `v2-poc-policy-${suffix}`,
-      authorizationCodeHash: hash(`v2-poc-code-${suffix}`),
+      bindingId: `v2-poc-binding-${raceId}-${suffix}`,
+      policyId: `v2-poc-policy-${raceId}-${suffix}`,
+      authorizationCodeHash: hash(`v2-poc-code-${raceId}-${suffix}`),
       authorizationCodeExpiresAt: new Date(selectedAt.getTime() + 5 * 60_000),
       now: selectedAt,
     });
@@ -662,7 +845,10 @@ describeWithPostgres("Postgres OAuth Broker V2 flow integration", () => {
       winner.flow.subjectId,
     )).resolves.toMatchObject({ status: "ACTIVE" });
     const active = await repository.pool.query(
-      "SELECT installation_id FROM oauth_installations WHERE installation_status = 'ACTIVE'",
+      `SELECT installation_id FROM oauth_installations
+       WHERE workspace_id = $1 AND subject_id = $2 AND agent_id = $3
+         AND oauth_client_id = $4 AND installation_status = 'ACTIVE'`,
+      [identity.workspaceId, identity.subjectId, identity.agentId, identity.clientId],
     );
     expect(active.rows).toEqual([{ installation_id: winner.installation.installationId }]);
 
@@ -710,7 +896,7 @@ describeWithPostgres("Postgres OAuth Broker V2 flow integration", () => {
       [winnerResult.installation.installationId],
     )).resolves.toMatchObject({ rows: [{ installation_status: "REVOKED" }] });
 
-    const reconnected = await advanceToSelection(randomUUID(), true, 1);
+    const reconnected = await advanceToSelection(randomUUID(), true, 1, identity);
     const reconnectedAt = new Date(reconnected.exchangeAt.getTime() + 30_000);
     const reconnectedResult = await repository.completeBrokerOrganisationSelection({
       flowHash: reconnected.flow.flowHash,
@@ -725,7 +911,10 @@ describeWithPostgres("Postgres OAuth Broker V2 flow integration", () => {
     });
     expect(reconnectedResult).toMatchObject({ installation: { status: "ACTIVE" } });
     const activeAfterReconnect = await repository.pool.query(
-      "SELECT installation_id FROM oauth_installations WHERE installation_status = 'ACTIVE'",
+      `SELECT installation_id FROM oauth_installations
+       WHERE workspace_id = $1 AND subject_id = $2 AND agent_id = $3
+         AND oauth_client_id = $4 AND installation_status = 'ACTIVE'`,
+      [identity.workspaceId, identity.subjectId, identity.agentId, identity.clientId],
     );
     expect(activeAfterReconnect.rows).toEqual([{ installation_id: reconnected.installation.installationId }]);
     await repository.revokeOAuthInstallation(

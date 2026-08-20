@@ -3,15 +3,19 @@ import {
   bankTransactionStatusSchema,
   bankTransactionTypeSchema,
   getBankTransactionSchema,
+  getPaymentSchema,
   getItemSchema,
   getManualJournalSchema,
   getPurchaseOrderSchema,
   getQuoteSchema,
   listBankTransactionsSchema,
+  listContactGroupsSchema,
   listItemsSchema,
+  listJournalsSchema,
   listManualJournalsSchema,
   listPurchaseOrdersSchema,
   listQuotesSchema,
+  listTrackingCategoriesSchema,
   manualJournalStatusSchema,
   purchaseOrderStatusSchema,
   quoteStatusSchema,
@@ -164,6 +168,25 @@ describe("extended read-only Xero schemas", () => {
 
     expect(listBankTransactionsSchema.safeParse({ date_from: "2026-08-08", date_to: "2026-08-07" }).success).toBe(false);
     expect(listBankTransactionsSchema.safeParse({ type: "PAYMENT" }).success).toBe(false);
+  });
+
+  it("keeps journal continuation, exact payment, tracking, and contact-group reads bounded and typed", () => {
+    expect(listJournalsSchema.parse({})).toEqual({});
+    expect(listJournalsSchema.parse({ offset: 101 })).toEqual({ offset: 101 });
+    expect(listJournalsSchema.safeParse({ offset: -1 }).success).toBe(false);
+    expect(listJournalsSchema.safeParse({ page: 2 }).success).toBe(false);
+
+    expect(getPaymentSchema.parse({ payment_id: xeroId })).toEqual({ payment_id: xeroId });
+    expect(getPaymentSchema.safeParse({ payment_id: "not-a-xero-id" }).success).toBe(false);
+
+    expect(listTrackingCategoriesSchema.parse({})).toEqual({ include_archived: false, limit: 100 });
+    expect(listTrackingCategoriesSchema.parse({ include_archived: true, limit: 12 }))
+      .toEqual({ include_archived: true, limit: 12 });
+    expect(listTrackingCategoriesSchema.safeParse({ where: 'Name=="Region"' }).success).toBe(false);
+
+    expect(listContactGroupsSchema.parse({})).toEqual({ limit: 100 });
+    expect(listContactGroupsSchema.parse({ limit: 12 })).toEqual({ limit: 12 });
+    expect(listContactGroupsSchema.safeParse({ limit: 101 }).success).toBe(false);
   });
 
   it("bounds every logical result window to at most 100,000 records", () => {

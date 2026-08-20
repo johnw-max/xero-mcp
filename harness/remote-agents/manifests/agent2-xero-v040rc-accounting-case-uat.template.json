@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "name": "agent2-xero-v0.4.0-rc.1-accounting-case-uat-template",
+  "capabilityManifest": "config/xero-capability-manifest.json",
+  "releaseContract": "0.4.0-rc.1 / manifest-derived public tools / OAuth target-session, effective scope, released policy and write gate",
+  "settings": {
+    "concurrency": 1,
+    "repeats": 1,
+    "timeoutMs": 180000,
+    "readMaxAttempts": 3,
+    "readRetryBaseMs": 500,
+    "maxRetryAfterMs": 60000,
+    "retryJitterRatio": 0.15,
+    "xeroCallsPerMinuteBudget": 60,
+    "writeToolPatterns": ["*xero_execute_accounting_case"],
+    "temperature": 0,
+    "maxOutputTokens": 8192
+  },
+  "agents": [
+    {
+      "alias": "accounting_case_controller",
+      "idEnv": "AGENT2_ACCOUNTING_CASE_AGENT_ID",
+      "persona": "Accounting controller operating only through the three governed Xero Accounting Case tools. It uses the pinned exact OAuth target/session and executes only with effective scope, released policy and the server write gate, never sends accounting payload at execute time, and reports success only from Provider receipt plus exact readback."
+    }
+  ],
+  "cases": [
+    {
+      "id": "v040rc-case-prepare-only",
+      "title": "Prepare and inspect one governed Case without writing Xero",
+      "operation": "read",
+      "estimatedXeroCalls": 12,
+      "fixture": "../../fixtures/xero/accounting-case-business-documents.v1.json",
+      "agents": ["accounting_case_controller"],
+      "transcript": [
+        {
+          "role": "developer",
+          "content": "The JSON below is a public synthetic business-document intake. It contains only the bounded submitted documents and source-supported business fields; target, internal fact/event IDs, routes and provider-native contact IDs are deliberately absent.\n\n{{fixture}}"
+        },
+        {
+          "role": "user",
+          "content": "Pin the current Xero organisation, prepare this Accounting Case from the supplied ordinary business documents, then read the Case status. Do not execute it. Report bounded supplied-set coverage, residual events and ledger_write_claim."
+        }
+      ],
+      "expect": {
+        "requiredTools": [
+          "*xero_pin_current_organisation",
+          "*xero_prepare_accounting_case",
+          "*xero_get_accounting_case_status"
+        ],
+        "forbiddenTools": ["*xero_execute_accounting_case", "*xero_create_*", "*xero_update_*"],
+        "requiredAssistantText": ["re:(NOT_WRITTEN|not written)", "re:(coverage|覆盖)", "re:(residual|例外)"],
+        "requiredToolCallJson": [
+          {
+            "tool": "*xero_prepare_accounting_case",
+            "assertions": [
+              { "path": "$.operations", "length": 5 },
+              { "path": "$.operations[*].action_id", "multiset": ["customer_invoice.create_draft", "supplier_bill.create_draft", "supplier_bill.create_draft", "credit_note.create_draft", "credit_note.create_draft"] },
+              { "path": "$.residual_event_count", "equals": 0 },
+              { "path": "$.completion_claim.ledger_write_claim", "equals": "NOT_WRITTEN" }
+            ]
+          },
+          {
+            "tool": "*xero_get_accounting_case_status",
+            "assertions": [
+              { "path": "$.operations", "length": 5 },
+              { "path": "$.completion_claim.ledger_write_claim", "equals": "NOT_WRITTEN" }
+            ]
+          }
+        ],
+        "minToolCalls": 3,
+        "maxToolCalls": 4,
+        "allCallsHaveOutput": true
+      }
+    },
+    {
+      "id": "v040rc-case-oauth-target-write-gate-execute",
+      "title": "Execute the stored current Case once with the pinned OAuth target/session and server write gate",
+      "operation": "write",
+      "estimatedXeroCalls": 60,
+      "fixture": "../../fixtures/xero/accounting-case-business-documents.v1.json",
+      "agents": ["accounting_case_controller"],
+      "transcript": [
+        {
+          "role": "developer",
+          "content": "This is a synthetic business-document test pack for a dedicated Xero test organisation. Before this case may run, the tenant must already contain exactly one ACTIVE identity-matched contact for Lion City Digital Pte. Ltd., OfficeHub Singapore Pte. Ltd., and CloudHost Inc.; this run must create zero contacts. Submit only the public ordinary business-document intake during prepare. Execute accepts only the stored Case identity.\n\n{{fixture}}"
+        },
+        {
+          "role": "user",
+          "content": "Process this test pack with the current OAuth target/session, effective scope, released policy and server write gate: pin the organisation, prepare the Case, execute its current immutable version exactly once, then read Case status. Stop on any coverage gap, validation error, uncertain write or readback mismatch. Never AUTHORISE, pay, allocate, void or retry an unknown provider result."
+        }
+      ],
+      "expect": {
+        "requiredTools": [
+          "*xero_pin_current_organisation",
+          "*xero_prepare_accounting_case",
+          "*xero_execute_accounting_case",
+          "*xero_get_accounting_case_status"
+        ],
+        "forbiddenTools": ["*xero_create_*", "*xero_update_*", "*authorise*", "*payment*"],
+        "requiredToolCalls": [
+          {
+            "tool": "*xero_execute_accounting_case",
+            "arguments": ["case_id", "case_version", "request_id"],
+            "output": ["completion_claim"]
+          }
+        ],
+        "exactToolCallCounts": [
+          { "tool": "*xero_execute_accounting_case", "count": 1 }
+        ],
+        "requiredToolCallJson": [
+          {
+            "tool": "*xero_prepare_accounting_case",
+            "assertions": [
+              { "path": "$.operations", "length": 5 },
+              { "path": "$.operations[*].action_id", "multiset": ["customer_invoice.create_draft", "supplier_bill.create_draft", "supplier_bill.create_draft", "credit_note.create_draft", "credit_note.create_draft"] },
+              { "path": "$.residual_event_count", "equals": 0 },
+              { "path": "$.completion_claim.ledger_write_claim", "equals": "NOT_WRITTEN" }
+            ]
+          },
+          {
+            "tool": "*xero_execute_accounting_case",
+            "assertions": [
+              { "path": "$.state", "equals": "TERMINAL" },
+              { "path": "$.operations", "length": 5 },
+              { "path": "$.operations[*].action_id", "multiset": ["customer_invoice.create_draft", "supplier_bill.create_draft", "supplier_bill.create_draft", "credit_note.create_draft", "credit_note.create_draft"] },
+              { "path": "$.operations[*].state", "everyEquals": "READBACK_VERIFIED" },
+              { "path": "$.operations[*].xero_object_id", "everyPresent": true },
+              { "path": "$.operations[*].provider_receipt_recorded", "everyEquals": true },
+              { "path": "$.operations[*].exact_readback_recorded", "everyEquals": true },
+              { "path": "$.residual_event_count", "equals": 0 },
+              { "path": "$.completion_claim.ledger_write_claim", "equals": "ALL_ELIGIBLE_WRITES_READBACK_VERIFIED" }
+            ]
+          },
+          {
+            "tool": "*xero_get_accounting_case_status",
+            "assertions": [
+              { "path": "$.state", "equals": "TERMINAL" },
+              { "path": "$.operations", "length": 5 },
+              { "path": "$.operations[*].state", "everyEquals": "READBACK_VERIFIED" },
+              { "path": "$.completion_claim.ledger_write_claim", "equals": "ALL_ELIGIBLE_WRITES_READBACK_VERIFIED" }
+            ]
+          }
+        ],
+        "requiredAssistantText": ["re:(provider receipt|Provider 回执|receipt)", "re:(readback|回读)", "re:(DRAFT|recovery|blocked)"],
+        "minToolCalls": 4,
+        "maxToolCalls": 5,
+        "allCallsHaveOutput": true
+      }
+    }
+  ]
+}

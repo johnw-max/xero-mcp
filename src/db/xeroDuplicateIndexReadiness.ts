@@ -41,11 +41,6 @@ const v030ActiveStateArray = [
 // state order, and null guards remain exact and therefore fail closed.
 const legacyActiveStatePredicate = `state = ANY (ARRAY[${legacyActiveStateArray}])`;
 const v030ActiveStatePredicate = `state = ANY (ARRAY[${v030ActiveStateArray}])`;
-const accpayDocumentPredicate = "document_type = 'ACCPAY'::text";
-const contactExpression = "lower(COALESCE(NULLIF(btrim(provider_payload ->> 'contactId'::text), ''::text), NULLIF(btrim(provider_payload #>> '{contact,contactId}'::text[]), ''::text)))";
-const referenceExpression = "lower(btrim(provider_payload ->> 'reference'::text))";
-const contactPresentPredicate = "COALESCE(NULLIF(btrim(provider_payload ->> 'contactId'::text), ''::text), NULLIF(btrim(provider_payload #>> '{contact,contactId}'::text[]), ''::text)) IS NOT NULL";
-const referencePresentPredicate = "NULLIF(btrim(provider_payload ->> 'reference'::text), ''::text) IS NOT NULL";
 
 export const EXPECTED_XERO_DUPLICATE_INDEXES: Readonly<Record<string, ExpectedXeroDuplicateIndex>> = {
   posting_requests_actor_tenant_request_create_unique_idx: {
@@ -56,17 +51,9 @@ export const EXPECTED_XERO_DUPLICATE_INDEXES: Readonly<Record<string, ExpectedXe
     keyDefinitions: ["actor_id", "tenant_id", "source_sha256"],
     predicate: legacyActiveStatePredicate,
   },
-  posting_requests_active_supplier_reference_unique_idx: {
-    keyDefinitions: ["actor_id", "tenant_id", contactExpression, referenceExpression],
-    predicate: `(${legacyActiveStatePredicate}) AND ${contactPresentPredicate} AND ${referencePresentPredicate}`,
-  },
   posting_requests_tenant_active_source_unique_idx: {
     keyDefinitions: ["tenant_id", "source_sha256"],
     predicate: legacyActiveStatePredicate,
-  },
-  posting_requests_tenant_active_supplier_reference_unique_idx: {
-    keyDefinitions: ["tenant_id", contactExpression, referenceExpression],
-    predicate: `(${legacyActiveStatePredicate}) AND ${contactPresentPredicate} AND ${referencePresentPredicate}`,
   },
   posting_requests_actor_tenant_request_create_v030_unique_idx: {
     keyDefinitions: ["actor_id", "tenant_id", "document_type", "request_id", "create_operation"],
@@ -76,17 +63,9 @@ export const EXPECTED_XERO_DUPLICATE_INDEXES: Readonly<Record<string, ExpectedXe
     keyDefinitions: ["actor_id", "tenant_id", "source_sha256"],
     predicate: v030ActiveStatePredicate,
   },
-  posting_requests_active_supplier_ref_v030_unique_idx: {
-    keyDefinitions: ["actor_id", "tenant_id", "document_type", contactExpression, referenceExpression],
-    predicate: `(${v030ActiveStatePredicate}) AND ${accpayDocumentPredicate} AND ${contactPresentPredicate} AND ${referencePresentPredicate}`,
-  },
   posting_requests_tenant_active_source_v030_unique_idx: {
     keyDefinitions: ["tenant_id", "source_sha256"],
     predicate: v030ActiveStatePredicate,
-  },
-  posting_requests_tenant_active_supplier_ref_v030_unique_idx: {
-    keyDefinitions: ["tenant_id", "document_type", contactExpression, referenceExpression],
-    predicate: `(${v030ActiveStatePredicate}) AND ${accpayDocumentPredicate} AND ${contactPresentPredicate} AND ${referencePresentPredicate}`,
   },
 };
 
@@ -95,9 +74,9 @@ function normalizedDefinition(value: string): string {
 }
 
 /**
- * Fail closed unless all five distinct legacy indexes checked by Xero 0.2.13
- * and the QuickBooks 0.2.12 shared repository, plus their five document-type/
- * DRAFT-aware v030 successors, have exact keys and predicates. Index names
+ * Fail closed unless the request and immutable-source legacy guards plus their
+ * document-type/DRAFT-aware successors have exact keys and predicates. Free-form
+ * supplier references are deliberately excluded from hard uniqueness. Index names
  * alone are not sufficient because PostgreSQL can retain a stale definition.
  */
 export function hasExactXeroDuplicateIndexes(rows: XeroDuplicateIndexCatalogRow[]): boolean {

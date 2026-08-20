@@ -14,12 +14,12 @@
     },
     {
       "id": "XR-002",
-      "title": "Conversation confirmation is Agent-asserted, not Host-signed",
-      "baseline_evidence": "The create tool accepts the literal CONFIRMED_FOR_DRAFT supplied by the Agent; the MCP cannot independently verify the user turn or proposal version.",
-      "case_ids": ["AB-CONFIRMATION-010", "AB-DRAFT-011"],
-      "risk": "A compromised or mistaken Agent can assert confirmation that the Host did not attest.",
-      "clear_when": "The Host issues a short-lived signed confirmation receipt bound to workspace, user, conversation turn, proposal hash, and intended DRAFT action, and the MCP verifies it.",
-      "prohibited_claim": "Do not call the current confirmation path production-grade approval."
+      "title": "OAuth target binding and write-gate evidence must be recorded on every Case execution",
+      "baseline_evidence": "An enabled write flag or Agent statement alone does not prove the current OAuth binding, pinned Tenant/target session, effective scope, released action policy and stored Case version match the execution.",
+      "case_ids": ["AC-DELEGATION-003", "AA-CASE-EXECUTE-002"],
+      "risk": "A stale or cross-bound request could execute beyond the authority actually granted to that Agent and target.",
+      "clear_when": "Deterministic and PostgreSQL tests prove exact OAuth target/session binding, effective-scope and released-policy checks, write-gate enforcement before Provider call, and durable execution receipts for every operation.",
+      "prohibited_claim": "Do not describe an emergency write flag or model instruction alone as sufficient execution authority."
     },
     {
       "id": "XR-003",

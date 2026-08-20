@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zcloak.network/schemas/requirements-traceability.schema.json",
+  "title": "Ledger kernel requirements traceability",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "round_id",
+    "generated_at",
+    "evidence_boundary",
+    "control_catalog",
+    "requirements"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "4.0"
+    },
+    "round_id": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "evidence_boundary": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "control_catalog": {
+      "$ref": "#/$defs/controlCatalogIdentity"
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/requirement"
+      }
+    }
+  },
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "nonEmptyUniqueStrings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/nonEmptyString"
+      }
+    },
+    "waiver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted_by", "reason", "scope", "expires_at"],
+      "properties": {
+        "accepted_by": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "reason": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "scope": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "controlCatalogIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "schema_version", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/nonEmptyString" },
+        "schema_version": { "const": "1.0" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement_id",
+        "business_risk",
+        "design_control",
+        "control_claims",
+        "implementation_files",
+        "positive_tests",
+        "negative_or_mutation_tests",
+        "implementation_owner",
+        "reviewer",
+        "status",
+        "evidence",
+        "residual_risk"
+      ],
+      "properties": {
+        "requirement_id": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_-]*-[0-9]{3,}$"
+        },
+        "business_risk": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "design_control": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "control_claims": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/controlClaim"
+          }
+        },
+        "implementation_files": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "positive_tests": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "negative_or_mutation_tests": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "implementation_owner": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "reviewer": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "status": {
+          "enum": ["OPEN", "FIXED_PENDING_REVIEW", "CLOSED", "WAIVED"]
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "residual_risk": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "waiver": {
+          "$ref": "#/$defs/waiver"
+        },
+        "closure": {
+          "$ref": "#/$defs/closure"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "WAIVED"
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "required": ["waiver"]
+          },
+          "else": {
+            "not": {
+              "required": ["waiver"]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "CLOSED"
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "required": ["closure"]
+          },
+          "else": {
+            "not": {
+              "required": ["closure"]
+            }
+          }
+        }
+      ]
+    },
+    "controlClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_id",
+        "source_clause_id",
+        "control",
+        "evidence",
+        "implementation_files",
+        "positive_tests",
+        "negative_or_mutation_tests",
+        "probe_obligations"
+      ],
+      "properties": {
+        "claim_id": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_-]*-[0-9]{3,}-C[0-9]{2,}$"
+        },
+        "source_clause_id": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_-]*-[0-9]{3,}-C[0-9]{2,}$"
+        },
+        "control": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "implementation_files": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "positive_tests": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "negative_or_mutation_tests": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "probe_obligations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/probeObligation"
+          }
+        }
+      }
+    },
+    "probeObligation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "obligation_id",
+        "invariant",
+        "target_path",
+        "target_anchor",
+        "mutation_operator",
+        "literal",
+        "replacement",
+        "test_files",
+        "mutation_test_path",
+        "expected_failing_test_names",
+        "expected_failure_message_patterns"
+      ],
+      "properties": {
+        "obligation_id": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_-]*-[0-9]{3,}-C[0-9]{2,}-P[0-9]{2,}$"
+        },
+        "invariant": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "target_path": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "target_anchor": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "mutation_operator": {
+          "enum": [
+            "FLIP_BOOLEAN_LITERAL",
+            "FLIP_COMPARATOR",
+            "REPLACE_ENUM_LITERAL",
+            "REMOVE_GUARD",
+            "DROP_OBJECT_FIELD",
+            "REPLACE_EXACT_LITERAL"
+          ]
+        },
+        "literal": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "replacement": {
+          "type": "string"
+        },
+        "test_files": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "mutation_test_path": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "expected_failing_test_names": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        },
+        "expected_failure_message_patterns": {
+          "$ref": "#/$defs/nonEmptyUniqueStrings"
+        }
+      }
+    },
+    "closure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementation_execution_id",
+        "reviewer_execution_id",
+        "reviewer_role",
+        "reviewed_at",
+        "decision",
+        "source_fingerprint",
+        "review_subject_sha256",
+        "review_inputs_sha256",
+        "review_artifact",
+        "review_artifact_sha256"
+      ],
+      "properties": {
+        "implementation_execution_id": { "$ref": "#/$defs/nonEmptyString" },
+        "reviewer_execution_id": { "$ref": "#/$defs/nonEmptyString" },
+        "reviewer_role": { "$ref": "#/$defs/nonEmptyString" },
+        "reviewed_at": { "type": "string", "format": "date-time" },
+        "decision": { "const": "CLOSED" },
+        "source_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "review_subject_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "review_inputs_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "review_artifact": { "$ref": "#/$defs/nonEmptyString" },
+        "review_artifact_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    }
+  }
+}

@@ -18,10 +18,15 @@ const requiredScopes = [
   "accounting.invoices.read",
   "accounting.invoices",
   "accounting.payments.read",
+  "accounting.payments",
   "accounting.manualjournals.read",
   "accounting.manualjournals",
   "accounting.banktransactions.read",
+  "accounting.banktransactions",
   "accounting.reports.trialbalance.read",
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.balancesheet.read",
+  "accounting.reports.aged.read",
 ];
 const readOnlyScopes = [
   "openid",
@@ -35,6 +40,9 @@ const readOnlyScopes = [
   "accounting.manualjournals.read",
   "accounting.banktransactions.read",
   "accounting.reports.trialbalance.read",
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.balancesheet.read",
+  "accounting.reports.aged.read",
 ];
 const authenticationEventId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 

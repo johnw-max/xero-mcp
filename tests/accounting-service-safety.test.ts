@@ -39,6 +39,7 @@ const draftInput: CreateDraftSupplierBillInput = {
   due_date: "2026-08-17",
   currency: "SGD",
   reference: "ZC-XERO-DEMO-QA",
+  authoritative_provider_field: "INVOICE_NUMBER",
   line_amount_type: "Inclusive",
   lines: [{
     description: "Synthetic software subscription",
@@ -58,7 +59,7 @@ const draftBill: SupplierBillSnapshot = {
   invoiceDate: "2026-08-03",
   dueDate: "2026-08-17",
   currency: "SGD",
-  reference: "ZC-XERO-DEMO-QA",
+  invoiceNumber: "ZC-XERO-DEMO-QA",
   lineAmountType: "Inclusive",
   lines: [{
     description: "Synthetic software subscription",
@@ -107,6 +108,7 @@ function service(
     },
     logger,
     connectionTickets: {} as ConnectionTicketService,
+    unsafeAllowDirectMutationForTests: true,
   });
 }
 
@@ -123,6 +125,7 @@ function oauthPrincipal(scopes: string[], agentId = "agent-a") {
     installationId: `installation-${agentId}`,
     bindingId: `binding-${agentId}`,
     connectionId: "connection-a",
+    bindingRevision: 1,
     authorizationId: "authorization-a",
     workspaceId: "workspace-a",
     subjectType: "USER",
@@ -156,18 +159,20 @@ describe("Xero connection lifecycle guidance", () => {
       connected: true,
       tenant: { name: "Synthetic Trial Co" },
       connectionLifecycle: {
-        organisationBinding: "EXACTLY_ONE_ORGANISATION_PER_MCP_CONNECTION",
+        organisationBinding: "ONE_IMMUTABLE_ORGANISATION_PER_TARGET_SESSION",
+        currentTenantMeaning: "COMPATIBILITY_POINTER_NOT_LEDGER_TARGET",
+        targetSessionLifetime: "SHORT_LIVED_SERVER_ENFORCED",
         accessTokenRefresh: "AUTOMATIC_NO_USER_ACTION",
         organisationChange: {
           supported: true,
-          requiresFreshXeroOAuth: true,
+          requiresFreshXeroOAuth: "ONLY_IF_ORGANISATION_NOT_ALREADY_AUTHORISED",
           silentChatSwitchAllowed: false,
           hostSteps: [
-            "REVOKE_CURRENT_MCP_AUTHORISATION",
-            "CONNECT_MCP_AGAIN",
-            "COMPLETE_XERO_LOGIN_OR_CONSENT",
+            "ASK_AGENT_TO_SWITCH_XERO_ORGANISATION",
+            "OPEN_SHORT_LIVED_CONFIRMATION_LINK",
             "SELECT_EXACTLY_ONE_XERO_ORGANISATION",
-            "RETURN_TO_HOST_AND_VERIFY_CONNECTION_STATUS",
+            "PIN_SELECTED_ORGANISATION",
+            "VERIFY_WITH_PINNED_ORGANISATION_READ",
           ],
         },
       },
@@ -285,8 +290,14 @@ describe("authorise monotonicity", () => {
     });
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId, tenantId, tenantName: "Tenant A" }),
-      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", status: "ACTIVE" }]),
-      listTaxRates: vi.fn().mockResolvedValue([{ taxType: "NONE", status: "ACTIVE", canApplyToExpenses: true }]),
+      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", class: "EXPENSE", status: "ACTIVE" }]),
+      listTaxRates: vi.fn().mockResolvedValue([{
+        taxType: "NONE",
+        status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
+        canApplyToExpenses: true,
+      }]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
       getSupplierBill: vi.fn().mockResolvedValue(draftBill),
       createDraftSupplierBill,
@@ -391,10 +402,12 @@ describe("draft recovery monotonicity", () => {
     });
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId, tenantId, tenantName: "Tenant A" }),
-      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", status: "ACTIVE" }]),
+      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", class: "EXPENSE", status: "ACTIVE" }]),
       listTaxRates: vi.fn().mockResolvedValue([{
         taxType: "NONE",
         status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
         canApplyToExpenses: true,
       }]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
@@ -428,10 +441,12 @@ describe("draft recovery monotonicity", () => {
     const getSupplierBill = vi.fn().mockResolvedValue(draftBill);
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId, tenantId, tenantName: "Tenant A" }),
-      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", status: "ACTIVE" }]),
+      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", class: "EXPENSE", status: "ACTIVE" }]),
       listTaxRates: vi.fn().mockResolvedValue([{
         taxType: "NONE",
         status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
         canApplyToExpenses: true,
       }]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
@@ -521,10 +536,12 @@ describe("draft recovery monotonicity", () => {
     });
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId, tenantId, tenantName: "Tenant A" }),
-      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", status: "ACTIVE" }]),
+      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", class: "EXPENSE", status: "ACTIVE" }]),
       listTaxRates: vi.fn().mockResolvedValue([{
         taxType: "NONE",
         status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
         canApplyToExpenses: true,
       }]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
@@ -595,10 +612,12 @@ describe("exact-tenant write gate", () => {
     const createDraftSupplierBill = vi.fn();
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId, tenantId, tenantName: "Tenant A" }),
-      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", status: "ACTIVE" }]),
+      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", class: "EXPENSE", status: "ACTIVE" }]),
       listTaxRates: vi.fn().mockResolvedValue([{
         taxType: "NONE",
         status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
         canApplyToExpenses: true,
       }]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
@@ -622,15 +641,17 @@ describe("exact-tenant write gate", () => {
   it("keeps a created-but-mismatched Xero readback active so a new request cannot create a duplicate", async () => {
     const repository = new InMemoryAccountingRepository();
     const createDraftSupplierBill = vi.fn().mockResolvedValue({
-      bill: { ...draftBill, reference: "XERO-MISMATCHED-REFERENCE" },
+      bill: { ...draftBill, invoiceNumber: "XERO-MISMATCHED-REFERENCE" },
       receipt: { operation: "CREATE_DRAFT", invoiceId },
     });
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId, tenantId, tenantName: "Tenant A" }),
-      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", status: "ACTIVE" }]),
+      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", class: "EXPENSE", status: "ACTIVE" }]),
       listTaxRates: vi.fn().mockResolvedValue([{
         taxType: "NONE",
         status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
         canApplyToExpenses: true,
       }]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
@@ -651,8 +672,8 @@ describe("exact-tenant write gate", () => {
       xeroInvoiceId: invoiceId,
       writeReceipt: { operation: "CREATE_DRAFT", invoiceId },
       draftWriteReceipt: { operation: "CREATE_DRAFT", invoiceId },
-      readbackSnapshot: { invoiceId, reference: "XERO-MISMATCHED-REFERENCE" },
-      draftReadbackSnapshot: { invoiceId, reference: "XERO-MISMATCHED-REFERENCE" },
+      readbackSnapshot: { invoiceId, invoiceNumber: "XERO-MISMATCHED-REFERENCE" },
+      draftReadbackSnapshot: { invoiceId, invoiceNumber: "XERO-MISMATCHED-REFERENCE" },
     });
 
     await expect(accounting.createDraftSupplierBill(actorId, {
@@ -667,13 +688,19 @@ describe("exact-tenant write gate", () => {
     vi.spyOn(repository, "markDraftReadbackMismatch")
       .mockRejectedValueOnce(new Error("database unavailable while preserving mismatch evidence"));
     const createDraftSupplierBill = vi.fn().mockResolvedValue({
-      bill: { ...draftBill, reference: "XERO-MISMATCHED-REFERENCE" },
+      bill: { ...draftBill, invoiceNumber: "XERO-MISMATCHED-REFERENCE" },
       receipt: { operation: "CREATE_DRAFT", invoiceId },
     });
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId, tenantId, tenantName: "Tenant A" }),
-      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", status: "ACTIVE" }]),
-      listTaxRates: vi.fn().mockResolvedValue([{ taxType: "NONE", status: "ACTIVE", canApplyToExpenses: true }]),
+      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", class: "EXPENSE", status: "ACTIVE" }]),
+      listTaxRates: vi.fn().mockResolvedValue([{
+        taxType: "NONE",
+        status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
+        canApplyToExpenses: true,
+      }]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
       createDraftSupplierBill,
     } as unknown as AccountingProvider;
@@ -731,7 +758,9 @@ describe("exact-tenant write gate", () => {
         request_id: "request-authorise-a",
       });
 
-    await expect(invocation).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(invocation).rejects.toMatchObject({
+      code: enabled ? "STANDING_DELEGATION_REQUIRED" : "WRITE_GATE_DISABLED",
+    });
     expect(listAccounts).not.toHaveBeenCalled();
     expect(listTaxRates).not.toHaveBeenCalled();
     expect(getContact).not.toHaveBeenCalled();
@@ -751,10 +780,12 @@ describe("exact-tenant write gate", () => {
     const createOrGetPosting = vi.spyOn(repository, "createOrGetPosting");
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId: principal.actorId, tenantId, tenantName: "Tenant A" }),
-      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", status: "ACTIVE" }]),
+      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", class: "EXPENSE", status: "ACTIVE" }]),
       listTaxRates: vi.fn().mockResolvedValue([{
         taxType: "NONE",
         status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
         canApplyToExpenses: true,
       }]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
@@ -788,6 +819,8 @@ describe("exact-tenant write gate", () => {
       serverFingerprintInput,
       expect.any(String),
       expect.any(Function),
+      undefined,
+      undefined,
     );
   });
 
@@ -800,10 +833,12 @@ describe("exact-tenant write gate", () => {
     ));
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId, tenantId, tenantName: "Tenant A" }),
-      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", status: "ACTIVE" }]),
+      listAccounts: vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", class: "EXPENSE", status: "ACTIVE" }]),
       listTaxRates: vi.fn().mockResolvedValue([{
         taxType: "NONE",
         status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
         canApplyToExpenses: true,
       }]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
@@ -827,7 +862,7 @@ describe("exact-tenant write gate", () => {
     expect(provider.getSupplierBill).not.toHaveBeenCalled();
   });
 
-  it("keeps exact replay idempotent across Agents and blocks new request IDs even after DRAFT rejection", async () => {
+  it("keeps exact-source replay idempotent across Agents without treating a reused free-form reference as identity", async () => {
     const repository = new InMemoryAccountingRepository();
     const agentA = oauthPrincipal(["xero.read", "xero.draft.write"], "agent-a");
     const agentB = oauthPrincipal(["xero.read", "xero.draft.write"], "agent-b");
@@ -838,7 +873,7 @@ describe("exact-tenant write gate", () => {
       source_evidence_type: "SERVER_FINGERPRINTED_EXTRACTION",
       source_sha256: hashObject(canonicalDraftExtractionFingerprint(draftInput)),
     };
-    const listAccounts = vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", status: "ACTIVE" }]);
+    const listAccounts = vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", class: "EXPENSE", status: "ACTIVE" }]);
     const createDraftSupplierBill = vi.fn().mockResolvedValue({
       bill: draftBill,
       receipt: { operation: "CREATE_DRAFT", invoiceId },
@@ -849,6 +884,8 @@ describe("exact-tenant write gate", () => {
       listTaxRates: vi.fn().mockResolvedValue([{
         taxType: "NONE",
         status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
         canApplyToExpenses: true,
       }]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
@@ -886,12 +923,13 @@ describe("exact-tenant write gate", () => {
     sameSupplierReferenceFromAnotherSource.source_sha256 = hashObject(
       canonicalDraftExtractionFingerprint(sameSupplierReferenceFromAnotherSource),
     );
-    await expect(accounting.createDraftSupplierBill(agentB, sameSupplierReferenceFromAnotherSource)).rejects.toMatchObject({
-      code: "CONFLICT",
-      details: { duplicatePostingRequestId: first.postingRequestId },
+    await expect(accounting.createDraftSupplierBill(agentB, sameSupplierReferenceFromAnotherSource)).resolves.toMatchObject({
+      idempotentReplay: false,
+      providerReceipt: { operation: "CREATE_DRAFT", invoiceId },
+      readbackVerified: true,
     });
 
-    expect(createDraftSupplierBill).toHaveBeenCalledOnce();
+    expect(createDraftSupplierBill).toHaveBeenCalledTimes(2);
     expect(listAccounts).toHaveBeenCalledTimes(2);
   });
 
@@ -920,7 +958,7 @@ describe("exact-tenant write gate", () => {
       readbackSnapshot: draftBill as unknown as Record<string, unknown>,
     });
 
-    const listAccounts = vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", status: "ACTIVE" }]);
+    const listAccounts = vi.fn().mockResolvedValue([{ code: "404", type: "EXPENSE", class: "EXPENSE", status: "ACTIVE" }]);
     const createDraftSupplierBill = vi.fn();
     const provider = {
       resolveContext: vi.fn().mockResolvedValue({ actorId: "actor-b", tenantId, tenantName: "Tenant A" }),
@@ -928,6 +966,8 @@ describe("exact-tenant write gate", () => {
       listTaxRates: vi.fn().mockResolvedValue([{
         taxType: "NONE",
         status: "ACTIVE",
+        displayTaxRate: "0.0000",
+        effectiveRate: "0.0000",
         canApplyToExpenses: true,
       }]),
       getContact: vi.fn().mockResolvedValue({ contactId, status: "ACTIVE" }),
@@ -961,7 +1001,7 @@ describe("exact-tenant write gate", () => {
     const accounting = service(repository, provider, { enabled: true, allowedTenantId: tenantId });
 
     await expect(accounting.createDraftSupplierBill(principal, draftInput)).rejects.toMatchObject({
-      code: "FORBIDDEN",
+      code: "SCOPE_MISSING",
     });
     expect(listAccounts).not.toHaveBeenCalled();
     expect(createDraftSupplierBill).not.toHaveBeenCalled();

@@ -1,6 +1,8 @@
 {
   "version": 1,
   "name": "agent2-production-current-xero-readonly-2026-08-06",
+  "lifecycle": "HISTORICAL_0_3_READONLY_EVIDENCE_ONLY",
+  "supersededBy": "agent2-xero-v040rc-accounting-case-uat.template.json",
   "settings": {
     "concurrency": 2,
     "repeats": 3,

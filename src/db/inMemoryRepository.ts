@@ -13,6 +13,8 @@ import type {
   BrokerSelectionContext,
   CompleteBrokerOrganisationSelectionInput,
   CompleteBrokerOrganisationSelectionResult,
+  CompleteOrganisationSwitchInput,
+  CompleteOrganisationSwitchResult,
   CompleteBrokerXeroExchangeInput,
   ConsumeOAuthAuthorizationCodeInput,
   ConsumeOAuthBrokerFlowInput,
@@ -24,6 +26,7 @@ import type {
   DraftReadbackMismatchUpdate,
   ExchangeOAuthAuthorizationCodeForTokenSetInput,
   ExchangeOAuthAuthorizationCodeForTokenSetResult,
+  LedgerTargetSession,
   McpAccessToken,
   McpRefreshToken,
   McpRefreshTokenContextPreview,
@@ -33,6 +36,8 @@ import type {
   OAuthBrokerAuthorizationFlow,
   OAuthBrokerFlow,
   OAuthInstallation,
+  OrganisationSwitchContext,
+  OrganisationSwitchSession,
   PostingRequest,
   PostingState,
   PeekMcpRefreshTokenContextInput,
@@ -43,7 +48,9 @@ import type {
   RevokeOAuthTokenForClientInput,
   RevokeOAuthTokenForClientResult,
   ResolveAgentConnectionBindingInput,
+  ResolveLedgerTargetSessionInput,
   ResolvedAgentConnectionBinding,
+  ResolvedLedgerTargetSession,
   ResolvedMcpAccessToken,
   ResolveMcpAccessTokenInput,
   RotateMcpRefreshTokenAndIssueAccessTokenInput,
@@ -53,6 +60,8 @@ import type {
   TerminateBrokerAuthorizationFlowInput,
   TerminateBrokerAuthorizationFlowResult,
   GetBrokerSelectionInput,
+  GovernanceAuditEvent,
+  GovernanceAuditEventInput,
 } from "../domain/models.js";
 import { MCP_OAUTH_REFRESH_RETRY_GRACE_MS } from "../domain/models.js";
 import type {
@@ -70,18 +79,94 @@ import type {
   XeroMutationPreparation,
   XeroMutationRequest,
 } from "../domain/xeroMutation.js";
-import { XERO_MUTATION_EXPECTED_READBACK_STATUS } from "../domain/xeroMutation.js";
-import { stableStringify } from "../security/hash.js";
+import { expectedXeroMutationReadbackStatus, xeroMutationTargetsExistingObject } from "../domain/xeroMutation.js";
+import type {
+  AdoptExpiredExecutingAccountingCaseForRecoveryInput,
+  AdoptExpiredExecutingAccountingCaseForRecoveryResult,
+  AccountingCaseBinding,
+  AccountingCaseOperationRecord,
+  AccountingCaseOperationState,
+  AccountingCaseVersionRecord,
+  GetAccessibleAccountingCaseInput,
+  ListAttentionAccountingCasesInput,
+  ListAttentionAccountingCasesResult,
+  RecordAccountingCasePreflightInput,
+  RecordAccountingCasePreflightResult,
+  ResealAndClaimAccountingCaseExecutionInput,
+  ResealAndClaimAccountingCaseExecutionResult,
+  ClaimAccountingCaseExecutionInput,
+  ClaimAccountingCaseExecutionResult,
+  CompleteExpiredTargetAccountingCaseRecoveryInput,
+  BindAccountingCaseSourceCaseInput,
+  BindAccountingCaseSourceCaseResult,
+  CreateOrAdvanceAccountingCaseInput,
+  CreateOrAdvanceAccountingCaseResult,
+  AwaitAccountingCaseContinuationInput,
+  FinalizeAccountingCaseInput,
+  GetBoundAccountingCaseInput,
+  GetAccountingCaseRecoveryResidualGrantInput,
+  GetAccountingCaseRecoveryResidualGrantResult,
+  PauseAccountingCaseExecutionInput,
+  ProjectAccountingCaseOperationFromMutationInput,
+  ReleaseAccountingCaseRecoveryInput,
+  AccountingCaseRecoveryResidualGrant,
+  UpdateAccountingCaseOperationInput,
+} from "../domain/accountingCasePersistence.js";
+import {
+  hasAccountingCaseDependentContinuation,
+  accountingCaseContinuationTemplateHash,
+  accountingCaseRecoveryResidualContinuationTemplate,
+  matchesAccountingCaseContinuationAuthorization,
+  matchesAccountingCaseRecoveryResidualAuthorization,
+} from "../domain/accountingCaseContinuation.js";
+import {
+  createLedgerAuthoritySnapshot,
+  exactFirmGovernanceAuthorityFromSnapshot,
+  ledgerFirmGovernanceReadinessEvidence,
+  legacyLedgerAuthoritySnapshotV1Hash,
+  type LedgerAuthoritySnapshot,
+  type LedgerAuthorityRepositoryReadiness,
+  type PublishLedgerAuthoritySnapshotInput,
+  type PublishLedgerAuthoritySnapshotResult,
+} from "../domain/ledgerAuthority.js";
+import {
+  ACCOUNTING_CASE_ATTENTION_OPERATION_STATES,
+  ACCOUNTING_CASE_MIN_PREPARATION_RUNWAY_MS,
+  accountingCaseMutationRoute,
+  accountingCasePlanHash,
+  accountingCasePreflightReceiptHash,
+  accountingCasePreflightResealReceiptHash,
+  accountingCaseTerminalSummary,
+  sameAccountingCaseAccessIdentity,
+  sameAccountingCaseSourceCaseReference,
+} from "../domain/accountingCasePersistence.js";
+import { hashObject, stableStringify } from "../security/hash.js";
+import { governanceAuditEventHash } from "../governance/governanceAudit.js";
 import type {
   AccountingRepository,
   EphemeralCleanupBatchResult,
   EphemeralCleanupCounts,
   FindActiveXeroPostingDuplicateInput,
+  FindVerifiedAccountingCaseContactIdentityInput,
+  ListVerifiedAccountingCaseContactIdentitiesInput,
+  RepositoryReadinessEvidence,
+  XeroNativeIdempotencyRecoveryClaim,
+} from "./repository.js";
+import {
+  XERO_NATIVE_IDEMPOTENCY_RECOVERY_WINDOW_MS,
+  XERO_NATIVE_RECOVERY_ADAPTER_BY_ACTION,
 } from "./repository.js";
 import {
   isXeroPostingDuplicate,
   xeroSupplierPostingIdentity,
 } from "./xeroPostingDuplicate.js";
+import {
+  evaluateActiveAccountingCaseRecoveryProjections,
+  unknownActiveAccountingCaseRecoveryProjectionEvidence,
+} from "./accountingCaseRecoveryProjectionReadiness.js";
+import { validateXeroAccountingCaseReadbackEconomics } from "../policy/xeroAccountingCaseReadbackProjection.js";
+import { accountingCaseBusinessReservationsOverlap } from "../domain/accountingCase.js";
+import { xeroExistingDocumentNoWriteEvidenceMatches } from "../policy/xeroAccountingCaseExistingDocumentEvidence.js";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -94,6 +179,250 @@ function isScopeSubset(candidate: string[], allowed: string[]): boolean {
 
 function hasSameScopes(left: string[], right: string[]): boolean {
   return isScopeSubset(left, right) && isScopeSubset(right, left);
+}
+
+function sameAccountingCaseBinding(left: AccountingCaseBinding, right: AccountingCaseBinding): boolean {
+  return left.actorId === right.actorId &&
+    left.workspaceId === right.workspaceId &&
+    left.subjectType === right.subjectType &&
+    left.subjectId === right.subjectId &&
+    left.agentId === right.agentId &&
+    left.installationId === right.installationId &&
+    left.bindingId === right.bindingId &&
+    left.bindingRevision === right.bindingRevision &&
+    left.connectionId === right.connectionId &&
+    left.tenantId === right.tenantId &&
+    left.targetSessionId === right.targetSessionId &&
+    left.targetSessionHash === right.targetSessionHash &&
+    left.targetSessionExpiresAt.getTime() === right.targetSessionExpiresAt.getTime();
+}
+
+function accountingCaseMutationProjectionErrorReceipt(
+  request: XeroMutationRequest,
+): Record<string, unknown> | undefined {
+  if (request.state === "PROVIDER_REJECTED") return request.providerRejectionReceipt;
+  if (request.state === "FAILED_VALIDATION") {
+    return request.validationReceipt ?? {
+      receiptType: "XERO_MUTATION_STATE_PROJECTION",
+      mutationRequestId: request.mutationRequestId,
+      mutationState: request.state,
+    };
+  }
+  if (request.state === "WRITE_UNCERTAIN" || request.state === "READBACK_MISMATCH") {
+    return {
+      receiptType: "XERO_MUTATION_STATE_PROJECTION",
+      mutationRequestId: request.mutationRequestId,
+      mutationState: request.state,
+    };
+  }
+  return undefined;
+}
+
+function accountingCaseStateForMutation(
+  state: XeroMutationRequest["state"],
+): ProjectAccountingCaseOperationFromMutationInput["desiredState"] | undefined {
+  if (state === "FAILED_VALIDATION") return "BLOCKED_VALIDATION";
+  if (state === "WRITE_IN_FLIGHT" || state === "WRITE_UNCERTAIN" || state === "READBACK_VERIFIED" ||
+      state === "READBACK_MISMATCH" || state === "PROVIDER_REJECTED") return state;
+  return undefined;
+}
+
+function accountingCaseNoWriteEvidenceMatches(
+  operation: AccountingCaseOperationRecord["operation"],
+  xeroObjectId: string,
+  readback: Record<string, unknown>,
+): boolean {
+  if (operation.actionId !== "contact.create_basic") {
+    return xeroExistingDocumentNoWriteEvidenceMatches(operation, xeroObjectId, readback);
+  }
+  const expectedName = operation.canonicalPayload.name;
+  const actualName = readback.name ?? readback.Name;
+  const actualId = readback.contactId ?? readback.contactID ?? readback.ContactID ?? readback.id;
+  const status = readback.status ?? readback.Status;
+  return typeof expectedName === "string" &&
+    typeof actualName === "string" && actualName === expectedName &&
+    typeof actualId === "string" && actualId === xeroObjectId &&
+    (status === undefined || status === "ACTIVE");
+}
+
+function preflightReceiptOperationMatches(
+  receipt: Record<string, unknown>,
+  operation: AccountingCaseOperationRecord,
+  preflight: RecordAccountingCasePreflightInput["operations"][number],
+): boolean {
+  if (!Array.isArray(receipt.operations)) return false;
+  const candidates = receipt.operations.filter((value): value is Record<string, unknown> =>
+    Boolean(value) && typeof value === "object" && !Array.isArray(value) &&
+    value.operationId === operation.operation.operationId);
+  if (candidates.length !== 1) return false;
+  const evidence = candidates[0]!;
+  if (
+    evidence.actionId !== operation.operation.actionId ||
+    evidence.operationCanonicalPayloadHash !== operation.operation.canonicalPayloadHash ||
+    evidence.state !== preflight.state
+  ) return false;
+  if (preflight.state === "PREPARED") {
+    return evidence.operationCanonicalPayloadHash === preflight.operationCanonicalPayloadHash &&
+      evidence.preparationId === preflight.preparationId &&
+      evidence.preparationCanonicalPayloadHash === preflight.preparationCanonicalPayloadHash &&
+      evidence.sourceSha256 === preflight.sourceSha256;
+  }
+  return evidence.xeroObjectId === preflight.xeroObjectId &&
+    evidence.readbackHash === hashObject(preflight.readbackSnapshot);
+}
+
+function assertAccountingCasePreflightIntegrity(record: AccountingCaseVersionRecord): void {
+  const hasAny = Boolean(
+    record.preflightRequestId || record.preflightReceipt || record.preflightReceiptHash || record.preflightedAt,
+  );
+  const requiresEvidence = ["PREFLIGHTED", "READY_TO_RESUME", "EXECUTING", "RECOVERY_REQUIRED", "AWAITING_CONTINUATION", "PARTIALLY_COMMITTED", "TERMINAL"].includes(record.state);
+  if (hasAny || requiresEvidence) {
+    if (
+      !record.preflightRequestId ||
+      !record.preflightReceipt ||
+      !record.preflightReceiptHash ||
+      !record.preflightedAt ||
+      record.preflightReceiptHash !== accountingCasePreflightReceiptHash({
+        binding: record.binding,
+        caseId: record.compiled.caseId,
+        version: record.compiled.version,
+        compiledPlanHash: record.compiledPlanHash,
+        requestId: record.preflightRequestId,
+        preflightReceipt: record.preflightReceipt,
+      })
+    ) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case preflight integrity check failed.", {
+        httpStatus: 503,
+      });
+    }
+    if (
+      record.originalPreflightReceiptHash !== record.preflightReceiptHash ||
+      !record.effectivePreflightSealHash ||
+      !record.effectivePreflightSealedAt ||
+      !Number.isInteger(record.preflightResealRevision) ||
+      (record.preflightResealRevision ?? -1) < 0
+    ) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case effective preflight seal is incomplete.", {
+        httpStatus: 503,
+      });
+    }
+    const reseals = record.preflightReseals ?? [];
+    if (reseals.length !== record.preflightResealRevision) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case preflight reseal chain is incomplete.", {
+        httpStatus: 503,
+      });
+    }
+    let previousEffectiveSealHash = record.preflightReceiptHash;
+    for (const [index, reseal] of reseals.entries()) {
+      const revision = index + 1;
+      if (
+        reseal.revision !== revision ||
+        reseal.previousEffectiveSealHash !== previousEffectiveSealHash ||
+        reseal.receipt.revision !== revision ||
+        reseal.receipt.previousEffectiveSealHash !== previousEffectiveSealHash ||
+        reseal.receipt.originalPreflightReceiptHash !== record.preflightReceiptHash ||
+        reseal.effectiveSealHash !== accountingCasePreflightResealReceiptHash({
+          binding: record.binding,
+          caseId: record.compiled.caseId,
+          version: record.compiled.version,
+          compiledPlanHash: record.compiledPlanHash,
+          originalPreflightReceiptHash: record.preflightReceiptHash,
+          previousEffectiveSealHash,
+          revision,
+          requestId: reseal.requestId,
+          resealReceipt: reseal.receipt,
+        })
+      ) {
+        throw new AppError("PERSISTENCE_FAILURE", "Accounting Case preflight reseal chain integrity check failed.", {
+          httpStatus: 503,
+        });
+      }
+      previousEffectiveSealHash = reseal.effectiveSealHash;
+    }
+    if (record.effectivePreflightSealHash !== previousEffectiveSealHash) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case effective preflight seal hash is stale.", {
+        httpStatus: 503,
+      });
+    }
+    const expectedEffectiveSealedAt = reseals.at(-1)?.resealedAt ?? record.preflightedAt;
+    if (record.effectivePreflightSealedAt.getTime() !== expectedEffectiveSealedAt.getTime()) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case effective preflight seal time is stale.", {
+        httpStatus: 503,
+      });
+    }
+    if (!Array.isArray(record.preflightReceipt.operations) ||
+        record.preflightReceipt.operations.length !== record.operations.length ||
+        record.operations.some((operation) => {
+          const originalPreparationId = operation.originalPreparationId ?? operation.preparationId;
+          const expected = originalPreparationId
+            ? {
+                operationId: operation.operation.operationId,
+                state: "PREPARED" as const,
+                preparationId: originalPreparationId,
+                operationCanonicalPayloadHash: operation.operation.canonicalPayloadHash,
+                preparationCanonicalPayloadHash: operation.preparationCanonicalPayloadHash!,
+                sourceSha256: operation.sourceSha256!,
+              }
+            : operation.state === "NO_WRITE_REQUIRED" && operation.xeroObjectId && operation.readbackSnapshot
+              ? {
+                  operationId: operation.operation.operationId,
+                  state: "NO_WRITE_REQUIRED" as const,
+                  xeroObjectId: operation.xeroObjectId,
+                  readbackSnapshot: operation.readbackSnapshot,
+                }
+              : undefined;
+          return !expected || !preflightReceiptOperationMatches(record.preflightReceipt!, operation, expected);
+        })) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case preflight receipt operation linkage failed.", {
+        httpStatus: 503,
+      });
+    }
+  }
+  if (
+    record.state === "PREFLIGHTED" &&
+    record.operations.some((operation) =>
+      (operation.state === "PREPARED" &&
+        (!operation.preparationId || !operation.preparationCanonicalPayloadHash || !operation.sourceSha256)) ||
+      (operation.state !== "PREPARED" && operation.state !== "NO_WRITE_REQUIRED"))
+  ) {
+    throw new AppError("PERSISTENCE_FAILURE", "Accounting Case preflight operation set is incomplete.", {
+      httpStatus: 503,
+    });
+  }
+  if (["RECOVERY_REQUIRED", "PARTIALLY_COMMITTED", "TERMINAL"].includes(record.state)) {
+    const expected = accountingCaseTerminalSummary(
+      record,
+      record.state as "RECOVERY_REQUIRED" | "PARTIALLY_COMMITTED" | "TERMINAL",
+    );
+    if (!record.terminalSummary || !sameJson(record.terminalSummary, expected)) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case terminal summary projection is invalid.", {
+        httpStatus: 503,
+      });
+    }
+  }
+  if (
+    record.state === "AWAITING_CONTINUATION" &&
+    (
+      record.terminalSummary !== undefined ||
+      !hasAccountingCaseDependentContinuation(record.compiled) ||
+      record.operations.length === 0 ||
+      record.operations.some((operation) =>
+        operation.state !== "READBACK_VERIFIED" && operation.state !== "NO_WRITE_REQUIRED")
+    )
+  ) {
+    throw new AppError("PERSISTENCE_FAILURE", "Accounting Case continuation state is invalid.", { httpStatus: 503 });
+  }
+}
+
+interface InMemoryAccountingCaseAggregate {
+  binding: AccountingCaseBinding;
+  currentVersion: number;
+  versions: Map<number, AccountingCaseVersionRecord>;
+}
+
+export interface InMemoryAccountingRepositoryOptions {
+  /** Repository-owned time, equivalent to PostgreSQL statement_timestamp(). */
+  now?: () => Date;
 }
 
 const OAUTH_AUTHORIZATION_CODE_MAX_TTL_MS = 5 * 60 * 1_000;
@@ -120,6 +449,8 @@ function sameMutationBinding(
     row.installationId === input.installationId &&
     row.bindingId === input.bindingId &&
     row.connectionId === input.connectionId &&
+    row.bindingRevision === input.bindingRevision &&
+    row.targetSessionId === input.targetSessionId &&
     row.objectType === input.objectType &&
     row.operation === input.operation &&
     row.targetXeroObjectId === input.targetXeroObjectId &&
@@ -132,6 +463,29 @@ function sameMutationBinding(
 
 function sameJson(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
   return stableStringify(left) === stableStringify(right);
+}
+
+function sameResealPreparationIdentity(
+  left: XeroMutationPreparation,
+  right: XeroMutationPreparation,
+): boolean {
+  return left.actorId === right.actorId &&
+    left.workspaceId === right.workspaceId &&
+    left.tenantId === right.tenantId &&
+    left.installationId === right.installationId &&
+    left.bindingId === right.bindingId &&
+    left.bindingRevision === right.bindingRevision &&
+    left.connectionId === right.connectionId &&
+    left.targetSessionId === right.targetSessionId &&
+    left.objectType === right.objectType &&
+    left.operation === right.operation &&
+    left.targetXeroObjectId === right.targetXeroObjectId &&
+    left.canonicalPayloadHash === right.canonicalPayloadHash &&
+    sameJson(left.canonicalPayload, right.canonicalPayload) &&
+    left.sourceRef === right.sourceRef &&
+    left.sourceUnitKey === right.sourceUnitKey &&
+    left.sourceSha256 === right.sourceSha256 &&
+    left.sourceEvidenceType === right.sourceEvidenceType;
 }
 
 function sameOptionalJson(
@@ -148,6 +502,52 @@ const ACTIVE_XERO_MUTATION_SOURCE_STATES = new Set<XeroMutationRequest["state"]>
   "READBACK_VERIFIED",
   "READBACK_MISMATCH",
 ]);
+
+const ACCOUNTING_CASE_BUSINESS_RESERVATION_STATES = new Set<AccountingCaseOperationState>([
+  "PREPARED",
+  "WRITE_IN_FLIGHT",
+  "READBACK_VERIFIED",
+  "WRITE_UNCERTAIN",
+  "READBACK_MISMATCH",
+]);
+
+const XERO_MUTATION_CREATE_OPERATIONS = new Set<XeroMutationRequest["operation"]>([
+  "CREATE_DRAFT",
+  "CREATE",
+  "UPLOAD",
+]);
+
+const XERO_MUTATION_PROVENANCE_PAYLOAD_KEYS = new Set([
+  "source_ref",
+  "source_sha256",
+  "source_evidence_type",
+  "user_confirmation",
+  "request_id",
+  "sourceRef",
+  "sourceSha256",
+  "sourceEvidenceType",
+  "userConfirmation",
+  "requestId",
+  "externalReference",
+]);
+
+function xeroMutationBusinessPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(payload)
+    .filter(([key]) => !XERO_MUTATION_PROVENANCE_PAYLOAD_KEYS.has(key)));
+}
+
+function normalizedNestedBusinessValue(
+  payload: Record<string, unknown>,
+  container: string,
+  field: string,
+): string | undefined {
+  const nested = payload[container];
+  if (!nested || typeof nested !== "object" || Array.isArray(nested)) return undefined;
+  const value = (nested as Record<string, unknown>)[field];
+  if (typeof value !== "string") return undefined;
+  const normalized = value.normalize("NFKC").trim().toLocaleLowerCase("en-US");
+  return normalized || undefined;
+}
 
 function isOptionalNonEmpty(value: string | undefined): boolean {
   return value === undefined || isNonEmpty(value);
@@ -207,6 +607,8 @@ function validateInitialBrokerFlow(input: CreateBrokerAuthorizationFlowInput): v
 function emptyEphemeralCleanupCounts(): EphemeralCleanupCounts {
   return {
     mcpRefreshRetryResponses: 0,
+    organisationSwitchSessions: 0,
+    ledgerTargetSessions: 0,
     oauthBrokerFlows: 0,
     oauthStates: 0,
     connectTickets: 0,
@@ -225,10 +627,20 @@ function assertCleanupArguments(cutoff: Date, batchSize: number): void {
 }
 
 export class InMemoryAccountingRepository implements AccountingRepository {
+  readonly #repositoryNow: () => Date;
+  readonly #ledgerAuthoritySnapshots = new Map<string, LedgerAuthoritySnapshot>();
+  readonly #legacyLedgerAuthoritySnapshots = new Map<string, {
+    material: Omit<PublishLedgerAuthoritySnapshotInput, "publishedAt">;
+    snapshotHash: string;
+  }>();
   readonly #providerAuthorizations = new Map<string, ProviderAuthorization>();
   readonly #authorizedConnections = new Map<string, AuthorizedProviderConnection>();
   readonly #oauthInstallations = new Map<string, OAuthInstallation>();
   readonly #agentConnectionBindings = new Map<string, AgentConnectionBinding>();
+  readonly #activeBindingIds = new Map<string, string>();
+  readonly #activeBindingRevisions = new Map<string, number>();
+  readonly #organisationSwitchSessions = new Map<string, OrganisationSwitchSession>();
+  readonly #ledgerTargetSessions = new Map<string, LedgerTargetSession>();
   readonly #oauthBrokerFlows = new Map<string, OAuthBrokerFlow>();
   readonly #oauthBrokerAuthorizationFlows = new Map<string, OAuthBrokerAuthorizationFlow>();
   readonly #oauthAuthorizationCodes = new Map<string, OAuthAuthorizationCode>();
@@ -257,10 +669,142 @@ export class InMemoryAccountingRepository implements AccountingRepository {
   readonly #xeroMutationPreparations = new Map<string, XeroMutationPreparation>();
   readonly #xeroMutationRequests = new Map<string, XeroMutationRequest>();
   readonly #xeroMutationRequestKeys = new Map<string, string>();
+  readonly #accountingCases = new Map<string, InMemoryAccountingCaseAggregate>();
+  readonly #accountingCaseRecoveryResidualGrants = new Map<string, AccountingCaseRecoveryResidualGrant>();
+  /**
+   * Upstream source case -> Xero tenant, keyed exactly like the PostgreSQL
+   * primary key so both stores enforce the same many-to-one rule.
+   */
+  readonly #accountingCaseSourceCaseBindings = new Map<string, {
+    tenantId: string;
+    firstBoundAt: Date;
+    lastSeenAt: Date;
+    caseCount: number;
+  }>();
   readonly audits: AuditLog[] = [];
+  readonly governanceAuditEvents: GovernanceAuditEvent[] = [];
+
+  constructor(options: InMemoryAccountingRepositoryOptions = {}) {
+    this.#repositoryNow = options.now ?? (() => new Date());
+  }
+
+  #statementTimestamp(): Date {
+    const value = this.#repositoryNow();
+    if (!isValidDate(value)) {
+      throw new AppError("PERSISTENCE_FAILURE", "The repository clock returned an invalid timestamp.", {
+        httpStatus: 503,
+      });
+    }
+    return new Date(value.getTime());
+  }
 
   async readiness(): Promise<boolean> {
-    return true;
+    try {
+      return this.#activeRecoveryProjectionEvidence().status === "COMPATIBLE";
+    } catch {
+      return false;
+    }
+  }
+
+  async readinessEvidence(requiredMigration: string): Promise<RepositoryReadinessEvidence> {
+    let activeAccountingCaseRecoveryProjection;
+    try {
+      activeAccountingCaseRecoveryProjection = this.#activeRecoveryProjectionEvidence();
+    } catch {
+      activeAccountingCaseRecoveryProjection = unknownActiveAccountingCaseRecoveryProjectionEvidence();
+    }
+    const snapshot = this.#ledgerAuthoritySnapshots.get("xero");
+    const firmGovernance = ledgerFirmGovernanceReadinessEvidence(snapshot, this.#statementTimestamp());
+    return {
+      ready: activeAccountingCaseRecoveryProjection.status === "COMPATIBLE",
+      storageMode: "IN_MEMORY",
+      requiredMigration,
+      requiredMigrationStatus: "NOT_APPLICABLE",
+      migrationHead: null,
+      activeAccountingCaseRecoveryProjection,
+      authoritySnapshotRevision: snapshot?.revision ?? null,
+      authoritySnapshotHash: snapshot?.snapshotHash ?? null,
+      authorityContentHash: snapshot?.contentHash ?? null,
+      authorityWriteKillSwitchEnabled: snapshot?.writeKillSwitchEnabled ?? null,
+      firmGovernance,
+    };
+  }
+
+  #activeRecoveryProjectionEvidence() {
+    const currentVersions = [...this.#accountingCases.values()].map((aggregate) => {
+      const current = aggregate.versions.get(aggregate.currentVersion);
+      if (!current) throw new Error("IN_MEMORY_ACCOUNTING_CASE_HEAD_INCOMPLETE");
+      return current;
+    });
+    return evaluateActiveAccountingCaseRecoveryProjections(currentVersions);
+  }
+
+  async publishLedgerAuthoritySnapshot(
+    input: PublishLedgerAuthoritySnapshotInput,
+  ): Promise<PublishLedgerAuthoritySnapshotResult> {
+    const candidate = createLedgerAuthoritySnapshot(input);
+    const legacy = this.#legacyLedgerAuthoritySnapshots.get(candidate.providerId);
+    if (legacy && legacy.snapshotHash !== legacyLedgerAuthoritySnapshotV1Hash(legacy.material)) {
+      throw new AppError("PERSISTENCE_FAILURE", "Legacy ledger authority snapshot hash verification failed.", {
+        httpStatus: 503,
+      });
+    }
+    if (legacy && candidate.revision <= legacy.material.revision) {
+      throw new AppError("CONFLICT", "Legacy authority v1 requires a strictly higher v2 revision.", {
+        httpStatus: 409,
+      });
+    }
+    const current = this.#ledgerAuthoritySnapshots.get(candidate.providerId);
+    if (current) {
+      if (candidate.revision < current.revision) {
+        throw new AppError("CONFLICT", "Ledger authority snapshot revision cannot decrease.", { httpStatus: 409 });
+      }
+      if (candidate.revision === current.revision) {
+        if (candidate.snapshotHash !== current.snapshotHash) {
+          throw new AppError(
+            "CONFLICT",
+            "Ledger authority snapshot revision cannot identify different content.",
+            { httpStatus: 409 },
+          );
+        }
+        return { snapshot: clone(current), mode: "IDEMPOTENT_REPLAY" };
+      }
+    }
+    this.#ledgerAuthoritySnapshots.set(candidate.providerId, clone(candidate));
+    if (legacy) this.#legacyLedgerAuthoritySnapshots.delete(candidate.providerId);
+    return { snapshot: clone(candidate), mode: current || legacy ? "ADVANCED" : "CREATED" };
+  }
+
+  async getLedgerAuthoritySnapshot(providerId: string): Promise<LedgerAuthoritySnapshot | undefined> {
+    if (this.#legacyLedgerAuthoritySnapshots.has(providerId)) {
+      throw new AppError("STALE_PREFLIGHT", "Legacy ledger authority snapshot v1 is unsupported for authorization.", {
+        httpStatus: 409,
+        retryable: false,
+      });
+    }
+    const snapshot = this.#ledgerAuthoritySnapshots.get(providerId);
+    return snapshot ? clone(snapshot) : undefined;
+  }
+
+  /** Test-only seed for exercising the no-migration v1 to v2 advance path. */
+  seedLegacyLedgerAuthoritySnapshotForTest(
+    material: Omit<PublishLedgerAuthoritySnapshotInput, "publishedAt">,
+    snapshotHash = legacyLedgerAuthoritySnapshotV1Hash(material),
+  ): void {
+    if (process.env.NODE_ENV !== "test") throw new Error("Legacy authority seeding is test-only.");
+    this.#legacyLedgerAuthoritySnapshots.set(material.providerId, {
+      material: clone(material),
+      snapshotHash,
+    });
+  }
+
+  async ledgerAuthorityReadiness(providerId: string): Promise<LedgerAuthorityRepositoryReadiness> {
+    const snapshot = this.#ledgerAuthoritySnapshots.get(providerId);
+    const repositoryObservedAt = this.#statementTimestamp();
+    return {
+      ...(snapshot ? { snapshot: clone(snapshot) } : {}),
+      firmGovernance: ledgerFirmGovernanceReadinessEvidence(snapshot, repositoryObservedAt),
+    };
   }
 
   async saveProviderAuthorization(authorization: ProviderAuthorization): Promise<ProviderAuthorization> {
@@ -433,14 +977,6 @@ export class InMemoryAccountingRepository implements AccountingRepository {
         httpStatus: 403,
       });
     }
-    const installationBinding = [...this.#agentConnectionBindings.values()].find(
-      (candidate) => candidate.installationId === binding.installationId && candidate.bindingId !== binding.bindingId,
-    );
-    if (installationBinding) {
-      throw new AppError("CONFLICT", "An OAuth installation can bind only one provider connection.", {
-        httpStatus: 409,
-      });
-    }
     const existing = this.#agentConnectionBindings.get(binding.bindingId);
     if (existing && (
       existing.status === "REVOKED" ||
@@ -457,13 +993,260 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     }
     const saved = existing ? { ...binding, createdAt: existing.createdAt } : binding;
     this.#agentConnectionBindings.set(saved.bindingId, clone(saved));
+    if (!this.#activeBindingIds.has(saved.installationId)) {
+      this.#activeBindingIds.set(saved.installationId, saved.bindingId);
+      this.#activeBindingRevisions.set(saved.installationId, 1);
+    }
     return clone(saved);
   }
 
   async resolveAgentConnectionBinding(
     input: ResolveAgentConnectionBindingInput,
   ): Promise<ResolvedAgentConnectionBinding | undefined> {
+    if (this.#currentBindingId(input.installationId) !== input.bindingId) return undefined;
     return this.#resolveActiveBinding(input);
+  }
+
+  async saveOrganisationSwitchSession(session: OrganisationSwitchSession): Promise<void> {
+    if (
+      !isHashedValue(session.sessionHash) ||
+      !isValidDate(session.createdAt) ||
+      !isValidDate(session.expiresAt) ||
+      session.expiresAt <= session.createdAt ||
+      session.expiresAt.getTime() - session.createdAt.getTime() > 15 * 60_000 ||
+      session.consumedAt ||
+      this.#organisationSwitchSessions.has(session.sessionHash)
+    ) {
+      throw new AppError("VALIDATION_FAILED", "Organisation switch session is invalid.");
+    }
+    const source = this.#resolveActiveBinding({
+      installationId: session.installationId,
+      bindingId: session.sourceBindingId,
+      workspaceId: session.workspaceId,
+      subjectType: session.subjectType,
+      subjectId: session.subjectId,
+      agentId: session.agentId,
+      connectionId: session.sourceConnectionId,
+    });
+    if (
+      !source ||
+      source.authorizationId !== session.authorizationId ||
+      (!session.sourceTargetSessionHash && this.#currentBindingId(session.installationId) !== session.sourceBindingId)
+    ) {
+      throw new AppError("FORBIDDEN", "Organisation switch source binding is no longer current.", {
+        httpStatus: 403,
+      });
+    }
+    if (session.sourceTargetSessionHash) {
+      const sourceTarget = this.#ledgerTargetSessions.get(session.sourceTargetSessionHash);
+      if (
+        !sourceTarget ||
+        sourceTarget.installationId !== session.installationId ||
+        sourceTarget.bindingId !== session.sourceBindingId ||
+        sourceTarget.connectionId !== session.sourceConnectionId ||
+        sourceTarget.revokedAt ||
+        sourceTarget.expiresAt <= session.createdAt
+      ) {
+        throw new AppError("FORBIDDEN", "Organisation switch target is no longer active.", {
+          httpStatus: 403,
+        });
+      }
+    }
+    this.#organisationSwitchSessions.set(session.sessionHash, clone(session));
+  }
+
+  async getOrganisationSwitchContext(
+    sessionHash: string,
+    now: Date,
+  ): Promise<OrganisationSwitchContext | undefined> {
+    if (!isValidDate(now)) return undefined;
+    const session = this.#organisationSwitchSessions.get(sessionHash);
+    if (!session || session.consumedAt || session.expiresAt <= now) return undefined;
+    if (!session.sourceTargetSessionHash && this.#currentBindingId(session.installationId) !== session.sourceBindingId) {
+      return undefined;
+    }
+    const sourceBinding = this.#resolveActiveBindingByTuple(
+      session.installationId,
+      session.sourceBindingId,
+      session.sourceConnectionId,
+    );
+    if (!sourceBinding || sourceBinding.authorizationId !== session.authorizationId) return undefined;
+    const sourceTarget = session.sourceTargetSessionHash
+      ? this.#ledgerTargetSessions.get(session.sourceTargetSessionHash)
+      : undefined;
+    if (session.sourceTargetSessionHash && (
+      !sourceTarget ||
+      sourceTarget.installationId !== session.installationId ||
+      sourceTarget.bindingId !== session.sourceBindingId ||
+      sourceTarget.connectionId !== session.sourceConnectionId ||
+      sourceTarget.revokedAt ||
+      sourceTarget.expiresAt <= now
+    )) return undefined;
+    const currentBinding = sourceTarget
+      ? { ...sourceBinding, bindingRevision: sourceTarget.bindingRevision }
+      : sourceBinding;
+    const connections = await this.listActiveConnectionsByAuthorization(
+      session.authorizationId,
+      session.workspaceId,
+    );
+    if (connections.length === 0) return undefined;
+    return {
+      session: clone(session),
+      currentBinding,
+      connections,
+    };
+  }
+
+  async completeOrganisationSwitch(
+    input: CompleteOrganisationSwitchInput,
+  ): Promise<CompleteOrganisationSwitchResult | undefined> {
+    if (!isValidDate(input.now) || !isNonEmpty(input.newBindingId)) return undefined;
+    const context = await this.getOrganisationSwitchContext(input.sessionHash, input.now);
+    if (!context) return undefined;
+    const sourceTarget = context.session.sourceTargetSessionHash
+      ? this.#ledgerTargetSessions.get(context.session.sourceTargetSessionHash)
+      : undefined;
+    if (context.session.sourceTargetSessionHash && (
+      !sourceTarget ||
+      sourceTarget.installationId !== context.session.installationId ||
+      sourceTarget.revokedAt ||
+      sourceTarget.expiresAt <= input.now
+    )) return undefined;
+    const targetConnection = context.connections.find(
+      (connection) => connection.connectionId === input.selectedConnectionId,
+    );
+    if (!targetConnection) return undefined;
+
+    let targetBinding = [...this.#agentConnectionBindings.values()].find((binding) =>
+      binding.installationId === context.session.installationId &&
+      binding.connectionId === targetConnection.connectionId &&
+      binding.status === "ACTIVE"
+    );
+    if (!targetBinding) {
+      if (this.#agentConnectionBindings.has(input.newBindingId)) return undefined;
+      targetBinding = {
+        bindingId: input.newBindingId,
+        installationId: context.session.installationId,
+        workspaceId: context.session.workspaceId,
+        subjectType: context.session.subjectType,
+        subjectId: context.session.subjectId,
+        agentId: context.session.agentId,
+        connectionId: targetConnection.connectionId,
+        policyId: context.currentBinding.policyId,
+        status: "ACTIVE",
+        createdAt: input.now,
+        updatedAt: input.now,
+      };
+      this.#agentConnectionBindings.set(targetBinding.bindingId, clone(targetBinding));
+    }
+    const nextBindingRevision = this.#currentBindingRevision(context.session.installationId) + 1;
+    this.#activeBindingIds.set(context.session.installationId, targetBinding.bindingId);
+    this.#activeBindingRevisions.set(context.session.installationId, nextBindingRevision);
+    const consumed: OrganisationSwitchSession = {
+      ...context.session,
+      consumedAt: input.now,
+    };
+    let sourceTargetRevoked = false;
+    if (context.session.sourceTargetSessionHash) {
+      this.#ledgerTargetSessions.set(context.session.sourceTargetSessionHash, {
+        ...sourceTarget!,
+        revokedAt: new Date(input.now),
+      });
+      sourceTargetRevoked = true;
+    }
+    this.#organisationSwitchSessions.set(consumed.sessionHash, consumed);
+    const currentBinding = this.#resolveActiveBindingByTuple(
+      targetBinding.installationId,
+      targetBinding.bindingId,
+      targetBinding.connectionId,
+    );
+    if (!currentBinding) throw new Error("Completed organisation switch did not resolve its target binding.");
+    return {
+      session: clone(consumed),
+      previousBinding: clone(context.currentBinding),
+      currentBinding,
+      changed: currentBinding.connectionId !== context.currentBinding.connectionId,
+      sourceTargetRevoked,
+    };
+  }
+
+  async saveLedgerTargetSession(session: LedgerTargetSession): Promise<void> {
+    if (
+      !/^[0-9a-f]{64}$/u.test(session.sessionHash) ||
+      !isNonEmpty(session.sessionId) ||
+      !isValidDate(session.createdAt) ||
+      !isValidDate(session.expiresAt) ||
+      session.expiresAt <= session.createdAt ||
+      session.expiresAt.getTime() - session.createdAt.getTime() > 4 * 60 * 60_000 ||
+      !Number.isSafeInteger(session.bindingRevision) ||
+      session.bindingRevision < 1 ||
+      session.lastUsedAt ||
+      session.revokedAt ||
+      this.#ledgerTargetSessions.has(session.sessionHash) ||
+      [...this.#ledgerTargetSessions.values()].some((candidate) => candidate.sessionId === session.sessionId)
+    ) {
+      throw new AppError("VALIDATION_FAILED", "Ledger target session is invalid.");
+    }
+    const binding = this.#resolveActiveBindingByTuple(
+      session.installationId,
+      session.bindingId,
+      session.connectionId,
+    );
+    if (!binding || binding.bindingRevision !== session.bindingRevision) {
+      throw new AppError("FORBIDDEN", "Ledger target session does not match the current installation binding.", {
+        httpStatus: 403,
+      });
+    }
+    this.#ledgerTargetSessions.set(session.sessionHash, clone(session));
+  }
+
+  async resolveLedgerTargetSession(
+    input: ResolveLedgerTargetSessionInput,
+  ): Promise<ResolvedLedgerTargetSession | undefined> {
+    if (!isValidDate(input.now)) return undefined;
+    const session = this.#ledgerTargetSessions.get(input.sessionHash);
+    if (
+      !session ||
+      session.installationId !== input.installationId ||
+      session.revokedAt ||
+      session.expiresAt <= input.now
+    ) {
+      return undefined;
+    }
+    const binding = this.#resolveActiveBindingByTuple(
+      session.installationId,
+      session.bindingId,
+      session.connectionId,
+    );
+    if (
+      !binding ||
+      binding.workspaceId !== input.workspaceId ||
+      binding.subjectType !== input.subjectType ||
+      binding.subjectId !== input.subjectId ||
+      binding.agentId !== input.agentId
+    ) {
+      return undefined;
+    }
+    const updated = { ...session, lastUsedAt: input.now };
+    this.#ledgerTargetSessions.set(session.sessionHash, updated);
+    return {
+      session: clone(updated),
+      binding: { ...clone(binding), bindingRevision: session.bindingRevision },
+    };
+  }
+
+  async revokeLedgerTargetSession(
+    sessionHash: string,
+    installationId: string,
+    revokedAt: Date,
+  ): Promise<boolean> {
+    if (!isHashedValue(sessionHash) || !isNonEmpty(installationId) || !isValidDate(revokedAt)) return false;
+    const session = this.#ledgerTargetSessions.get(sessionHash);
+    if (!session || session.installationId !== installationId || session.revokedAt || session.expiresAt <= revokedAt) {
+      return false;
+    }
+    this.#ledgerTargetSessions.set(sessionHash, { ...session, revokedAt: new Date(revokedAt) });
+    return true;
   }
 
   async revokeOAuthInstallation(installationId: string, workspaceId: string, revokedAt: Date): Promise<boolean> {
@@ -740,31 +1523,34 @@ export class InMemoryAccountingRepository implements AccountingRepository {
 
     if (flow.personalPoc) {
       const otherActiveInstallations = [...this.#oauthInstallations.values()].filter((candidate) =>
-        candidate.installationId !== flow.installationId && candidate.status === "ACTIVE"
+        candidate.installationId !== flow.installationId &&
+        candidate.status === "ACTIVE" &&
+        candidate.workspaceId === flow.workspaceId &&
+        candidate.subjectType === flow.subjectType &&
+        candidate.subjectId === flow.subjectId &&
+        candidate.agentId === flow.agentId &&
+        candidate.clientId === flow.clientId
       );
-      const staleInstallations: Array<{ installationId: string; familyId: string }> = [];
+      const replacedInstallations: OAuthInstallation[] = [];
       for (const candidate of otherActiveInstallations) {
-        const samePrincipalAndClient =
-          candidate.workspaceId === flow.workspaceId &&
-          candidate.subjectType === flow.subjectType &&
-          candidate.subjectId === flow.subjectId &&
-          candidate.agentId === flow.agentId &&
-          candidate.clientId === flow.clientId;
         const families = [...this.#mcpRefreshTokenFamilies.values()].filter((family) =>
           family.installationId === candidate.installationId
         );
-        if (
-          !samePrincipalAndClient ||
-          families.length === 0 ||
-          this.#hasUsableMcpRefreshToken(candidate.installationId, input.now)
-        ) return undefined;
-        staleInstallations.push({
-          installationId: candidate.installationId,
-          familyId: families[0]!.familyId,
-        });
+        if (families.length === 0) {
+          const hasExchangeableCode = [...this.#oauthAuthorizationCodes.values()].some((code) =>
+            code.installationId === candidate.installationId &&
+            !code.consumedAt &&
+            code.expiresAt > input.now
+          );
+          // A just-selected grant may still be exchanging its first code. Keep
+          // that race fail-closed, but do not let an expired, never-exchanged
+          // Host callback strand this Personal POC client forever.
+          if (hasExchangeableCode) return undefined;
+        }
+        replacedInstallations.push(candidate);
       }
-      for (const stale of staleInstallations) {
-        this.#revokeRefreshGrant(stale.familyId, input.now);
+      for (const replaced of replacedInstallations) {
+        await this.revokeOAuthInstallation(replaced.installationId, replaced.workspaceId, input.now);
       }
     }
 
@@ -814,6 +1600,8 @@ export class InMemoryAccountingRepository implements AccountingRepository {
 
     this.#oauthInstallations.set(flow.installationId, activatedInstallation);
     this.#agentConnectionBindings.set(binding.bindingId, binding);
+    this.#activeBindingIds.set(binding.installationId, binding.bindingId);
+    this.#activeBindingRevisions.set(binding.installationId, 1);
     this.#oauthAuthorizationCodes.set(authorizationCode.codeHash, authorizationCode);
     this.#oauthBrokerAuthorizationFlows.set(flow.flowHash, completed);
     return {
@@ -1060,11 +1848,21 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     ) {
       return undefined;
     }
-    const binding = this.#resolveActiveBindingByTuple(
+    const sourceBinding = this.#resolveActiveBindingByTuple(
       token.installationId,
       token.bindingId,
       token.connectionId,
     );
+    if (!sourceBinding) return undefined;
+    const activeBindingId = this.#currentBindingId(token.installationId);
+    const activeBinding = this.#agentConnectionBindings.get(activeBindingId);
+    const binding = activeBinding
+      ? this.#resolveActiveBindingByTuple(
+          token.installationId,
+          activeBinding.bindingId,
+          activeBinding.connectionId,
+        )
+      : undefined;
     if (!binding) return undefined;
     return {
       tokenId: token.tokenId,
@@ -1522,6 +2320,32 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       this.#mcpRefreshTokens.set(tokenHash, scrubbed);
     }
     deleted.mcpRefreshRetryResponses = retryTargets.length;
+
+    const switchTargets = [...this.#organisationSwitchSessions.entries()]
+      .filter(([, session]) => session.expiresAt <= brokerFlowCutoff || Boolean(session.consumedAt))
+      .sort(([leftHash, left], [rightHash, right]) =>
+        left.expiresAt.getTime() - right.expiresAt.getTime() || leftHash.localeCompare(rightHash)
+      )
+      .slice(0, batchSize);
+    for (const [sessionHash] of switchTargets) this.#organisationSwitchSessions.delete(sessionHash);
+    deleted.organisationSwitchSessions = switchTargets.length;
+
+    const durableTargetSessionHashes = new Set([
+      ...[...this.#accountingCases.values()].map((aggregate) => aggregate.binding.targetSessionHash),
+      ...[...this.#accountingCaseRecoveryResidualGrants.values()]
+        .map((grant) => grant.successorBinding.targetSessionHash),
+    ]);
+    const targetSessionTargets = [...this.#ledgerTargetSessions.entries()]
+      .filter(([sessionHash, session]) =>
+        (session.expiresAt <= brokerFlowCutoff || Boolean(session.revokedAt)) &&
+        !durableTargetSessionHashes.has(sessionHash)
+      )
+      .sort(([leftHash, left], [rightHash, right]) =>
+        left.expiresAt.getTime() - right.expiresAt.getTime() || leftHash.localeCompare(rightHash)
+      )
+      .slice(0, batchSize);
+    for (const [sessionHash] of targetSessionTargets) this.#ledgerTargetSessions.delete(sessionHash);
+    deleted.ledgerTargetSessions = targetSessionTargets.length;
 
     const expiredBrokerFlows = [...this.#oauthBrokerAuthorizationFlows.entries()]
       .filter(([, flow]) =>
@@ -2144,6 +2968,33 @@ export class InMemoryAccountingRepository implements AccountingRepository {
   async confirmXeroMutationPreparation(
     input: ConfirmXeroMutationPreparationInput,
   ): Promise<ConfirmXeroMutationPreparationResult | undefined> {
+    if ((input.expectedAuthoritySnapshotRevision === undefined) !==
+        (input.expectedAuthoritySnapshotHash === undefined)) {
+      throw new AppError("VALIDATION_FAILED", "Authority snapshot claim binding is incomplete.", { httpStatus: 422 });
+    }
+    if (input.expectedFirmGovernanceClaim && input.expectedAuthoritySnapshotRevision === undefined) {
+      throw new AppError("VALIDATION_FAILED", "Firm-governance claim lacks its authority snapshot binding.", {
+        httpStatus: 422,
+      });
+    }
+    const receiptGovernanceClaim = input.authorizationReceipt.firmGovernanceClaim;
+    if ((receiptGovernanceClaim === undefined) !== (input.expectedFirmGovernanceClaim === undefined) ||
+        (input.expectedFirmGovernanceClaim !== undefined &&
+          (stableStringify(receiptGovernanceClaim) !== stableStringify(input.expectedFirmGovernanceClaim) ||
+            input.authorizationReceipt.actionId !== input.expectedFirmGovernanceClaim.actionId ||
+            input.authorizationReceipt.delegationId !== input.expectedFirmGovernanceClaim.delegationId ||
+            input.authorizationReceipt.delegationRevision !== input.expectedFirmGovernanceClaim.delegationRevision))) {
+      throw new AppError("VALIDATION_FAILED", "Authorization receipt governance claim is inconsistent.", {
+        httpStatus: 422,
+      });
+    }
+    if (input.expectedAuthoritySnapshotRevision !== undefined &&
+        (input.authorizationReceipt.authoritySnapshotRevision !== input.expectedAuthoritySnapshotRevision ||
+          input.authorizationReceipt.authoritySnapshotHash !== input.expectedAuthoritySnapshotHash)) {
+      throw new AppError("VALIDATION_FAILED", "Authorization receipt authority snapshot is inconsistent.", {
+        httpStatus: 422,
+      });
+    }
     const preparation = this.#xeroMutationPreparations.get(input.preparationId);
     if (
       !preparation ||
@@ -2168,11 +3019,55 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       return undefined;
     }
     if (preparation.state !== "PREPARED") return undefined;
-    if (preparation.expiresAt <= input.now) {
+    const repositoryNow = this.#statementTimestamp();
+    if (input.expectedAuthoritySnapshotRevision !== undefined) {
+      const authority = this.#ledgerAuthoritySnapshots.get("xero");
+      if (
+        !authority || authority.revision !== input.expectedAuthoritySnapshotRevision ||
+        authority.snapshotHash !== input.expectedAuthoritySnapshotHash
+      ) {
+        throw new AppError("APPROVAL_INVALID", "Ledger authority changed before the provider-write claim.", {
+          httpStatus: 409,
+        });
+      }
+      if (input.expectedFirmGovernanceClaim) {
+        const storedAuthority = exactFirmGovernanceAuthorityFromSnapshot(
+          authority,
+          input.expectedFirmGovernanceClaim,
+        );
+        if (!storedAuthority) {
+          throw new AppError("APPROVAL_INVALID", "Firm-governance authority changed before the provider-write claim.", {
+            httpStatus: 409,
+          });
+        }
+        if (storedAuthority.effectiveExpiresAt <= repositoryNow) {
+          throw new AppError("APPROVAL_INVALID", "Firm-governance authority expired before the provider-write claim.", {
+            httpStatus: 409,
+          });
+        }
+      }
+    }
+    const targetSession = preparation.targetSessionId
+      ? [...this.#ledgerTargetSessions.values()].find((session) =>
+          session.sessionId === preparation.targetSessionId &&
+          session.installationId === preparation.installationId &&
+          session.bindingId === preparation.bindingId &&
+          session.connectionId === preparation.connectionId &&
+          session.bindingRevision === preparation.bindingRevision)
+      : undefined;
+    const accountingCaseAggregate = preparation.sourceRef?.startsWith("case:")
+      ? this.#accountingCases.get(preparation.sourceRef.slice("case:".length))
+      : undefined;
+    const caseTargetExpiresAt = accountingCaseAggregate?.binding.targetSessionExpiresAt;
+    const targetLeaseExpiresAt = targetSession?.expiresAt ?? caseTargetExpiresAt;
+    const targetRevoked = targetSession?.revokedAt !== undefined;
+    if (preparation.expiresAt <= repositoryNow ||
+        (preparation.targetSessionId && (targetSession !== undefined || accountingCaseAggregate !== undefined) &&
+          (targetRevoked || !targetLeaseExpiresAt || targetLeaseExpiresAt <= repositoryNow))) {
       this.#xeroMutationPreparations.set(input.preparationId, {
         ...preparation,
         state: "EXPIRED",
-        updatedAt: input.now,
+        updatedAt: new Date(Math.max(preparation.updatedAt.getTime(), repositoryNow.getTime())),
       });
       return undefined;
     }
@@ -2195,6 +3090,36 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     if (sourceDuplicate) {
       throw new AppError("CONFLICT", "This source already has an active Xero mutation.", { httpStatus: 409 });
     }
+    if (XERO_MUTATION_CREATE_OPERATIONS.has(input.operation)) {
+      const businessPayload = xeroMutationBusinessPayload(input.canonicalPayload);
+      const businessDuplicate = [...this.#xeroMutationRequests.values()].find((request) =>
+        request.tenantId === input.tenantId &&
+        request.objectType === input.objectType &&
+        request.operation === input.operation &&
+        ACTIVE_XERO_MUTATION_SOURCE_STATES.has(request.state) &&
+        sameJson(xeroMutationBusinessPayload(request.canonicalPayload), businessPayload));
+      if (businessDuplicate) {
+        throw new AppError("CONFLICT", "This provider business payload already has an active Xero mutation.", {
+          httpStatus: 409,
+          details: { duplicateMutationRequestId: businessDuplicate.mutationRequestId },
+        });
+      }
+      if (input.objectType === "CONTACT" && input.operation === "CREATE") {
+        const companyNumber = normalizedNestedBusinessValue(input.canonicalPayload, "target", "companyNumber");
+        const accountNumber = normalizedNestedBusinessValue(input.canonicalPayload, "target", "accountNumber");
+        const strongIdentityDuplicate = [...this.#xeroMutationRequests.values()].find((request) =>
+          request.tenantId === input.tenantId && request.objectType === "CONTACT" &&
+          request.operation === "CREATE" && ACTIVE_XERO_MUTATION_SOURCE_STATES.has(request.state) &&
+          ((companyNumber && normalizedNestedBusinessValue(request.canonicalPayload, "target", "companyNumber") === companyNumber) ||
+           (accountNumber && normalizedNestedBusinessValue(request.canonicalPayload, "target", "accountNumber") === accountNumber)));
+        if (strongIdentityDuplicate) {
+          throw new AppError("CONFLICT", "This strong contact business identity already has an active Xero mutation.", {
+            httpStatus: 409,
+            details: { duplicateMutationRequestId: strongIdentityDuplicate.mutationRequestId },
+          });
+        }
+      }
+    }
 
     const request: XeroMutationRequest = {
       mutationRequestId: input.mutationRequestId,
@@ -2206,6 +3131,8 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       installationId: input.installationId,
       bindingId: input.bindingId,
       connectionId: input.connectionId,
+      ...(input.bindingRevision !== undefined ? { bindingRevision: input.bindingRevision } : {}),
+      ...(input.targetSessionId ? { targetSessionId: input.targetSessionId } : {}),
       objectType: input.objectType,
       operation: input.operation,
       ...(input.targetXeroObjectId ? { targetXeroObjectId: input.targetXeroObjectId } : {}),
@@ -2216,8 +3143,13 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       sourceSha256: input.sourceSha256,
       sourceEvidenceType: input.sourceEvidenceType,
       confirmationSummaryHash: input.confirmationSummaryHash,
-      state: "CONFIRMED",
+      authorizationReceipt: clone(input.authorizationReceipt),
+      ...(input.successfulValidationReceipt
+        ? { validationReceipt: clone(input.successfulValidationReceipt) }
+        : {}),
+      state: input.claimForWrite ? "WRITE_IN_FLIGHT" : "CONFIRMED",
       confirmedAt: input.now,
+      ...(input.claimForWrite ? { writeStartedAt: input.now } : {}),
       createdAt: input.now,
       updatedAt: input.now,
     };
@@ -2248,9 +3180,10 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     if (request.state !== "CONFIRMED") {
       throw new AppError("CONFLICT", `Mutation cannot start from ${request.state}.`, { httpStatus: 409 });
     }
-    const targetXeroObjectId = request.operation === "UPDATE" ? request.targetXeroObjectId : undefined;
-    if (request.operation === "UPDATE" && !targetXeroObjectId) {
-      throw new AppError("CONFLICT", "UPDATE mutation has no immutable Xero target identifier.", { httpStatus: 409 });
+    const targetsExistingObject = xeroMutationTargetsExistingObject(request.operation);
+    const targetXeroObjectId = targetsExistingObject ? request.targetXeroObjectId : undefined;
+    if (targetsExistingObject && !targetXeroObjectId) {
+      throw new AppError("CONFLICT", "Existing-object mutation has no immutable Xero target identifier.", { httpStatus: 409 });
     }
     if (targetXeroObjectId) this.#assertXeroMutationObjectIdAvailable(request, targetXeroObjectId);
     const updated: XeroMutationRequest = {
@@ -2268,7 +3201,10 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     input: RecordXeroMutationWriteEvidenceInput,
   ): Promise<XeroMutationRequest> {
     const request = this.#requireBoundXeroMutationRequest(input);
-    if (request.state !== "WRITE_IN_FLIGHT") {
+    const nativeRecoveryReplay = request.state === "WRITE_UNCERTAIN" &&
+      request.nativeRecoveryClaim !== undefined &&
+      request.xeroObjectId === undefined;
+    if (request.state !== "WRITE_IN_FLIGHT" && !nativeRecoveryReplay) {
       throw new AppError("CONFLICT", `Mutation write evidence cannot be recorded from ${request.state}.`, {
         httpStatus: 409,
       });
@@ -2286,13 +3222,80 @@ export class InMemoryAccountingRepository implements AccountingRepository {
   }
 
   async markXeroMutationWriteUnknown(
-    input: MarkXeroMutationWriteUnknownInput,
+    input: MarkXeroMutationWriteUnknownInput & {
+      nativeRecoveryClaim?: XeroNativeIdempotencyRecoveryClaim;
+    },
   ): Promise<XeroMutationRequest> {
     const request = this.#requireBoundXeroMutationRequest(input);
+    const nativeRecoveryClaim = input.nativeRecoveryClaim;
     if (request.state !== "WRITE_IN_FLIGHT" && request.state !== "WRITE_UNCERTAIN") {
       throw new AppError("CONFLICT", `Mutation uncertainty cannot be recorded from ${request.state}.`, {
         httpStatus: 409,
       });
+    }
+    if (nativeRecoveryClaim && (
+      request.state !== "WRITE_UNCERTAIN" ||
+      request.xeroObjectId !== undefined ||
+      request.nativeRecoveryClaim !== undefined
+    )) {
+      throw new AppError("CONFLICT", "Native idempotency recovery was already claimed or is not uncertain.", {
+        httpStatus: 409,
+      });
+    }
+    if (nativeRecoveryClaim && (
+      nativeRecoveryClaim.mutationRequestId !== request.mutationRequestId ||
+      nativeRecoveryClaim.canonicalPayloadHash !== request.canonicalPayloadHash ||
+      nativeRecoveryClaim.tenantId !== request.tenantId ||
+      nativeRecoveryClaim.actorId !== request.actorId ||
+      nativeRecoveryClaim.workspaceId !== request.workspaceId ||
+      nativeRecoveryClaim.installationId !== request.installationId ||
+      nativeRecoveryClaim.bindingId !== request.bindingId ||
+      nativeRecoveryClaim.bindingRevision !== request.bindingRevision ||
+      nativeRecoveryClaim.connectionId !== request.connectionId ||
+      nativeRecoveryClaim.targetSessionId !== request.targetSessionId ||
+      nativeRecoveryClaim.agentId !== request.authorizationReceipt.agentId
+    )) {
+      throw new AppError("FORBIDDEN", "Native idempotency recovery claim does not match its durable authority.", {
+        httpStatus: 403,
+      });
+    }
+    if (nativeRecoveryClaim) {
+      const expectedAdapter = XERO_NATIVE_RECOVERY_ADAPTER_BY_ACTION[
+        nativeRecoveryClaim.actionId as keyof typeof XERO_NATIVE_RECOVERY_ADAPTER_BY_ACTION
+      ];
+      const authority = request.authorizationReceipt;
+      const expectedExpiry = request.writeStartedAt
+        ? new Date(request.writeStartedAt.getTime() + XERO_NATIVE_IDEMPOTENCY_RECOVERY_WINDOW_MS).toISOString()
+        : undefined;
+      const claimedAt = new Date(nativeRecoveryClaim.claimedAt);
+      const expiresAt = new Date(nativeRecoveryClaim.expiresAt);
+      if (
+        nativeRecoveryClaim.receiptType !== "XERO_NATIVE_IDEMPOTENCY_RECOVERY_CLAIM" ||
+        nativeRecoveryClaim.claimId.trim().length === 0 ||
+        !Number.isSafeInteger(nativeRecoveryClaim.bindingRevision) ||
+        nativeRecoveryClaim.bindingRevision < 1 ||
+        !Number.isSafeInteger(nativeRecoveryClaim.authoritySnapshotRevision) ||
+        nativeRecoveryClaim.authoritySnapshotRevision < 1 ||
+        !/^[a-f0-9]{64}$/u.test(nativeRecoveryClaim.canonicalPayloadHash) ||
+        !/^[a-f0-9]{64}$/u.test(nativeRecoveryClaim.authoritySnapshotHash) ||
+        !Number.isFinite(claimedAt.getTime()) ||
+        !Number.isFinite(expiresAt.getTime()) ||
+        request.operation !== "CREATE_DRAFT" ||
+        !expectedAdapter ||
+        nativeRecoveryClaim.adapterOperation !== expectedAdapter ||
+        nativeRecoveryClaim.actionId !== authority.actionId ||
+        nativeRecoveryClaim.authoritySnapshotRevision !== authority.authoritySnapshotRevision ||
+        nativeRecoveryClaim.authoritySnapshotHash !== authority.authoritySnapshotHash ||
+        nativeRecoveryClaim.claimedAt !== input.now.toISOString() ||
+        nativeRecoveryClaim.expiresAt !== expectedExpiry ||
+        !request.writeStartedAt ||
+        input.now < request.writeStartedAt ||
+        input.now >= expiresAt
+      ) {
+        throw new AppError("CONFLICT", "Native idempotency recovery claim window or authority is invalid.", {
+          httpStatus: 409,
+        });
+      }
     }
     this.#assertCompatibleMutationEvidence(request, input.xeroObjectId, input.writeReceipt);
     if (input.xeroObjectId) this.#assertXeroMutationObjectIdAvailable(request, input.xeroObjectId);
@@ -2300,6 +3303,9 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       ...request,
       ...(input.xeroObjectId ? { xeroObjectId: input.xeroObjectId } : {}),
       ...(input.writeReceipt ? { writeReceipt: clone(input.writeReceipt) } : {}),
+      ...(nativeRecoveryClaim ? {
+        nativeRecoveryClaim: clone(nativeRecoveryClaim) as unknown as Record<string, unknown>,
+      } : {}),
       state: "WRITE_UNCERTAIN",
       writeUnknownAt: request.writeUnknownAt ?? input.now,
       updatedAt: input.now,
@@ -2314,7 +3320,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     const request = this.#requireBoundXeroMutationRequest(input);
     if (
       input.readbackPayloadHash !== request.canonicalPayloadHash ||
-      input.readbackStatus !== XERO_MUTATION_EXPECTED_READBACK_STATUS[request.objectType]
+      input.readbackStatus !== expectedXeroMutationReadbackStatus(request.objectType, request.operation)
     ) {
       throw new AppError("READBACK_MISMATCH", "Verified readback hash does not match the confirmed payload.", {
         httpStatus: 409,
@@ -2347,6 +3353,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       verifiedAt: input.now,
       updatedAt: input.now,
     };
+    delete updated.readbackMismatchReceipt;
     this.#xeroMutationRequests.set(request.mutationRequestId, clone(updated));
     return clone(updated);
   }
@@ -2357,7 +3364,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     const request = this.#requireBoundXeroMutationRequest(input);
     if (
       input.readbackPayloadHash === request.canonicalPayloadHash &&
-      input.readbackStatus === XERO_MUTATION_EXPECTED_READBACK_STATUS[request.objectType]
+      input.readbackStatus === expectedXeroMutationReadbackStatus(request.objectType, request.operation)
     ) {
       throw new AppError("CONFLICT", "Matching readback cannot be recorded as a mismatch.", { httpStatus: 409 });
     }
@@ -2384,6 +3391,18 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       readbackCanonicalPayload: clone(input.readbackCanonicalPayload),
       readbackPayloadHash: input.readbackPayloadHash,
       readbackStatus: input.readbackStatus,
+      readbackMismatchReceipt: {
+        receiptType: "XERO_READBACK_MISMATCH",
+        mismatchType: "PAYLOAD_OR_STATUS",
+        reasonCodes: [
+          ...(input.readbackPayloadHash !== request.canonicalPayloadHash
+            ? ["CANONICAL_PAYLOAD_HASH_MISMATCH"]
+            : []),
+          ...(input.readbackStatus !== expectedXeroMutationReadbackStatus(request.objectType, request.operation)
+            ? ["READBACK_STATUS_MISMATCH"]
+            : []),
+        ],
+      },
       state: "READBACK_MISMATCH",
       updatedAt: input.now,
     };
@@ -2437,6 +3456,1933 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     return clone(updated);
   }
 
+  #abandonExpiredPreparedContactReservations(
+    input: CreateOrAdvanceAccountingCaseInput,
+  ): () => void {
+    const repositoryNow = this.#statementTimestamp();
+    const aggregateSnapshots = new Map<string, InMemoryAccountingCaseAggregate>();
+    const preparationSnapshots = new Map<string, XeroMutationPreparation>();
+    const snapshotAggregate = (caseId: string, aggregate: InMemoryAccountingCaseAggregate) => {
+      if (!aggregateSnapshots.has(caseId)) aggregateSnapshots.set(caseId, clone(aggregate));
+    };
+    const snapshotPreparation = (preparation: XeroMutationPreparation) => {
+      if (!preparationSnapshots.has(preparation.preparationId)) {
+        preparationSnapshots.set(preparation.preparationId, clone(preparation));
+      }
+    };
+
+    const successorContactOperations = input.compiled.operations
+      .filter((operation) => operation.actionId === "contact.create_basic")
+      .sort((left, right) =>
+        left.businessReservation.coordinateHash.localeCompare(right.businessReservation.coordinateHash));
+    for (const successorOperation of successorContactOperations) {
+      for (const [caseId, aggregate] of this.#accountingCases) {
+        if (aggregate.binding.tenantId !== input.binding.tenantId) continue;
+        for (const [version, candidateVersion] of aggregate.versions) {
+          const candidate = candidateVersion.operations.find((operation) =>
+            operation.operation.actionId === "contact.create_basic" &&
+            operation.state === "PREPARED" &&
+            accountingCaseBusinessReservationsOverlap(
+              operation.operation.businessReservation,
+              successorOperation.businessReservation,
+            ) && !(
+              candidateVersion.compiled.caseId === input.compiled.caseId &&
+              candidateVersion.compiled.version === input.compiled.version &&
+              operation.operation.operationId === successorOperation.operationId
+            ));
+          if (!candidate?.preparationId) continue;
+          const triggerPreparation = this.#xeroMutationPreparations.get(candidate.preparationId);
+          if (!triggerPreparation || !["PREPARED", "EXPIRED"].includes(triggerPreparation.state)) continue;
+          const targetSession = this.#ledgerTargetSessions.get(aggregate.binding.targetSessionHash);
+          const targetLeaseUnavailable = targetSession
+            ? targetSession.revokedAt !== undefined || targetSession.expiresAt <= repositoryNow ||
+              targetSession.sessionId !== aggregate.binding.targetSessionId ||
+              targetSession.installationId !== aggregate.binding.installationId ||
+              targetSession.bindingId !== aggregate.binding.bindingId ||
+              targetSession.connectionId !== aggregate.binding.connectionId ||
+              targetSession.bindingRevision !== aggregate.binding.bindingRevision ||
+              targetSession.expiresAt.getTime() !== aggregate.binding.targetSessionExpiresAt.getTime()
+            : true;
+          const reservationExpired = triggerPreparation.expiresAt <= repositoryNow ||
+            targetLeaseUnavailable;
+          if (!reservationExpired ||
+              !["PREFLIGHTED", "READY_TO_RESUME", "EXECUTING"].includes(candidateVersion.state) ||
+              !candidateVersion.preflightRequestId) continue;
+          const preflightRequestId = candidateVersion.preflightRequestId;
+
+          const preparedOperations = candidateVersion.operations.filter((operation) => operation.state === "PREPARED");
+          const unsafeState = candidateVersion.operations.some((operation) =>
+            operation.state !== "PREPARED" && operation.state !== "NO_WRITE_REQUIRED");
+          const preparations = preparedOperations.map((operation) => operation.preparationId
+            ? this.#xeroMutationPreparations.get(operation.preparationId)
+            : undefined);
+          const hasDurableRequest = preparedOperations.some((operation) =>
+            operation.preparationId && [...this.#xeroMutationRequests.values()].some(
+              (request) => request.preparationId === operation.preparationId,
+            ));
+          const hasWriteEvidence = preparedOperations.some((operation) =>
+            operation.mutationRequestId !== undefined || operation.xeroObjectId !== undefined ||
+            operation.writeReceipt !== undefined || operation.readbackSnapshot !== undefined ||
+            operation.errorReceipt !== undefined);
+          if (unsafeState || hasDurableRequest || hasWriteEvidence ||
+              preparations.some((preparation) =>
+                !preparation || !["PREPARED", "EXPIRED"].includes(preparation.state))) continue;
+
+          snapshotAggregate(caseId, aggregate);
+          for (const preparation of preparations) {
+            if (!preparation) continue;
+            snapshotPreparation(preparation);
+            this.#xeroMutationPreparations.set(preparation.preparationId, {
+              ...preparation,
+              state: "EXPIRED",
+              updatedAt: new Date(Math.max(preparation.updatedAt.getTime(), repositoryNow.getTime())),
+            });
+          }
+
+          const executing: AccountingCaseVersionRecord = ["PREFLIGHTED", "READY_TO_RESUME"].includes(candidateVersion.state)
+            ? {
+                ...candidateVersion,
+                state: "EXECUTING",
+                executionRequestId: preflightRequestId,
+                executionStartedAt: new Date(Math.max(candidateVersion.createdAt.getTime(), repositoryNow.getTime())),
+                updatedAt: new Date(Math.max(candidateVersion.updatedAt.getTime(), repositoryNow.getTime())),
+              }
+            : candidateVersion;
+          const closedOperations = executing.operations.map((operation) => {
+            if (operation.state !== "PREPARED" || !operation.preparationId) return operation;
+            const preparation = preparations.find((value) => value?.preparationId === operation.preparationId);
+            if (!preparation) throw new AppError("PERSISTENCE_FAILURE", "Prepared operation lost its mutation preparation.");
+            return {
+              ...operation,
+              state: "BLOCKED_VALIDATION" as const,
+              errorReceipt: {
+                receiptType: "ACCOUNTING_CASE_NO_WRITE_STARTED",
+                receiptVersion: 1,
+                disposition: "ABANDONED",
+                reasonCode: "EXPIRED_PREPARATION_OR_TARGET_LEASE",
+                caseId: executing.compiled.caseId,
+                caseVersion: executing.compiled.version,
+                operationId: operation.operation.operationId,
+                preparationId: operation.preparationId,
+                abandonmentTriggerPreparationId: candidate.preparationId,
+                successorCaseId: input.compiled.caseId,
+                successorCaseVersion: input.compiled.version,
+                successorOperationId: successorOperation.operationId,
+                preparationExpiresAt: preparation.expiresAt.toISOString(),
+                targetSessionExpiresAt: aggregate.binding.targetSessionExpiresAt.toISOString(),
+                ...(targetSession?.revokedAt
+                  ? { targetSessionRevokedAt: targetSession.revokedAt.toISOString() }
+                  : {}),
+                abandonedAt: repositoryNow.toISOString(),
+                mutationRequestAbsent: true,
+                writeClaimAbsent: true,
+                providerPermitAbsentByDurableClaimInvariant: true,
+                providerCallAbsentByPermitInvariant: true,
+                writeReceiptAbsent: true,
+                readbackReceiptAbsent: true,
+              },
+              updatedAt: new Date(Math.max(operation.updatedAt.getTime(), repositoryNow.getTime())),
+            };
+          });
+          const terminalState = closedOperations.some((operation) => operation.state === "NO_WRITE_REQUIRED")
+            ? "PARTIALLY_COMMITTED" as const
+            : "TERMINAL" as const;
+          const closed: AccountingCaseVersionRecord = {
+            ...executing,
+            state: terminalState,
+            operations: closedOperations,
+            updatedAt: new Date(Math.max(executing.updatedAt.getTime(), repositoryNow.getTime())),
+          };
+          closed.terminalSummary = accountingCaseTerminalSummary(closed, terminalState);
+          aggregate.versions.set(version, clone(closed));
+        }
+      }
+    }
+
+    return () => {
+      for (const [caseId, snapshot] of aggregateSnapshots) this.#accountingCases.set(caseId, clone(snapshot));
+      for (const [preparationId, snapshot] of preparationSnapshots) {
+        this.#xeroMutationPreparations.set(preparationId, clone(snapshot));
+      }
+    };
+  }
+
+  #assertNoPendingContactReservationConflict(
+    input: CreateOrAdvanceAccountingCaseInput,
+    repositoryNow = this.#statementTimestamp(),
+  ): void {
+    for (const operation of input.compiled.operations) {
+      if (operation.actionId !== "contact.create_basic") continue;
+      for (const aggregate of this.#accountingCases.values()) {
+        if (aggregate.binding.tenantId !== input.binding.tenantId) continue;
+        for (const candidateVersion of aggregate.versions.values()) {
+          for (const candidate of candidateVersion.operations) {
+            if (
+              candidate.operation.actionId !== "contact.create_basic" ||
+              !accountingCaseBusinessReservationsOverlap(
+                candidate.operation.businessReservation,
+                operation.businessReservation,
+              )
+            ) continue;
+            const pendingLeaseIsActive = candidate.state === "PENDING" &&
+              candidateVersion.compiled.version === aggregate.currentVersion &&
+              aggregate.binding.targetSessionExpiresAt > repositoryNow;
+            const permanentClaimIsActive = ACCOUNTING_CASE_BUSINESS_RESERVATION_STATES.has(candidate.state);
+            const recoveryGrant = this.#activeRecoveryResidualGrant(
+              candidateVersion,
+              candidate,
+              repositoryNow,
+            );
+            const recoveryClaimIsActive = recoveryGrant !== undefined;
+            if (!pendingLeaseIsActive && !permanentClaimIsActive && !recoveryClaimIsActive) continue;
+            if (recoveryGrant?.successorCaseId === input.compiled.caseId) continue;
+            const transfersCurrentPendingClaim =
+              candidate.state === "PENDING" &&
+              candidateVersion.compiled.caseId === input.compiled.caseId &&
+              candidateVersion.compiled.version + 1 === input.compiled.version;
+            if (transfersCurrentPendingClaim) continue;
+            throw new AppError(
+              "CONFLICT",
+              "This tenant already has an active provider bare-number claim for another contact plan.",
+              {
+                httpStatus: 409,
+                details: {
+                  reasonCodes: ["ACCOUNTING_CASE_CONTACT_BARE_NUMBER_ALREADY_RESERVED"],
+                  duplicateCaseId: candidateVersion.compiled.caseId,
+                  duplicateCaseVersion: candidateVersion.compiled.version,
+                  duplicateOperationId: candidate.operation.operationId,
+                  providerMutationPossible: false,
+                },
+              },
+            );
+          }
+        }
+      }
+    }
+  }
+
+  #assertNoPendingNativeDocumentReservationConflict(
+    input: CreateOrAdvanceAccountingCaseInput,
+    repositoryNow = this.#statementTimestamp(),
+  ): void {
+    for (const operation of input.compiled.operations) {
+      if (operation.actionId === "contact.create_basic") continue;
+      for (const aggregate of this.#accountingCases.values()) {
+        if (aggregate.binding.tenantId !== input.binding.tenantId) continue;
+        for (const candidateVersion of aggregate.versions.values()) {
+          for (const candidate of candidateVersion.operations) {
+            if (
+              candidate.operation.actionId !== operation.actionId ||
+              !accountingCaseBusinessReservationsOverlap(
+                candidate.operation.businessReservation,
+                operation.businessReservation,
+              )
+            ) continue;
+            const pendingLeaseIsActive = candidate.state === "PENDING" &&
+              candidateVersion.compiled.version === aggregate.currentVersion &&
+              aggregate.binding.targetSessionExpiresAt > repositoryNow;
+            const permanentClaimIsActive = ACCOUNTING_CASE_BUSINESS_RESERVATION_STATES.has(candidate.state);
+            const recoveryGrant = this.#activeRecoveryResidualGrant(
+              candidateVersion,
+              candidate,
+              repositoryNow,
+            );
+            if (!pendingLeaseIsActive && !permanentClaimIsActive && !recoveryGrant) continue;
+            if (recoveryGrant?.successorCaseId === input.compiled.caseId) continue;
+            const transfersCurrentPendingClaim =
+              candidate.state === "PENDING" &&
+              candidateVersion.compiled.caseId === input.compiled.caseId &&
+              candidateVersion.compiled.version + 1 === input.compiled.version;
+            if (transfersCurrentPendingClaim) continue;
+            throw new AppError(
+              "CONFLICT",
+              "This tenant already has an active Accounting Case claim for the provider business coordinate.",
+              {
+                httpStatus: 409,
+                details: {
+                  reasonCodes: ["ACCOUNTING_CASE_BUSINESS_COORDINATE_ALREADY_RESERVED"],
+                  duplicateCaseId: candidateVersion.compiled.caseId,
+                  duplicateCaseVersion: candidateVersion.compiled.version,
+                  duplicateOperationId: candidate.operation.operationId,
+                  providerMutationPossible: false,
+                },
+              },
+            );
+          }
+        }
+      }
+    }
+  }
+
+  #activeRecoveryResidualGrant(
+    source: AccountingCaseVersionRecord,
+    operation: AccountingCaseOperationRecord,
+    repositoryNow: Date,
+  ): AccountingCaseRecoveryResidualGrant | undefined {
+    if (operation.state !== "NOT_EXECUTED_AFTER_TARGET_EXPIRY") return undefined;
+    const grant = [...this.#accountingCaseRecoveryResidualGrants.values()].find((candidate) =>
+      candidate.sourceCaseId === source.compiled.caseId &&
+      candidate.sourceVersion === source.compiled.version &&
+      candidate.residualOperationIds.includes(operation.operation.operationId) &&
+      (candidate.state === "ISSUED" || candidate.state === "CONSUMED"));
+    return grant && this.#isLiveAccountingCaseTarget(grant.successorBinding, repositoryNow)
+      ? grant
+      : undefined;
+  }
+
+  async bindAccountingCaseSourceCase(
+    input: BindAccountingCaseSourceCaseInput,
+  ): Promise<BindAccountingCaseSourceCaseResult> {
+    const key = JSON.stringify([
+      input.workspaceId,
+      input.sourceCase.system,
+      input.sourceCase.caseRefHash,
+    ]);
+    const existing = this.#accountingCaseSourceCaseBindings.get(key);
+    if (!existing) {
+      this.#accountingCaseSourceCaseBindings.set(key, {
+        tenantId: input.tenantId,
+        firstBoundAt: input.now,
+        lastSeenAt: input.now,
+        caseCount: 1,
+      });
+      return { outcome: "BOUND_FIRST_USE" };
+    }
+    // One upstream case may never span two Xero organisations. The conflicting
+    // tenant is deliberately not returned: the caller must not learn which
+    // other organisation this upstream case belongs to.
+    if (existing.tenantId !== input.tenantId) return { outcome: "TENANT_CONFLICT" };
+    existing.lastSeenAt = input.now;
+    existing.caseCount += 1;
+    return { outcome: "BOUND_CONFIRMED" };
+  }
+
+  async createOrAdvanceAccountingCase(
+    input: CreateOrAdvanceAccountingCaseInput,
+  ): Promise<CreateOrAdvanceAccountingCaseResult> {
+    if (
+      input.compiled.caseId.length === 0 ||
+      input.compiled.providerId !== "xero" ||
+      input.compiled.target.tenantId !== input.binding.tenantId ||
+      input.compiled.operations.some((operation) =>
+        operation.businessIdentityHash !== hashObject(operation.businessIdentity) ||
+        operation.businessReservation.coordinateHash !== hashObject({
+          schemaVersion: operation.businessReservation.schemaVersion,
+          providerId: operation.businessReservation.providerId,
+          kind: operation.businessReservation.kind,
+          canonicalFields: operation.businessReservation.canonicalFields,
+        })) ||
+      input.compiledPlanHash !== accountingCasePlanHash(input.binding, input.compiled)
+    ) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case identity or plan hash is invalid.", {
+        httpStatus: 422,
+      });
+    }
+    if (input.continuationAuthorization && input.recoveryResidualAuthorization) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case continuation modes are mutually exclusive.", {
+        httpStatus: 422,
+      });
+    }
+    const reservedRecoveryGrant = this.#accountingCaseRecoveryResidualGrants.get(input.compiled.caseId);
+    const recoveryAuthorization = input.recoveryResidualAuthorization;
+    if (reservedRecoveryGrant && !recoveryAuthorization) {
+      throw new AppError("CONFLICT", "This recovery successor Case requires its server-issued continuation token.", {
+        httpStatus: 409,
+      });
+    }
+    let recoveryGrant: AccountingCaseRecoveryResidualGrant | undefined;
+    if (recoveryAuthorization) {
+      const repositoryNow = this.#statementTimestamp();
+      recoveryGrant = this.#accountingCaseRecoveryResidualGrants.get(recoveryAuthorization.successorCaseId);
+      if (
+        !recoveryGrant ||
+        recoveryGrant.grantId !== recoveryAuthorization.grantId ||
+        recoveryGrant.sourceCaseId !== recoveryAuthorization.sourceCaseId ||
+        recoveryGrant.sourceVersion !== recoveryAuthorization.sourceVersion ||
+        recoveryGrant.successorCaseId !== recoveryAuthorization.successorCaseId ||
+        recoveryGrant.templateHash !== recoveryAuthorization.templateHash ||
+        recoveryGrant.successorCaseId !== input.compiled.caseId ||
+        !sameAccountingCaseBinding(recoveryGrant.successorBinding, input.binding) ||
+        !this.#isLiveAccountingCaseTarget(input.binding, repositoryNow) ||
+        !matchesAccountingCaseRecoveryResidualAuthorization({
+          candidate: input.compiled,
+          successorCaseId: recoveryGrant.successorCaseId,
+          templateHash: recoveryGrant.templateHash,
+        })
+      ) {
+        throw new AppError("CONFLICT", "Accounting Case recovery successor authorization is invalid.", {
+          httpStatus: 409,
+        });
+      }
+    }
+    const rollbackAbandonment = this.#abandonExpiredPreparedContactReservations(input);
+    try {
+      const existing = this.#accountingCases.get(input.compiled.caseId);
+      if (existing) {
+      if (!sameAccountingCaseBinding(existing.binding, input.binding)) {
+        throw new AppError("NOT_FOUND", "Accounting Case was not found.", { httpStatus: 404 });
+      }
+      const current = existing.versions.get(existing.currentVersion);
+      if (!current) throw new AppError("PERSISTENCE_FAILURE", "Accounting Case head is incomplete.", { httpStatus: 503 });
+      if (
+        input.compiled.version === existing.currentVersion &&
+        input.compiledPlanHash === current.compiledPlanHash
+      ) {
+        if (recoveryGrant && (
+          recoveryGrant.state !== "CONSUMED" ||
+          recoveryGrant.consumedPlanHash !== input.compiledPlanHash
+        )) {
+          throw new AppError("CONFLICT", "Accounting Case recovery successor grant was not consumed by this plan.", {
+            httpStatus: 409,
+          });
+        }
+        const continuationSource = existing.versions.get(input.compiled.version - 1);
+        if (
+          (continuationSource?.state === "AWAITING_CONTINUATION" || input.continuationAuthorization) &&
+          (
+            continuationSource?.state !== "AWAITING_CONTINUATION" ||
+            !matchesAccountingCaseContinuationAuthorization({
+              source: continuationSource.compiled,
+              candidate: input.compiled,
+              ...(input.continuationAuthorization
+                ? { authorization: input.continuationAuthorization }
+                : {}),
+            })
+          )
+        ) {
+          throw new AppError("CONFLICT", "Accounting Case continuation authorization does not match the server-bound residual intent.", {
+            httpStatus: 409,
+          });
+        }
+        return { mode: "IDEMPOTENT_REPLAY", record: clone(current) };
+      }
+      if (input.compiled.version !== existing.currentVersion + 1) {
+        throw new AppError("CONFLICT", "Accounting Case version compare-and-swap failed.", {
+          httpStatus: 409,
+          details: { currentVersion: existing.currentVersion },
+        });
+      }
+      if (["PREFLIGHTED", "READY_TO_RESUME", "EXECUTING", "RECOVERY_REQUIRED"].includes(current.state)) {
+        throw new AppError("CONFLICT", "Accounting Case cannot advance while execution or recovery is active.", {
+          httpStatus: 409,
+        });
+      }
+      if (current.state === "AWAITING_CONTINUATION") {
+        if (!matchesAccountingCaseContinuationAuthorization({
+          source: current.compiled,
+          candidate: input.compiled,
+          ...(input.continuationAuthorization ? { authorization: input.continuationAuthorization } : {}),
+        })) {
+          throw new AppError("CONFLICT", "Accounting Case continuation authorization does not match the server-bound residual intent.", {
+            httpStatus: 409,
+          });
+        }
+      } else if (input.continuationAuthorization) {
+        throw new AppError("CONFLICT", "Accounting Case is not awaiting continuation.", { httpStatus: 409 });
+      }
+      this.#assertNoPendingContactReservationConflict(input);
+      this.#assertNoPendingNativeDocumentReservationConflict(input);
+      // The upstream source case is Case identity, fixed by version 1. A later
+      // version citing a different one -- or newly citing/dropping one -- is an
+      // identity change, never a silent reinterpretation.
+      const originalSourceCase = existing.versions.get(1)?.sourceCase;
+      if (!sameAccountingCaseSourceCaseReference(originalSourceCase, input.sourceCase)) {
+        throw new AppError("CONFLICT", "Accounting Case upstream source case cannot change across versions.", {
+          httpStatus: 409,
+          retryable: false,
+          details: {
+            failureLayer: "ACCOUNTING_CASE_SOURCE_CASE_BINDING",
+            reasonCodes: ["SOURCE_CASE_CHANGED"],
+            providerMutationPossible: false,
+          },
+        });
+      }
+      const advanced: AccountingCaseVersionRecord = {
+        binding: clone(input.binding),
+        compiled: clone(input.compiled),
+        compiledPlanHash: input.compiledPlanHash,
+        ...(originalSourceCase ? { sourceCase: clone(originalSourceCase) } : {}),
+        sourceCaseClaim: input.sourceCaseClaim,
+        state: input.compiled.status,
+        operations: input.compiled.operations.map((operation, ordinal) => ({
+          operation: clone(operation),
+          ordinal,
+          state: "PENDING",
+          updatedAt: input.now,
+        })),
+        createdAt: input.now,
+        updatedAt: input.now,
+      };
+      existing.currentVersion = input.compiled.version;
+      existing.versions.set(input.compiled.version, clone(advanced));
+        return { mode: "ADVANCED", record: clone(advanced) };
+      }
+      if (input.compiled.version !== 1) {
+        throw new AppError("CONFLICT", "A new Accounting Case must start at version 1.", { httpStatus: 409 });
+      }
+      if (recoveryGrant?.state === "CONSUMED") {
+        throw new AppError("CONFLICT", "Accounting Case recovery successor grant is already consumed.", {
+          httpStatus: 409,
+        });
+      }
+      this.#assertNoPendingContactReservationConflict(input);
+      this.#assertNoPendingNativeDocumentReservationConflict(input);
+      const created: AccountingCaseVersionRecord = {
+      binding: clone(input.binding),
+      compiled: clone(input.compiled),
+      compiledPlanHash: input.compiledPlanHash,
+      ...(input.sourceCase ? { sourceCase: clone(input.sourceCase) } : {}),
+      sourceCaseClaim: input.sourceCaseClaim,
+      state: input.compiled.status,
+      operations: input.compiled.operations.map((operation, ordinal) => ({
+        operation: clone(operation),
+        ordinal,
+        state: "PENDING",
+        updatedAt: input.now,
+      })),
+      createdAt: input.now,
+      updatedAt: input.now,
+    };
+      this.#accountingCases.set(input.compiled.caseId, {
+        binding: clone(input.binding),
+        currentVersion: 1,
+        versions: new Map([[1, clone(created)]]),
+      });
+      if (recoveryGrant) {
+        this.#accountingCaseRecoveryResidualGrants.set(recoveryGrant.successorCaseId, {
+          ...clone(recoveryGrant),
+          state: "CONSUMED",
+          consumedPlanHash: input.compiledPlanHash,
+          consumedAt: new Date(input.now),
+          updatedAt: new Date(input.now),
+        });
+      }
+      return { mode: "CREATED", record: clone(created) };
+    } catch (error) {
+      rollbackAbandonment();
+      throw error;
+    }
+  }
+
+  async findVerifiedAccountingCaseContactIdentity(
+    input: FindVerifiedAccountingCaseContactIdentityInput,
+  ): Promise<{ contactId: string } | undefined> {
+    const contactIds = new Set<string>();
+    for (const aggregate of this.#accountingCases.values()) {
+      if (aggregate.binding.tenantId !== input.tenantId) continue;
+      for (const version of aggregate.versions.values()) {
+        for (const record of version.operations) {
+          if (
+            record.operation.actionId === "contact.create_basic" &&
+            record.operation.businessIdentityHash === input.businessIdentityHash &&
+            record.state === "READBACK_VERIFIED" &&
+            record.xeroObjectId
+          ) contactIds.add(record.xeroObjectId);
+        }
+      }
+    }
+    if (contactIds.size > 1) {
+      throw new AppError("PERSISTENCE_FAILURE", "A durable contact identity maps to multiple provider contacts.", {
+        httpStatus: 503,
+      });
+    }
+    const contactId = [...contactIds][0];
+    return contactId ? { contactId } : undefined;
+  }
+
+  async listVerifiedAccountingCaseContactIdentityHashes(
+    input: ListVerifiedAccountingCaseContactIdentitiesInput,
+  ): Promise<string[]> {
+    const hashes = new Set<string>();
+    for (const aggregate of this.#accountingCases.values()) {
+      if (aggregate.binding.tenantId !== input.tenantId) continue;
+      for (const version of aggregate.versions.values()) {
+        for (const record of version.operations) {
+          if (
+            record.operation.actionId === "contact.create_basic" &&
+            (record.operation.businessIdentity.kind === "LEGAL_REGISTRY_CONTACT" ||
+              record.operation.businessIdentity.kind === "PROVIDER_TENANT_CONTACT_ACCOUNT") &&
+            record.state === "READBACK_VERIFIED" &&
+            record.xeroObjectId === input.contactId
+          ) hashes.add(record.operation.businessIdentityHash);
+        }
+      }
+    }
+    return [...hashes].sort();
+  }
+
+  async getBoundAccountingCase(input: GetBoundAccountingCaseInput): Promise<AccountingCaseVersionRecord | undefined> {
+    const aggregate = this.#accountingCases.get(input.caseId);
+    if (!aggregate || !sameAccountingCaseBinding(aggregate.binding, input.binding)) return undefined;
+    const record = aggregate.versions.get(input.version ?? aggregate.currentVersion);
+    if (!record) return undefined;
+    assertAccountingCasePreflightIntegrity(record);
+    return clone(record);
+  }
+
+  async getAccessibleAccountingCase(
+    input: GetAccessibleAccountingCaseInput,
+  ): Promise<AccountingCaseVersionRecord | undefined> {
+    if (!isValidDate(input.now)) return undefined;
+    const aggregate = this.#accountingCases.get(input.caseId);
+    if (!aggregate || !sameAccountingCaseAccessIdentity(aggregate.binding, input.currentAccessBinding)) return undefined;
+    if (!this.#isLiveAccountingCaseTarget(input.currentAccessBinding, input.now)) return undefined;
+    const record = aggregate.versions.get(input.version ?? aggregate.currentVersion);
+    if (!record) return undefined;
+    if (input.mode === "RECOVERY_GET_ONLY" &&
+        !["RECOVERY_REQUIRED", "PARTIALLY_COMMITTED", "TERMINAL"].includes(record.state)) return undefined;
+    assertAccountingCasePreflightIntegrity(record);
+    const grant = [...this.#accountingCaseRecoveryResidualGrants.values()].find((candidate) =>
+      candidate.sourceCaseId === input.caseId &&
+      candidate.sourceVersion === record.compiled.version &&
+      sameAccountingCaseBinding(candidate.successorBinding, input.currentAccessBinding));
+    return grant
+      ? { ...clone(record), recoveryResidualGrant: clone(grant) }
+      : (() => {
+          const projected = clone(record);
+          delete projected.recoveryResidualGrant;
+          return projected;
+        })();
+  }
+
+  async listAttentionAccountingCases(
+    input: ListAttentionAccountingCasesInput,
+  ): Promise<ListAttentionAccountingCasesResult> {
+    if (!Number.isInteger(input.limit) || input.limit <= 0) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case attention list limit is invalid.", {
+        httpStatus: 422,
+      });
+    }
+    const matches: Array<{
+      record: AccountingCaseVersionRecord;
+      attentionOperations: AccountingCaseOperationRecord[];
+    }> = [];
+    for (const aggregate of this.#accountingCases.values()) {
+      // Same durable access identity as getAccessibleAccountingCase (target-session
+      // evidence intentionally excluded): a caller only ever sees its own
+      // workspace/agent/tenant binding's cases, never another binding or tenant's.
+      if (!sameAccountingCaseAccessIdentity(aggregate.binding, input.currentAccessBinding)) continue;
+      const record = aggregate.versions.get(aggregate.currentVersion);
+      if (!record) continue;
+      const attentionOperations = record.operations.filter((operation) =>
+        ACCOUNTING_CASE_ATTENTION_OPERATION_STATES.includes(operation.state));
+      if (record.state !== "RECOVERY_REQUIRED" && attentionOperations.length === 0) continue;
+      assertAccountingCasePreflightIntegrity(record);
+      matches.push({ record: clone(record), attentionOperations: attentionOperations.map(clone) });
+    }
+    matches.sort((left, right) => right.record.updatedAt.getTime() - left.record.updatedAt.getTime());
+    const hasMore = matches.length > input.limit;
+    return {
+      cases: matches.slice(0, input.limit).map(({ record, attentionOperations }) => ({
+        caseId: record.compiled.caseId,
+        caseVersion: record.compiled.version,
+        state: record.state,
+        operations: attentionOperations.map((operation) => ({
+          operationId: operation.operation.operationId,
+          state: operation.state,
+          ...(operation.xeroObjectId ? { xeroObjectId: operation.xeroObjectId } : {}),
+        })),
+      })),
+      hasMore,
+    };
+  }
+
+  async recordAccountingCasePreflight(
+    input: RecordAccountingCasePreflightInput,
+  ): Promise<RecordAccountingCasePreflightResult> {
+    if (
+      !isValidDate(input.now) ||
+      !isNonEmpty(input.requestId) ||
+      !/^[0-9a-f]{64}$/u.test(input.expectedPlanHash) ||
+      !/^[0-9a-f]{64}$/u.test(input.preflightReceiptHash) ||
+      Object.keys(input.preflightReceipt).length === 0
+    ) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case preflight receipt is invalid.", { httpStatus: 422 });
+    }
+    const expectedReceiptHash = accountingCasePreflightReceiptHash({
+      binding: input.binding,
+      caseId: input.caseId,
+      version: input.version,
+      compiledPlanHash: input.expectedPlanHash,
+      requestId: input.requestId,
+      preflightReceipt: input.preflightReceipt,
+    });
+    if (input.preflightReceiptHash !== expectedReceiptHash) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case preflight receipt hash is invalid.", { httpStatus: 422 });
+    }
+    const repositoryNow = this.#statementTimestamp();
+    const aggregate = this.#accountingCases.get(input.caseId);
+    if (!aggregate || !sameAccountingCaseBinding(aggregate.binding, input.binding)) {
+      throw new AppError("NOT_FOUND", "Accounting Case was not found.", { httpStatus: 404 });
+    }
+    if (aggregate.currentVersion !== input.version) {
+      throw new AppError("CONFLICT", "Only the current Accounting Case version can be preflighted.", { httpStatus: 409 });
+    }
+    const record = aggregate.versions.get(input.version);
+    if (!record) throw new AppError("NOT_FOUND", "Accounting Case version was not found.", { httpStatus: 404 });
+    if (record.compiledPlanHash !== input.expectedPlanHash) {
+      throw new AppError("CONFLICT", "Accounting Case plan hash is stale.", { httpStatus: 409 });
+    }
+    if (input.binding.targetSessionExpiresAt <= repositoryNow) {
+      throw new AppError("TARGET_SESSION_EXPIRED", "Accounting Case target session has expired.", { httpStatus: 409 });
+    }
+    if (input.operations.length !== record.operations.length) {
+      throw new AppError("CONFLICT", "Accounting Case preflight operation set is incomplete.", { httpStatus: 409 });
+    }
+    const byId = new Map(input.operations.map((operation) => [operation.operationId, operation]));
+    if (byId.size !== input.operations.length || record.operations.some((operation) => !byId.has(operation.operation.operationId))) {
+      throw new AppError("CONFLICT", "Accounting Case preflight operation set does not match the durable plan.", {
+        httpStatus: 409,
+      });
+    }
+    if (!Array.isArray(input.preflightReceipt.operations) ||
+        input.preflightReceipt.operations.length !== record.operations.length ||
+        record.operations.some((operation) =>
+          !preflightReceiptOperationMatches(
+            input.preflightReceipt,
+            operation,
+            byId.get(operation.operation.operationId)!,
+          ))) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case preflight receipt operation evidence is invalid.", {
+        httpStatus: 422,
+      });
+    }
+    if (record.preflightRequestId || record.preflightReceipt || record.preflightReceiptHash || record.preflightedAt) {
+      assertAccountingCasePreflightIntegrity(record);
+      const operationEvidenceMatches = record.operations.every((operation) => {
+        const proposed = byId.get(operation.operation.operationId)!;
+        return proposed.state === operation.state && (
+          proposed.state === "PREPARED"
+            ? proposed.preparationId === operation.preparationId &&
+              proposed.preparationCanonicalPayloadHash === operation.preparationCanonicalPayloadHash &&
+              proposed.sourceSha256 === operation.sourceSha256 &&
+              proposed.operationCanonicalPayloadHash === operation.operation.canonicalPayloadHash
+            : proposed.xeroObjectId === operation.xeroObjectId &&
+              operation.readbackSnapshot !== undefined &&
+              sameJson(proposed.readbackSnapshot, operation.readbackSnapshot)
+        );
+      });
+      if (
+        record.preflightRequestId === input.requestId &&
+        record.preflightReceiptHash === input.preflightReceiptHash &&
+        sameJson(record.preflightReceipt!, input.preflightReceipt) &&
+        operationEvidenceMatches
+      ) {
+        return { mode: "IDEMPOTENT_REPLAY", record: clone(record) };
+      }
+      throw new AppError("CONFLICT", "Accounting Case already has a different preflight receipt.", {
+        httpStatus: 409,
+      });
+    }
+    if (!["PLANNED_NEEDS_PREFLIGHT", "PLANNED_WITH_EXCEPTIONS"].includes(record.state)) {
+      throw new AppError("CONFLICT", `Accounting Case cannot be preflighted from ${record.state}.`, {
+        httpStatus: 409,
+      });
+    }
+    const preparationIds = new Set<string>();
+    const noWriteObjects = new Set<string>();
+    const proposedBusinessReservations = new Map<string, string>();
+    for (const current of record.operations) {
+      const preflight = byId.get(current.operation.operationId)!;
+      if (preflight.state !== "PREPARED") continue;
+      const key = `${record.binding.tenantId}:${current.operation.actionId}:${current.operation.businessIdentityHash}`;
+      const duplicateInPlan = proposedBusinessReservations.get(key);
+      if (duplicateInPlan) {
+        throw new AppError("CONFLICT", "Accounting Case preflight contains a duplicate business write.", {
+          httpStatus: 409,
+          details: {
+            duplicateOperationId: duplicateInPlan,
+            operationId: current.operation.operationId,
+          },
+        });
+      }
+      proposedBusinessReservations.set(key, current.operation.operationId);
+      for (const candidateAggregate of this.#accountingCases.values()) {
+        if (candidateAggregate.binding.tenantId !== record.binding.tenantId) continue;
+        for (const candidateVersion of candidateAggregate.versions.values()) {
+          const duplicate = candidateVersion.operations.find((candidate) => {
+            const recoveryGrant = this.#activeRecoveryResidualGrant(
+              candidateVersion,
+              candidate,
+              repositoryNow,
+            );
+            const active = ACCOUNTING_CASE_BUSINESS_RESERVATION_STATES.has(candidate.state) ||
+              (recoveryGrant !== undefined && recoveryGrant.successorCaseId !== record.compiled.caseId);
+            return active &&
+              candidate.operation.actionId === current.operation.actionId &&
+              (
+                accountingCaseBusinessReservationsOverlap(
+                  candidate.operation.businessReservation,
+                  current.operation.businessReservation,
+                ) ||
+                candidate.operation.canonicalPayloadHash === current.operation.canonicalPayloadHash
+              );
+          });
+          if (duplicate) {
+            throw new AppError("CONFLICT", "This accounting business write is already reserved by another Case version.", {
+              httpStatus: 409,
+              details: {
+                duplicateCaseId: candidateVersion.compiled.caseId,
+                duplicateCaseVersion: candidateVersion.compiled.version,
+                duplicateOperationId: duplicate.operation.operationId,
+              },
+            });
+          }
+        }
+      }
+    }
+    const operations = record.operations.map((current) => {
+      if (current.state !== "PENDING") {
+        throw new AppError("CONFLICT", "Accounting Case preflight requires every operation to remain pending.", {
+          httpStatus: 409,
+        });
+      }
+      const preflight = byId.get(current.operation.operationId)!;
+      if (preflight.state === "PREPARED") {
+        const preparation = this.#xeroMutationPreparations.get(preflight.preparationId);
+        const route = accountingCaseMutationRoute(current.operation);
+        if (
+          !isNonEmpty(preflight.preparationId) || preparationIds.has(preflight.preparationId) ||
+          !/^[0-9a-f]{64}$/u.test(preflight.operationCanonicalPayloadHash) ||
+          !/^[0-9a-f]{64}$/u.test(preflight.preparationCanonicalPayloadHash) ||
+          !/^[0-9a-f]{64}$/u.test(preflight.sourceSha256) ||
+          preflight.operationCanonicalPayloadHash !== current.operation.canonicalPayloadHash ||
+          !preparation || preparation.state !== "PREPARED" || preparation.expiresAt <= repositoryNow ||
+          preparation.actorId !== record.binding.actorId ||
+          preparation.workspaceId !== record.binding.workspaceId ||
+          preparation.tenantId !== record.binding.tenantId ||
+          preparation.installationId !== record.binding.installationId ||
+          preparation.bindingId !== record.binding.bindingId ||
+          preparation.bindingRevision !== record.binding.bindingRevision ||
+          preparation.connectionId !== record.binding.connectionId ||
+          preparation.targetSessionId !== record.binding.targetSessionId ||
+          preparation.objectType !== route.objectType || preparation.operation !== route.operation ||
+          preparation.sourceRef !== `case:${record.compiled.caseId}` ||
+          preparation.sourceUnitKey !== current.operation.operationId ||
+          preparation.sourceSha256 !== preflight.sourceSha256 ||
+          preparation.canonicalPayloadHash !== preflight.preparationCanonicalPayloadHash ||
+          preparation.canonicalPayloadHash !== hashObject(preparation.canonicalPayload)
+        ) {
+          throw new AppError("VALIDATION_FAILED", "Accounting Case preflight preparation identity is invalid.", {
+            httpStatus: 422,
+          });
+        }
+        preparationIds.add(preflight.preparationId);
+        return {
+          ...current,
+          state: "PREPARED" as const,
+          preparationId: preflight.preparationId,
+          originalPreparationId: preflight.preparationId,
+          preparationCanonicalPayloadHash: preflight.preparationCanonicalPayloadHash,
+          sourceSha256: preflight.sourceSha256,
+          updatedAt: repositoryNow,
+        };
+      }
+      if (
+        !isNonEmpty(preflight.xeroObjectId) ||
+        Object.keys(preflight.readbackSnapshot).length === 0 ||
+        !accountingCaseNoWriteEvidenceMatches(current.operation, preflight.xeroObjectId, preflight.readbackSnapshot)
+      ) {
+        throw new AppError("VALIDATION_FAILED", "Accounting Case no-write preflight evidence is invalid.", {
+          httpStatus: 422,
+        });
+      }
+      const objectKey = `${current.operation.actionId}:${preflight.xeroObjectId}`;
+      if (noWriteObjects.has(objectKey)) {
+        throw new AppError("CONFLICT", "Accounting Case preflight reuses one Xero object for multiple operations.", {
+          httpStatus: 409,
+        });
+      }
+      noWriteObjects.add(objectKey);
+      return {
+        ...current,
+        state: "NO_WRITE_REQUIRED" as const,
+        xeroObjectId: preflight.xeroObjectId,
+        readbackSnapshot: clone(preflight.readbackSnapshot),
+        updatedAt: repositoryNow,
+      };
+    });
+    const updated: AccountingCaseVersionRecord = {
+      ...record,
+      state: "PREFLIGHTED",
+      preflightRequestId: input.requestId,
+      preflightReceipt: clone(input.preflightReceipt),
+      preflightReceiptHash: input.preflightReceiptHash,
+      preflightedAt: repositoryNow,
+      originalPreflightReceiptHash: input.preflightReceiptHash,
+      effectivePreflightSealHash: input.preflightReceiptHash,
+      effectivePreflightSealedAt: repositoryNow,
+      preflightResealRevision: 0,
+      preflightReseals: [],
+      operations,
+      updatedAt: repositoryNow,
+    };
+    aggregate.versions.set(input.version, clone(updated));
+    return { mode: "PREFLIGHTED", record: clone(updated) };
+  }
+
+  async claimAccountingCaseExecution(
+    input: ClaimAccountingCaseExecutionInput,
+  ): Promise<ClaimAccountingCaseExecutionResult> {
+    const aggregate = this.#accountingCases.get(input.caseId);
+    const recoveryAccess = input.accessMode === "RECOVERY_GET_ONLY";
+    const bindingMatches = aggregate && (recoveryAccess
+      ? sameAccountingCaseAccessIdentity(aggregate.binding, input.binding)
+      : sameAccountingCaseBinding(aggregate.binding, input.binding));
+    if (!aggregate || !bindingMatches) {
+      throw new AppError("NOT_FOUND", "Accounting Case was not found.", { httpStatus: 404 });
+    }
+    if (aggregate.currentVersion !== input.version) {
+      throw new AppError("CONFLICT", "Only the current Accounting Case version can execute.", { httpStatus: 409 });
+    }
+    const record = aggregate.versions.get(input.version);
+    if (!record) throw new AppError("NOT_FOUND", "Accounting Case version was not found.", { httpStatus: 404 });
+    if (record.compiledPlanHash !== input.expectedPlanHash) {
+      throw new AppError("CONFLICT", "Accounting Case plan hash is stale.", { httpStatus: 409 });
+    }
+    if (recoveryAccess) {
+      if (!this.#isLiveAccountingCaseTarget(input.binding, input.now) ||
+          !["RECOVERY_REQUIRED", "PARTIALLY_COMMITTED", "TERMINAL"].includes(record.state)) {
+        throw new AppError("NOT_FOUND", "Accounting Case was not found for recovery access.", { httpStatus: 404 });
+      }
+      if (record.executionRequestId !== input.requestId) {
+        throw new AppError("CONFLICT", "Accounting Case recovery does not own the original execution claim.", {
+          httpStatus: 409,
+        });
+      }
+      if (["PARTIALLY_COMMITTED", "TERMINAL"].includes(record.state)) {
+        return { mode: "ALREADY_TERMINAL", record: clone(record) };
+      }
+      return { mode: "RECOVERY_GET_ONLY", record: clone(record) };
+    }
+    if (record.executionRequestId) {
+      if (record.executionRequestId !== input.requestId) {
+        throw new AppError("CONFLICT", "Accounting Case is already claimed by another execution request.", {
+          httpStatus: 409,
+        });
+      }
+      if (["PARTIALLY_COMMITTED", "TERMINAL"].includes(record.state)) {
+        return { mode: "ALREADY_TERMINAL", record: clone(record) };
+      }
+      if (input.binding.targetSessionExpiresAt <= input.now) {
+        throw new AppError("TARGET_SESSION_EXPIRED", "Accounting Case target session has expired.", {
+          httpStatus: 409,
+        });
+      }
+      if (["EXECUTING", "RECOVERY_REQUIRED"].includes(record.state)) {
+        return { mode: "RESUME", record: clone(record) };
+      }
+      throw new AppError("CONFLICT", `Accounting Case cannot resume from ${record.state}.`, { httpStatus: 409 });
+    }
+    if (input.binding.targetSessionExpiresAt <= input.now) {
+      throw new AppError("TARGET_SESSION_EXPIRED", "Accounting Case target session has expired.", {
+        httpStatus: 409,
+      });
+    }
+    if (record.state !== "PREFLIGHTED" && record.state !== "READY_TO_RESUME") {
+      throw new AppError("VALIDATION_FAILED", `Accounting Case cannot execute from ${record.state}.`, {
+        httpStatus: 422,
+      });
+    }
+    if (record.state === "PREFLIGHTED" && record.preflightRequestId !== input.requestId) {
+      throw new AppError("VALIDATION_FAILED", "The first execution request must own the durable preflight.", {
+        httpStatus: 422,
+      });
+    }
+    if (input.minimumPreparationExpiresAt) {
+      if (!isValidDate(input.minimumPreparationExpiresAt) ||
+          input.minimumPreparationExpiresAt.getTime() <
+            input.now.getTime() + ACCOUNTING_CASE_MIN_PREPARATION_RUNWAY_MS) {
+        throw new AppError("VALIDATION_FAILED", "Accounting Case preparation runway is invalid.", {
+          httpStatus: 422,
+        });
+      }
+      for (const operation of record.operations.filter((candidate) => candidate.state === "PREPARED")) {
+        const preparation = operation.preparationId
+          ? this.#xeroMutationPreparations.get(operation.preparationId)
+          : undefined;
+        if (!preparation || preparation.state !== "PREPARED" ||
+            preparation.expiresAt < input.minimumPreparationExpiresAt) {
+          throw new AppError("STALE_PREFLIGHT", "Accounting Case preparation must be resealed before execution.", {
+            httpStatus: 409,
+            retryable: true,
+            details: { operationId: operation.operation.operationId },
+          });
+        }
+      }
+    }
+    const claimed = clone(record);
+    claimed.state = "EXECUTING";
+    claimed.executionRequestId = input.requestId;
+    claimed.executionStartedAt = input.now;
+    delete claimed.terminalSummary;
+    claimed.updatedAt = input.now;
+    aggregate.versions.set(input.version, clone(claimed));
+    return { mode: "CLAIMED", record: clone(claimed) };
+  }
+
+  async adoptExpiredExecutingAccountingCaseForRecovery(
+    input: AdoptExpiredExecutingAccountingCaseForRecoveryInput,
+  ): Promise<AdoptExpiredExecutingAccountingCaseForRecoveryResult> {
+    if (
+      !isValidDate(input.now) ||
+      !isNonEmpty(input.requestId) ||
+      !/^[0-9a-f]{64}$/u.test(input.expectedPlanHash)
+    ) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case recovery adoption is invalid.", {
+        httpStatus: 422,
+      });
+    }
+    const repositoryNow = this.#statementTimestamp();
+    const aggregate = this.#accountingCases.get(input.caseId);
+    if (!aggregate || !sameAccountingCaseAccessIdentity(aggregate.binding, input.currentAccessBinding)) {
+      throw new AppError("NOT_FOUND", "Accounting Case was not found.", { httpStatus: 404 });
+    }
+    if (!this.#isLiveAccountingCaseTarget(input.currentAccessBinding, repositoryNow)) {
+      throw new AppError("TARGET_SESSION_EXPIRED", "Current recovery target session is not live.", {
+        httpStatus: 409,
+      });
+    }
+    const originalTarget = this.#ledgerTargetSessions.get(aggregate.binding.targetSessionHash);
+    if (
+      aggregate.binding.targetSessionExpiresAt > repositoryNow ||
+      aggregate.binding.targetSessionHash === input.currentAccessBinding.targetSessionHash ||
+      (originalTarget !== undefined && (
+        originalTarget.sessionId !== aggregate.binding.targetSessionId ||
+        originalTarget.installationId !== aggregate.binding.installationId ||
+        originalTarget.bindingId !== aggregate.binding.bindingId ||
+        originalTarget.bindingRevision !== aggregate.binding.bindingRevision ||
+        originalTarget.connectionId !== aggregate.binding.connectionId ||
+        originalTarget.expiresAt.getTime() !== aggregate.binding.targetSessionExpiresAt.getTime() ||
+        originalTarget.expiresAt > repositoryNow
+      ))
+    ) {
+      throw new AppError("CONFLICT", "The original Accounting Case target lease is not durably expired.", {
+        httpStatus: 409,
+      });
+    }
+    if (aggregate.currentVersion !== input.version) {
+      throw new AppError("CONFLICT", "Only the current Accounting Case version can be adopted.", {
+        httpStatus: 409,
+      });
+    }
+    const record = aggregate.versions.get(input.version);
+    if (!record) throw new AppError("NOT_FOUND", "Accounting Case version was not found.", { httpStatus: 404 });
+    if (record.compiledPlanHash !== input.expectedPlanHash) {
+      throw new AppError("CONFLICT", "Accounting Case plan hash is stale.", { httpStatus: 409 });
+    }
+    if (record.state !== "EXECUTING" || record.executionRequestId !== input.requestId) {
+      throw new AppError("CONFLICT", "Accounting Case recovery adoption does not own the executing Case.", {
+        httpStatus: 409,
+      });
+    }
+
+    let adoptedCount = 0;
+    const operations = record.operations.map((operation) => {
+      if (operation.state !== "PREPARED" || !operation.preparationId) return clone(operation);
+      const requests = [...this.#xeroMutationRequests.values()].filter(
+        (request) => request.preparationId === operation.preparationId,
+      );
+      if (requests.length === 0) return clone(operation);
+      if (requests.length !== 1) {
+        throw new AppError("PERSISTENCE_FAILURE", "Accounting Case preparation has ambiguous mutation requests.", {
+          httpStatus: 503,
+        });
+      }
+      const request = requests[0]!;
+      const preparation = this.#xeroMutationPreparations.get(operation.preparationId);
+      const projectedState = accountingCaseStateForMutation(request.state);
+      const route = accountingCaseMutationRoute(operation.operation);
+      if (
+        !preparation ||
+        !projectedState ||
+        !["WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH"].includes(projectedState) ||
+        preparation.preparationId !== operation.preparationId ||
+        operation.preparationCanonicalPayloadHash !== request.canonicalPayloadHash ||
+        operation.preparationCanonicalPayloadHash !== preparation.canonicalPayloadHash ||
+        operation.sourceSha256 !== request.sourceSha256 ||
+        operation.sourceSha256 !== preparation.sourceSha256 ||
+        request.canonicalPayloadHash !== hashObject(request.canonicalPayload) ||
+        preparation.canonicalPayloadHash !== hashObject(preparation.canonicalPayload) ||
+        !sameJson(request.canonicalPayload, preparation.canonicalPayload) ||
+        request.actorId !== record.binding.actorId ||
+        request.workspaceId !== record.binding.workspaceId ||
+        request.tenantId !== record.binding.tenantId ||
+        request.installationId !== record.binding.installationId ||
+        request.bindingId !== record.binding.bindingId ||
+        request.bindingRevision !== record.binding.bindingRevision ||
+        request.connectionId !== record.binding.connectionId ||
+        request.targetSessionId !== record.binding.targetSessionId ||
+        request.objectType !== route.objectType || request.operation !== route.operation ||
+        request.sourceRef !== `case:${record.compiled.caseId}` ||
+        request.sourceUnitKey !== operation.operation.operationId ||
+        request.sourceEvidenceType !== preparation.sourceEvidenceType
+      ) {
+        throw new AppError(
+          "CONFLICT",
+          "Durable mutation evidence does not match the expired-target Accounting Case operation.",
+          { httpStatus: 409 },
+        );
+      }
+      const errorReceipt = accountingCaseMutationProjectionErrorReceipt(request);
+      if (["WRITE_UNCERTAIN", "READBACK_MISMATCH"].includes(projectedState) && !errorReceipt) {
+        throw new AppError("PERSISTENCE_FAILURE", "Durable recovery mutation evidence is incomplete.", {
+          httpStatus: 503,
+        });
+      }
+      adoptedCount += 1;
+      return {
+        ...clone(operation),
+        state: projectedState,
+        mutationRequestId: request.mutationRequestId,
+        ...(request.xeroObjectId ? { xeroObjectId: request.xeroObjectId } : {}),
+        ...(request.writeReceipt ? { writeReceipt: clone(request.writeReceipt) } : {}),
+        ...(request.readbackSnapshot ? { readbackSnapshot: clone(request.readbackSnapshot) } : {}),
+        ...(errorReceipt ? { errorReceipt: clone(errorReceipt) } : {}),
+        updatedAt: repositoryNow,
+      } satisfies AccountingCaseOperationRecord;
+    });
+    if (adoptedCount === 0) {
+      throw new AppError(
+        "CONFLICT",
+        "No PREPARED Accounting Case operation has a durable potentially-written mutation request.",
+        {
+          httpStatus: 409,
+          details: { reasonCodes: ["NO_POTENTIALLY_WRITTEN_MUTATION_REQUEST"] },
+        },
+      );
+    }
+    const recoveringBase: AccountingCaseVersionRecord = {
+      ...clone(record),
+      state: "RECOVERY_REQUIRED",
+      operations,
+      updatedAt: repositoryNow,
+    };
+    const recovering: AccountingCaseVersionRecord = {
+      ...recoveringBase,
+      terminalSummary: accountingCaseTerminalSummary(recoveringBase, "RECOVERY_REQUIRED"),
+    };
+    assertAccountingCasePreflightIntegrity(recovering);
+    aggregate.versions.set(input.version, clone(recovering));
+    return { mode: "ADOPTED", record: clone(recovering) };
+  }
+
+  async resealAndClaimAccountingCaseExecution(
+    input: ResealAndClaimAccountingCaseExecutionInput,
+  ): Promise<ResealAndClaimAccountingCaseExecutionResult> {
+    if (
+      !isValidDate(input.now) ||
+      !isValidDate(input.minimumPreparationExpiresAt) ||
+      input.minimumPreparationExpiresAt.getTime() <
+        input.now.getTime() + ACCOUNTING_CASE_MIN_PREPARATION_RUNWAY_MS ||
+      !isNonEmpty(input.requestId) ||
+      !/^[0-9a-f]{64}$/u.test(input.expectedPlanHash) ||
+      !/^[0-9a-f]{64}$/u.test(input.expectedOriginalPreflightReceiptHash) ||
+      !/^[0-9a-f]{64}$/u.test(input.expectedEffectiveSealHash) ||
+      !/^[0-9a-f]{64}$/u.test(input.resealReceiptHash) ||
+      !Number.isInteger(input.expectedResealRevision) || input.expectedResealRevision < 0 ||
+      input.operations.length === 0
+    ) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case preflight reseal is invalid.", { httpStatus: 422 });
+    }
+    const nextRevision = input.expectedResealRevision + 1;
+    if (
+      input.resealReceipt.receiptType !== "XERO_ACCOUNTING_CASE_PREFLIGHT_RESEAL" ||
+      input.resealReceipt.receiptVersion !== 1 ||
+      input.resealReceipt.caseId !== input.caseId ||
+      input.resealReceipt.caseVersion !== input.version ||
+      input.resealReceipt.requestId !== input.requestId ||
+      input.resealReceipt.compiledPlanHash !== input.expectedPlanHash ||
+      input.resealReceipt.originalPreflightReceiptHash !== input.expectedOriginalPreflightReceiptHash ||
+      input.resealReceipt.previousEffectiveSealHash !== input.expectedEffectiveSealHash ||
+      input.resealReceipt.revision !== nextRevision ||
+      input.resealReceipt.minimumPreparationExpiresAt !== input.minimumPreparationExpiresAt.toISOString() ||
+      input.resealReceipt.checkedAt !== input.now.toISOString() ||
+      stableStringify(input.resealReceipt.operations) !== stableStringify(input.operations) ||
+      input.resealReceiptHash !== accountingCasePreflightResealReceiptHash({
+        binding: input.binding,
+        caseId: input.caseId,
+        version: input.version,
+        compiledPlanHash: input.expectedPlanHash,
+        originalPreflightReceiptHash: input.expectedOriginalPreflightReceiptHash,
+        previousEffectiveSealHash: input.expectedEffectiveSealHash,
+        revision: nextRevision,
+        requestId: input.requestId,
+        resealReceipt: input.resealReceipt,
+      })
+    ) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case preflight reseal receipt is invalid.", {
+        httpStatus: 422,
+      });
+    }
+
+    const aggregate = this.#accountingCases.get(input.caseId);
+    if (!aggregate || !sameAccountingCaseBinding(aggregate.binding, input.binding)) {
+      throw new AppError("NOT_FOUND", "Accounting Case was not found.", { httpStatus: 404 });
+    }
+    if (aggregate.currentVersion !== input.version) {
+      throw new AppError("CONFLICT", "Only the current Accounting Case version can be resealed.", {
+        httpStatus: 409,
+      });
+    }
+    const record = aggregate.versions.get(input.version);
+    if (!record) throw new AppError("NOT_FOUND", "Accounting Case version was not found.", { httpStatus: 404 });
+    assertAccountingCasePreflightIntegrity(record);
+    if (record.compiledPlanHash !== input.expectedPlanHash) {
+      throw new AppError("CONFLICT", "Accounting Case plan hash is stale.", { httpStatus: 409 });
+    }
+    if (record.executionRequestId) {
+      if (record.executionRequestId !== input.requestId) {
+        throw new AppError("CONFLICT", "Accounting Case is already claimed by another execution request.", {
+          httpStatus: 409,
+        });
+      }
+      if (["PARTIALLY_COMMITTED", "TERMINAL"].includes(record.state)) {
+        return { mode: "ALREADY_TERMINAL", record: clone(record) };
+      }
+      if (["EXECUTING", "RECOVERY_REQUIRED"].includes(record.state)) {
+        return { mode: "RESUME", record: clone(record) };
+      }
+      throw new AppError("CONFLICT", `Accounting Case cannot resume from ${record.state}.`, { httpStatus: 409 });
+    }
+    if (!this.#isLiveAccountingCaseTarget(input.binding, input.now)) {
+      throw new AppError("TARGET_SESSION_EXPIRED", "Accounting Case target session has expired.", {
+        httpStatus: 409,
+      });
+    }
+    if (record.state !== "PREFLIGHTED" && record.state !== "READY_TO_RESUME") {
+      throw new AppError("CONFLICT", `Accounting Case cannot be resealed from ${record.state}.`, { httpStatus: 409 });
+    }
+    if (record.state === "PREFLIGHTED" && record.preflightRequestId !== input.requestId) {
+      throw new AppError("VALIDATION_FAILED", "The first execution request must own the durable preflight.", {
+        httpStatus: 422,
+      });
+    }
+    if (
+      record.originalPreflightReceiptHash !== input.expectedOriginalPreflightReceiptHash ||
+      record.effectivePreflightSealHash !== input.expectedEffectiveSealHash ||
+      record.preflightResealRevision !== input.expectedResealRevision
+    ) {
+      throw new AppError("CONFLICT", "Accounting Case effective preflight seal is stale.", { httpStatus: 409 });
+    }
+
+    const remaining = record.operations.filter((operation) => operation.state === "PREPARED");
+    const byId = new Map(input.operations.map((operation) => [operation.operationId, operation]));
+    if (
+      byId.size !== input.operations.length ||
+      remaining.length !== input.operations.length ||
+      remaining.some((operation) => !byId.has(operation.operation.operationId))
+    ) {
+      throw new AppError("CONFLICT", "Accounting Case reseal must replace exactly the remaining prepared operations.", {
+        httpStatus: 409,
+      });
+    }
+
+    const replacementIds = new Set<string>();
+    let hasStalePreparation = false;
+    const replacements = new Map<string, XeroMutationPreparation>();
+    for (const operation of remaining) {
+      const reseal = byId.get(operation.operation.operationId)!;
+      const oldPreparation = operation.preparationId
+        ? this.#xeroMutationPreparations.get(operation.preparationId)
+        : undefined;
+      const newPreparation = this.#xeroMutationPreparations.get(reseal.newPreparationId);
+      const route = accountingCaseMutationRoute(operation.operation);
+      const oldHasRequest = operation.preparationId && [...this.#xeroMutationRequests.values()]
+        .some((request) => request.preparationId === operation.preparationId);
+      const replacementAlreadySealed = [...this.#accountingCases.values()].some((candidateAggregate) =>
+        [...candidateAggregate.versions.values()].some((candidateVersion) =>
+          candidateVersion.operations.some((candidate) =>
+            candidate.preparationId === reseal.newPreparationId ||
+            candidate.originalPreparationId === reseal.newPreparationId)));
+      if (
+        !operation.preparationId ||
+        operation.mutationRequestId || oldHasRequest ||
+        reseal.oldPreparationId !== operation.preparationId ||
+        reseal.oldPreparationId === reseal.newPreparationId ||
+        replacementIds.has(reseal.newPreparationId) || replacementAlreadySealed ||
+        reseal.operationCanonicalPayloadHash !== operation.operation.canonicalPayloadHash ||
+        reseal.preparationCanonicalPayloadHash !== operation.preparationCanonicalPayloadHash ||
+        reseal.sourceSha256 !== operation.sourceSha256 ||
+        !oldPreparation || !["PREPARED", "EXPIRED"].includes(oldPreparation.state) ||
+        (oldPreparation.state === "EXPIRED" && oldPreparation.expiresAt > input.now) ||
+        !newPreparation || newPreparation.state !== "PREPARED" ||
+        newPreparation.expiresAt < input.minimumPreparationExpiresAt ||
+        reseal.newPreparationExpiresAt !== newPreparation.expiresAt.toISOString() ||
+        oldPreparation.objectType !== route.objectType || oldPreparation.operation !== route.operation ||
+        !sameResealPreparationIdentity(oldPreparation, newPreparation) ||
+        newPreparation.canonicalPayloadHash !== reseal.preparationCanonicalPayloadHash ||
+        newPreparation.canonicalPayloadHash !== hashObject(newPreparation.canonicalPayload) ||
+        newPreparation.sourceSha256 !== reseal.sourceSha256 ||
+        newPreparation.sourceRef !== `case:${record.compiled.caseId}` ||
+        newPreparation.sourceUnitKey !== operation.operation.operationId
+      ) {
+        throw new AppError("VALIDATION_FAILED", "Accounting Case reseal preparation identity is invalid.", {
+          httpStatus: 422,
+          details: { operationId: operation.operation.operationId },
+        });
+      }
+      if (oldPreparation.state === "EXPIRED" ||
+          oldPreparation.expiresAt < input.minimumPreparationExpiresAt) hasStalePreparation = true;
+      replacementIds.add(reseal.newPreparationId);
+      replacements.set(operation.operation.operationId, newPreparation);
+    }
+    if (!hasStalePreparation) {
+      throw new AppError("CONFLICT", "Accounting Case preparations still have sufficient execution runway.", {
+        httpStatus: 409,
+      });
+    }
+
+    const updated = clone(record);
+    updated.operations = updated.operations.map((operation) => {
+      const replacement = replacements.get(operation.operation.operationId);
+      if (!replacement) return operation;
+      return {
+        ...operation,
+        preparationId: replacement.preparationId,
+        preparationCanonicalPayloadHash: replacement.canonicalPayloadHash,
+        sourceSha256: replacement.sourceSha256,
+        updatedAt: input.now,
+      };
+    });
+    updated.preflightReseals = [
+      ...(updated.preflightReseals ?? []),
+      {
+        revision: nextRevision,
+        requestId: input.requestId,
+        previousEffectiveSealHash: input.expectedEffectiveSealHash,
+        effectiveSealHash: input.resealReceiptHash,
+        receipt: clone(input.resealReceipt),
+        resealedAt: input.now,
+      },
+    ];
+    updated.preflightResealRevision = nextRevision;
+    updated.effectivePreflightSealHash = input.resealReceiptHash;
+    updated.effectivePreflightSealedAt = input.now;
+    updated.state = "EXECUTING";
+    updated.executionRequestId = input.requestId;
+    updated.executionStartedAt = input.now;
+    delete updated.terminalSummary;
+    updated.updatedAt = input.now;
+    assertAccountingCasePreflightIntegrity(updated);
+    aggregate.versions.set(input.version, clone(updated));
+    return { mode: "RESEALED_AND_CLAIMED", record: clone(updated) };
+  }
+
+  async updateAccountingCaseOperation(
+    input: UpdateAccountingCaseOperationInput,
+  ): Promise<AccountingCaseVersionRecord> {
+    const aggregate = this.#accountingCases.get(input.caseId);
+    if (!aggregate || !sameAccountingCaseBinding(aggregate.binding, input.binding)) {
+      throw new AppError("NOT_FOUND", "Accounting Case was not found.", { httpStatus: 404 });
+    }
+    const record = aggregate.versions.get(input.version);
+    if (!record) throw new AppError("NOT_FOUND", "Accounting Case version was not found.", { httpStatus: 404 });
+    if (!["EXECUTING", "RECOVERY_REQUIRED"].includes(record.state)) {
+      throw new AppError("CONFLICT", "Accounting Case operation cannot change outside execution/recovery.", {
+        httpStatus: 409,
+      });
+    }
+    if (record.executionRequestId !== input.requestId) {
+      throw new AppError("CONFLICT", "Accounting Case operation update does not own the execution claim.", {
+        httpStatus: 409,
+      });
+    }
+    const operationIndex = record.operations.findIndex((candidate) => candidate.operation.operationId === input.operationId);
+    if (operationIndex < 0) throw new AppError("NOT_FOUND", "Accounting Case operation was not found.", { httpStatus: 404 });
+    const current = record.operations[operationIndex]!;
+    if (!input.expectedStates.includes(current.state)) {
+      throw new AppError("CONFLICT", `Accounting Case operation cannot transition from ${current.state}.`, {
+        httpStatus: 409,
+      });
+    }
+    if (input.mutationRequestId || input.writeReceipt ||
+        (input.xeroObjectId && input.state !== "NO_WRITE_REQUIRED") ||
+        current.mutationRequestId ||
+        ["WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH", "READBACK_VERIFIED", "PROVIDER_REJECTED"]
+          .includes(input.state)) {
+      throw new AppError(
+        "VALIDATION_FAILED",
+        "Mutation-linked Accounting Case evidence must be projected from the durable mutation request.",
+        { httpStatus: 422 },
+      );
+    }
+    const allowedTransitions: Record<typeof current.state, readonly typeof input.state[]> = {
+      PENDING: ["NO_WRITE_REQUIRED", "BLOCKED_VALIDATION", "NOT_EXECUTED_AFTER_PRIOR_FAILURE"],
+      PREPARED: ["NO_WRITE_REQUIRED", "BLOCKED_VALIDATION", "NOT_EXECUTED_AFTER_PRIOR_FAILURE"],
+      WRITE_IN_FLIGHT: [],
+      NO_WRITE_REQUIRED: [],
+      READBACK_VERIFIED: [],
+      WRITE_UNCERTAIN: [],
+      READBACK_MISMATCH: [],
+      PROVIDER_REJECTED: [],
+      BLOCKED_VALIDATION: [],
+      NOT_EXECUTED_AFTER_PRIOR_FAILURE: [],
+      NOT_EXECUTED_AFTER_TARGET_EXPIRY: [],
+    };
+    if (!allowedTransitions[current.state].includes(input.state)) {
+      throw new AppError("CONFLICT", `Accounting Case operation transition ${current.state} -> ${input.state} is invalid.`, {
+        httpStatus: 409,
+      });
+    }
+    if (input.state === "NOT_EXECUTED_AFTER_PRIOR_FAILURE" &&
+        !record.operations.some((candidate) =>
+          candidate.ordinal < current.ordinal &&
+          (candidate.state === "PROVIDER_REJECTED" || candidate.state === "BLOCKED_VALIDATION"))) {
+      throw new AppError("CONFLICT", "A residual operation requires an earlier definite failure.", {
+        httpStatus: 409,
+      });
+    }
+    if (input.state === "NO_WRITE_REQUIRED" &&
+        (!input.xeroObjectId || !input.readbackSnapshot ||
+          !accountingCaseNoWriteEvidenceMatches(current.operation, input.xeroObjectId, input.readbackSnapshot))) {
+      throw new AppError("VALIDATION_FAILED", "No-write evidence does not exactly match the sealed Xero operation.", {
+        httpStatus: 422,
+      });
+    }
+    if ((input.state === "BLOCKED_VALIDATION" || input.state === "NOT_EXECUTED_AFTER_PRIOR_FAILURE") &&
+        (!input.errorReceipt || Object.keys(input.errorReceipt).length === 0)) {
+      throw new AppError("VALIDATION_FAILED", "A terminal non-write operation requires an error receipt.", {
+        httpStatus: 422,
+      });
+    }
+    const updatedOperation = {
+      ...current,
+      state: input.state,
+      ...(input.preparationId ? { preparationId: input.preparationId } : {}),
+      ...(input.xeroObjectId ? { xeroObjectId: input.xeroObjectId } : {}),
+      ...(input.readbackSnapshot ? { readbackSnapshot: clone(input.readbackSnapshot) } : {}),
+      ...(input.errorReceipt ? { errorReceipt: clone(input.errorReceipt) } : {}),
+      updatedAt: input.now,
+    };
+    const operations = [...record.operations];
+    operations[operationIndex] = updatedOperation;
+    const updatedBase: AccountingCaseVersionRecord = { ...record, operations, updatedAt: input.now };
+    const updated: AccountingCaseVersionRecord = record.state === "RECOVERY_REQUIRED"
+      ? { ...updatedBase, terminalSummary: accountingCaseTerminalSummary(updatedBase, "RECOVERY_REQUIRED") }
+      : updatedBase;
+    aggregate.versions.set(input.version, clone(updated));
+    return clone(updated);
+  }
+
+  async projectAccountingCaseOperationFromMutation(
+    input: ProjectAccountingCaseOperationFromMutationInput,
+  ): Promise<AccountingCaseVersionRecord> {
+    if (!isValidDate(input.now) || input.expectedStates.length === 0 || !isNonEmpty(input.mutationRequestId)) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case mutation projection is invalid.", { httpStatus: 422 });
+    }
+    const aggregate = this.#accountingCases.get(input.caseId);
+    const recoveryAccess = input.accessMode === "RECOVERY_GET_ONLY";
+    const bindingMatches = aggregate && (recoveryAccess
+      ? sameAccountingCaseAccessIdentity(aggregate.binding, input.binding)
+      : sameAccountingCaseBinding(aggregate.binding, input.binding));
+    if (!aggregate || !bindingMatches) {
+      throw new AppError("NOT_FOUND", "Accounting Case was not found.", { httpStatus: 404 });
+    }
+    const record = aggregate.versions.get(input.version);
+    if (!record) throw new AppError("NOT_FOUND", "Accounting Case version was not found.", { httpStatus: 404 });
+    if (record.executionRequestId !== input.requestId ||
+        (recoveryAccess ? record.state !== "RECOVERY_REQUIRED" : !["EXECUTING", "RECOVERY_REQUIRED"].includes(record.state))) {
+      throw new AppError("CONFLICT", "Accounting Case mutation projection does not own an executable Case.", {
+        httpStatus: 409,
+      });
+    }
+    if (recoveryAccess && !this.#isLiveAccountingCaseTarget(input.binding, input.now)) {
+      throw new AppError("TARGET_SESSION_EXPIRED", "Current recovery access is not live.", { httpStatus: 409 });
+    }
+    const operationIndex = record.operations.findIndex((candidate) => candidate.operation.operationId === input.operationId);
+    if (operationIndex < 0) throw new AppError("NOT_FOUND", "Accounting Case operation was not found.", { httpStatus: 404 });
+    const current = record.operations[operationIndex]!;
+    if (!input.expectedStates.includes(current.state)) {
+      throw new AppError("CONFLICT", `Accounting Case operation cannot transition from ${current.state}.`, {
+        httpStatus: 409,
+      });
+    }
+    let request = this.#xeroMutationRequests.get(input.mutationRequestId);
+    const preparation = request && this.#xeroMutationPreparations.get(request.preparationId);
+    const route = accountingCaseMutationRoute(current.operation);
+    let projectedState = request && accountingCaseStateForMutation(request.state);
+    if (
+      !request || !preparation || !projectedState || projectedState !== input.desiredState ||
+      request.preparationId !== current.preparationId ||
+      preparation.preparationId !== current.preparationId ||
+      current.preparationCanonicalPayloadHash !== request.canonicalPayloadHash ||
+      current.preparationCanonicalPayloadHash !== preparation.canonicalPayloadHash ||
+      current.sourceSha256 !== request.sourceSha256 || current.sourceSha256 !== preparation.sourceSha256 ||
+      request.canonicalPayloadHash !== hashObject(request.canonicalPayload) ||
+      preparation.canonicalPayloadHash !== hashObject(preparation.canonicalPayload) ||
+      !sameJson(request.canonicalPayload, preparation.canonicalPayload) ||
+      request.actorId !== record.binding.actorId || request.workspaceId !== record.binding.workspaceId ||
+      request.tenantId !== record.binding.tenantId || request.installationId !== record.binding.installationId ||
+      request.bindingId !== record.binding.bindingId || request.bindingRevision !== record.binding.bindingRevision ||
+      request.connectionId !== record.binding.connectionId || request.targetSessionId !== record.binding.targetSessionId ||
+      request.objectType !== route.objectType || request.operation !== route.operation ||
+      request.sourceRef !== `case:${record.compiled.caseId}` ||
+      request.sourceUnitKey !== current.operation.operationId ||
+      request.sourceEvidenceType !== preparation.sourceEvidenceType
+    ) {
+      throw new AppError("CONFLICT", "Xero mutation does not match the immutable Accounting Case operation evidence.", {
+        httpStatus: 409,
+      });
+    }
+    if (recoveryAccess && !["WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH"].includes(current.state)) {
+      throw new AppError("CONFLICT", "Recovery access cannot start a fresh provider mutation.", { httpStatus: 409 });
+    }
+    const allowed: Record<AccountingCaseOperationState, readonly AccountingCaseOperationState[]> = {
+      PENDING: [],
+      PREPARED: ["WRITE_IN_FLIGHT", "READBACK_VERIFIED", "WRITE_UNCERTAIN", "READBACK_MISMATCH", "PROVIDER_REJECTED", "BLOCKED_VALIDATION"],
+      WRITE_IN_FLIGHT: ["READBACK_VERIFIED", "WRITE_UNCERTAIN", "READBACK_MISMATCH", "PROVIDER_REJECTED"],
+      NO_WRITE_REQUIRED: [],
+      READBACK_VERIFIED: [],
+      WRITE_UNCERTAIN: ["READBACK_VERIFIED", "READBACK_MISMATCH"],
+      READBACK_MISMATCH: ["READBACK_VERIFIED"],
+      PROVIDER_REJECTED: [],
+      BLOCKED_VALIDATION: [],
+      NOT_EXECUTED_AFTER_PRIOR_FAILURE: [],
+      NOT_EXECUTED_AFTER_TARGET_EXPIRY: [],
+    };
+    if (current.state !== projectedState && !allowed[current.state].includes(projectedState)) {
+      throw new AppError("CONFLICT", `Accounting Case mutation projection ${current.state} -> ${projectedState} is invalid.`, {
+        httpStatus: 409,
+      });
+    }
+    if (projectedState === "READBACK_VERIFIED") {
+      const economics = validateXeroAccountingCaseReadbackEconomics(current.operation, request);
+      if (!economics.ok) {
+        const mismatchedRequest = clone(request);
+        mismatchedRequest.state = "READBACK_MISMATCH";
+        delete mismatchedRequest.verifiedAt;
+        mismatchedRequest.readbackMismatchReceipt = {
+          receiptType: "ACCOUNTING_CASE_ECONOMIC_READBACK_MISMATCH",
+          mismatchType: "ACCOUNTING_CASE_ECONOMICS",
+          reasonCodes: [...economics.reasons],
+        };
+        mismatchedRequest.updatedAt = input.now;
+        request = mismatchedRequest;
+        this.#xeroMutationRequests.set(request.mutationRequestId, clone(request));
+        projectedState = "READBACK_MISMATCH";
+      }
+    }
+    const errorReceipt = accountingCaseMutationProjectionErrorReceipt(request);
+    const failureStates: AccountingCaseOperationState[] = [
+      "WRITE_UNCERTAIN", "READBACK_MISMATCH", "PROVIDER_REJECTED", "BLOCKED_VALIDATION",
+    ];
+    if (failureStates.includes(projectedState) && (!errorReceipt || Object.keys(errorReceipt).length === 0)) {
+      throw new AppError("PERSISTENCE_FAILURE", "Durable Xero mutation failure evidence is incomplete.", {
+        httpStatus: 503,
+      });
+    }
+    const updatedOperation: AccountingCaseOperationRecord = {
+      ...current,
+      state: projectedState,
+      preparationId: request.preparationId,
+      preparationCanonicalPayloadHash: request.canonicalPayloadHash,
+      sourceSha256: request.sourceSha256,
+      mutationRequestId: request.mutationRequestId,
+      ...(request.xeroObjectId ? { xeroObjectId: request.xeroObjectId } : {}),
+      ...(request.writeReceipt ? { writeReceipt: clone(request.writeReceipt) } : {}),
+      ...(request.readbackSnapshot ? { readbackSnapshot: clone(request.readbackSnapshot) } : {}),
+      ...(errorReceipt ? { errorReceipt: clone(errorReceipt) } : {}),
+      updatedAt: input.now,
+    };
+    if (projectedState === "READBACK_VERIFIED") delete updatedOperation.errorReceipt;
+    const operations = [...record.operations];
+    operations[operationIndex] = updatedOperation;
+    const updatedBase: AccountingCaseVersionRecord = { ...record, operations, updatedAt: input.now };
+    const requiresRecovery = ["WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH"].includes(projectedState);
+    const updated: AccountingCaseVersionRecord = record.state === "RECOVERY_REQUIRED" || requiresRecovery
+      ? {
+          ...updatedBase,
+          state: "RECOVERY_REQUIRED",
+          terminalSummary: accountingCaseTerminalSummary(updatedBase, "RECOVERY_REQUIRED"),
+        }
+      : updatedBase;
+    aggregate.versions.set(input.version, clone(updated));
+    return clone(updated);
+  }
+
+  async pauseAccountingCaseExecution(
+    input: PauseAccountingCaseExecutionInput,
+  ): Promise<AccountingCaseVersionRecord> {
+    if (!isValidDate(input.now) || Object.keys(input.errorReceipt).length === 0) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case pause receipt is invalid.", { httpStatus: 422 });
+    }
+    const aggregate = this.#accountingCases.get(input.caseId);
+    if (!aggregate || !sameAccountingCaseBinding(aggregate.binding, input.binding)) {
+      throw new AppError("NOT_FOUND", "Accounting Case was not found.", { httpStatus: 404 });
+    }
+    const record = aggregate.versions.get(input.version);
+    if (!record || record.state !== "EXECUTING" || record.executionRequestId !== input.requestId) {
+      throw new AppError("CONFLICT", "Accounting Case execution cannot be paused by this request.", { httpStatus: 409 });
+    }
+    if (!record.operations.some((operation) => operation.state === "PREPARED") ||
+        record.operations.some((operation) =>
+          ["WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH"].includes(operation.state))) {
+      throw new AppError("CONFLICT", "Accounting Case cannot pause while provider evidence needs recovery.", {
+        httpStatus: 409,
+      });
+    }
+    const updated = clone(record);
+    updated.state = "READY_TO_RESUME";
+    delete updated.executionRequestId;
+    delete updated.executionStartedAt;
+    updated.lastExecutionErrorReceipt = {
+        receiptType: "ACCOUNTING_CASE_EXECUTION_PAUSED",
+        previousExecutionRequestId: input.requestId,
+        error: clone(input.errorReceipt),
+    };
+    delete updated.terminalSummary;
+    updated.updatedAt = input.now;
+    aggregate.versions.set(input.version, clone(updated));
+    return clone(updated);
+  }
+
+  async releaseAccountingCaseRecovery(
+    input: ReleaseAccountingCaseRecoveryInput,
+  ): Promise<AccountingCaseVersionRecord> {
+    if (!isValidDate(input.now) || Object.keys(input.reasonReceipt).length === 0) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case recovery release receipt is invalid.", { httpStatus: 422 });
+    }
+    const aggregate = this.#accountingCases.get(input.caseId);
+    if (!aggregate || !sameAccountingCaseAccessIdentity(aggregate.binding, input.currentAccessBinding) ||
+        !this.#isLiveAccountingCaseTarget(input.currentAccessBinding, input.now)) {
+      throw new AppError("NOT_FOUND", "Accounting Case was not found for current recovery access.", { httpStatus: 404 });
+    }
+    const record = aggregate.versions.get(input.version);
+    if (!record || record.state !== "RECOVERY_REQUIRED" || record.executionRequestId !== input.requestId) {
+      throw new AppError("CONFLICT", "Accounting Case recovery cannot be released by this request.", { httpStatus: 409 });
+    }
+    if (!record.operations.some((operation) => operation.state === "PREPARED") ||
+        record.operations.some((operation) =>
+          ["WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH"].includes(operation.state))) {
+      throw new AppError("CONFLICT", "Accounting Case recovery is not fully resolved to prepared residual work.", {
+        httpStatus: 409,
+      });
+    }
+    const updated = clone(record);
+    updated.state = "READY_TO_RESUME";
+    delete updated.executionRequestId;
+    delete updated.executionStartedAt;
+    updated.lastExecutionErrorReceipt = {
+        receiptType: "ACCOUNTING_CASE_RECOVERY_RELEASED",
+        previousExecutionRequestId: input.requestId,
+        reason: clone(input.reasonReceipt),
+    };
+    delete updated.terminalSummary;
+    updated.updatedAt = input.now;
+    aggregate.versions.set(input.version, clone(updated));
+    return clone(updated);
+  }
+
+  async completeExpiredTargetAccountingCaseRecovery(
+    input: CompleteExpiredTargetAccountingCaseRecoveryInput,
+  ): Promise<AccountingCaseVersionRecord> {
+    if (!isValidDate(input.now) || Object.keys(input.reasonReceipt).length === 0) {
+      throw new AppError("VALIDATION_FAILED", "Expired-target recovery completion receipt is invalid.", {
+        httpStatus: 422,
+      });
+    }
+    const repositoryNow = this.#statementTimestamp();
+    const aggregate = this.#accountingCases.get(input.caseId);
+    if (!aggregate || !sameAccountingCaseAccessIdentity(aggregate.binding, input.currentAccessBinding)) {
+      throw new AppError("NOT_FOUND", "Accounting Case was not found for recovery completion.", { httpStatus: 404 });
+    }
+    if (!this.#isLiveAccountingCaseTarget(input.currentAccessBinding, repositoryNow)) {
+      throw new AppError("TARGET_SESSION_EXPIRED", "Recovery successor target is not live.", { httpStatus: 409 });
+    }
+    if (
+      aggregate.binding.targetSessionHash === input.currentAccessBinding.targetSessionHash ||
+      aggregate.binding.targetSessionExpiresAt > repositoryNow
+    ) {
+      throw new AppError("CONFLICT", "Expired-target recovery completion requires an expired original target.", {
+        httpStatus: 409,
+      });
+    }
+    if (aggregate.currentVersion !== input.version) {
+      throw new AppError("CONFLICT", "Only the current Accounting Case version can complete recovery.", {
+        httpStatus: 409,
+      });
+    }
+    const record = aggregate.versions.get(input.version);
+    if (!record || record.state !== "RECOVERY_REQUIRED" || record.executionRequestId !== input.requestId) {
+      throw new AppError("CONFLICT", "Accounting Case recovery completion does not own the execution claim.", {
+        httpStatus: 409,
+      });
+    }
+    const residual = record.operations
+      .filter((operation) => operation.state === "PREPARED")
+      .sort((left, right) => left.ordinal - right.ordinal);
+    if (
+      residual.length === 0 ||
+      record.operations.some((operation) =>
+        !["PREPARED", "READBACK_VERIFIED", "NO_WRITE_REQUIRED"].includes(operation.state)) ||
+      !record.operations.some((operation) => operation.state === "READBACK_VERIFIED")
+    ) {
+      throw new AppError("CONFLICT", "Expired-target recovery is not fully GET-resolved to residual no-write intent.", {
+        httpStatus: 409,
+      });
+    }
+    const residualOperationIds = residual.map((operation) => operation.operation.operationId);
+    for (const operation of residual) {
+      const preparation = operation.preparationId
+        ? this.#xeroMutationPreparations.get(operation.preparationId)
+        : undefined;
+      const requests = operation.preparationId
+        ? [...this.#xeroMutationRequests.values()].filter((request) => request.preparationId === operation.preparationId)
+        : [];
+      if (
+        !preparation ||
+        !["PREPARED", "EXPIRED"].includes(preparation.state) ||
+        requests.length !== 0 ||
+        preparation.actorId !== aggregate.binding.actorId ||
+        preparation.workspaceId !== aggregate.binding.workspaceId ||
+        preparation.tenantId !== aggregate.binding.tenantId ||
+        preparation.installationId !== aggregate.binding.installationId ||
+        preparation.bindingId !== aggregate.binding.bindingId ||
+        preparation.bindingRevision !== aggregate.binding.bindingRevision ||
+        preparation.connectionId !== aggregate.binding.connectionId ||
+        preparation.targetSessionId !== aggregate.binding.targetSessionId ||
+        preparation.sourceRef !== `case:${input.caseId}` ||
+        preparation.sourceUnitKey !== operation.operation.operationId ||
+        preparation.canonicalPayloadHash !== operation.preparationCanonicalPayloadHash ||
+        preparation.sourceSha256 !== operation.sourceSha256
+      ) {
+        throw new AppError("CONFLICT", "Residual operation is not an exact zero-request expired-target preparation.", {
+          httpStatus: 409,
+        });
+      }
+    }
+
+    let grant: AccountingCaseRecoveryResidualGrant | undefined;
+    if (input.continuation) {
+      let expectedTemplate;
+      try {
+        expectedTemplate = accountingCaseRecoveryResidualContinuationTemplate({
+          source: record.compiled,
+          successorCaseId: input.continuation.successorCaseId,
+          residualOperationIds,
+        });
+      } catch (error) {
+        throw new AppError("VALIDATION_FAILED", "Recovery residual continuation is not representable.", {
+          httpStatus: 422,
+          cause: error,
+        });
+      }
+      if (
+        !/^acrg_[0-9a-f]{64}$/u.test(input.continuation.grantId) ||
+        !/^recovery-[0-9a-f]{64}$/u.test(input.continuation.successorCaseId) ||
+        input.continuation.templateHash !== accountingCaseContinuationTemplateHash(input.continuation.template) ||
+        input.continuation.templateHash !== accountingCaseContinuationTemplateHash(expectedTemplate) ||
+        stableStringify(input.continuation.template) !== stableStringify(expectedTemplate)
+      ) {
+        throw new AppError("VALIDATION_FAILED", "Recovery residual continuation evidence is invalid.", {
+          httpStatus: 422,
+        });
+      }
+      const existing = this.#accountingCaseRecoveryResidualGrants.get(input.continuation.successorCaseId);
+      if (existing) {
+        throw new AppError("CONFLICT", "Recovery residual continuation successor is already reserved.", {
+          httpStatus: 409,
+        });
+      }
+      if ([...this.#accountingCaseRecoveryResidualGrants.values()].some((candidate) =>
+        candidate.sourceCaseId === input.caseId && candidate.sourceVersion === input.version)) {
+        throw new AppError("CONFLICT", "Accounting Case recovery residual continuation already exists.", {
+          httpStatus: 409,
+        });
+      }
+      grant = {
+        grantId: input.continuation.grantId,
+        sourceCaseId: input.caseId,
+        sourceVersion: input.version,
+        sourcePlanHash: record.compiledPlanHash,
+        successorCaseId: input.continuation.successorCaseId,
+        residualOperationIds,
+        template: clone(input.continuation.template),
+        templateHash: input.continuation.templateHash,
+        successorBinding: clone(input.currentAccessBinding),
+        state: "ISSUED",
+        createdAt: repositoryNow,
+        updatedAt: repositoryNow,
+      };
+    }
+
+    const operations = record.operations.map((operation) => {
+      if (operation.state !== "PREPARED" || !operation.preparationId) return clone(operation);
+      return {
+        ...clone(operation),
+        state: "NOT_EXECUTED_AFTER_TARGET_EXPIRY" as const,
+        errorReceipt: {
+          receiptType: "ACCOUNTING_CASE_EXPIRED_TARGET_RESIDUAL_NO_WRITE",
+          reasonCodes: [grant
+            ? "EXPIRED_TARGET_RECOVERY_CONTINUED_TO_SUCCESSOR"
+            : "EXPIRED_TARGET_RECOVERY_REQUIRES_MANUAL_REPREPARATION"],
+          recoveryAction: grant
+            ? "PREPARE_RECOVERY_SUCCESSOR_CASE"
+            : "PREPARE_NEW_ACCOUNTING_CASE",
+          providerMutationPossible: false,
+          mutationRequestAbsent: true,
+          providerCallAbsentByPermitInvariant: true,
+          ...(grant ? { grantId: grant.grantId, successorCaseId: grant.successorCaseId } : {}),
+          reason: clone(input.reasonReceipt),
+        },
+        updatedAt: repositoryNow,
+      } satisfies AccountingCaseOperationRecord;
+    });
+    const terminalBase: AccountingCaseVersionRecord = {
+      ...clone(record),
+      state: "TERMINAL",
+      operations,
+      ...(grant ? { recoveryResidualGrant: clone(grant) } : {}),
+      updatedAt: repositoryNow,
+    };
+    const terminal: AccountingCaseVersionRecord = {
+      ...terminalBase,
+      terminalSummary: accountingCaseTerminalSummary(terminalBase, "TERMINAL"),
+    };
+    assertAccountingCasePreflightIntegrity(terminal);
+    for (const operation of residual) {
+      const preparation = this.#xeroMutationPreparations.get(operation.preparationId!)!;
+      this.#xeroMutationPreparations.set(preparation.preparationId, {
+        ...clone(preparation),
+        state: "EXPIRED",
+        updatedAt: repositoryNow,
+      });
+    }
+    if (grant) this.#accountingCaseRecoveryResidualGrants.set(grant.successorCaseId, clone(grant));
+    const storedTerminal = clone(terminal);
+    delete storedTerminal.recoveryResidualGrant;
+    aggregate.versions.set(input.version, storedTerminal);
+    return clone(terminal);
+  }
+
+  async getAccountingCaseRecoveryResidualGrant(
+    input: GetAccountingCaseRecoveryResidualGrantInput,
+  ): Promise<GetAccountingCaseRecoveryResidualGrantResult | undefined> {
+    const repositoryNow = this.#statementTimestamp();
+    const grant = this.#accountingCaseRecoveryResidualGrants.get(input.successorCaseId);
+    if (
+      !grant ||
+      !sameAccountingCaseBinding(grant.successorBinding, input.currentAccessBinding) ||
+      !this.#isLiveAccountingCaseTarget(input.currentAccessBinding, repositoryNow)
+    ) return undefined;
+    const aggregate = this.#accountingCases.get(grant.sourceCaseId);
+    const source = aggregate?.versions.get(grant.sourceVersion);
+    if (
+      !aggregate || !source || source.state !== "TERMINAL" ||
+      !sameAccountingCaseAccessIdentity(aggregate.binding, input.currentAccessBinding) ||
+      source.compiledPlanHash !== grant.sourcePlanHash
+    ) return undefined;
+    return {
+      grant: clone(grant),
+      source: { ...clone(source), recoveryResidualGrant: clone(grant) },
+    };
+  }
+
+  async awaitAccountingCaseContinuation(
+    input: AwaitAccountingCaseContinuationInput,
+  ): Promise<AccountingCaseVersionRecord> {
+    if (!isValidDate(input.now) || !isNonEmpty(input.requestId)) {
+      throw new AppError("VALIDATION_FAILED", "Accounting Case continuation evidence is invalid.", { httpStatus: 422 });
+    }
+    const aggregate = this.#accountingCases.get(input.caseId);
+    if (!aggregate || !sameAccountingCaseBinding(aggregate.binding, input.binding)) {
+      throw new AppError("NOT_FOUND", "Accounting Case was not found.", { httpStatus: 404 });
+    }
+    const record = aggregate.versions.get(input.version);
+    if (!record) throw new AppError("NOT_FOUND", "Accounting Case version was not found.", { httpStatus: 404 });
+    if (record.state === "AWAITING_CONTINUATION" && record.executionRequestId === input.requestId) {
+      return clone(record);
+    }
+    if (record.state !== "EXECUTING" || record.executionRequestId !== input.requestId) {
+      throw new AppError("CONFLICT", "Accounting Case continuation request does not own the execution claim.", {
+        httpStatus: 409,
+      });
+    }
+    if (
+      !hasAccountingCaseDependentContinuation(record.compiled) ||
+      record.operations.length === 0 ||
+      record.operations.some((operation) =>
+        operation.state !== "READBACK_VERIFIED" && operation.state !== "NO_WRITE_REQUIRED")
+    ) {
+      throw new AppError("CONFLICT", "Accounting Case cannot await continuation without verified writes and dependent residual work.", {
+        httpStatus: 409,
+      });
+    }
+    const updated: AccountingCaseVersionRecord = {
+      ...record,
+      state: "AWAITING_CONTINUATION",
+      updatedAt: input.now,
+    };
+    aggregate.versions.set(input.version, clone(updated));
+    return clone(updated);
+  }
+
+  async finalizeAccountingCase(input: FinalizeAccountingCaseInput): Promise<AccountingCaseVersionRecord> {
+    const aggregate = this.#accountingCases.get(input.caseId);
+    const recoveryAccess = input.accessMode === "RECOVERY_GET_ONLY";
+    const bindingMatches = aggregate && (recoveryAccess
+      ? sameAccountingCaseAccessIdentity(aggregate.binding, input.binding)
+      : sameAccountingCaseBinding(aggregate.binding, input.binding));
+    if (!aggregate || !bindingMatches ||
+        (recoveryAccess && !this.#isLiveAccountingCaseTarget(input.binding, input.now))) {
+      throw new AppError("NOT_FOUND", "Accounting Case was not found.", { httpStatus: 404 });
+    }
+    const record = aggregate.versions.get(input.version);
+    if (!record) throw new AppError("NOT_FOUND", "Accounting Case version was not found.", { httpStatus: 404 });
+    if (record.executionRequestId !== input.requestId) {
+      throw new AppError("CONFLICT", "Accounting Case finalization request does not own the execution claim.", {
+        httpStatus: 409,
+      });
+    }
+    const terminalSummary = accountingCaseTerminalSummary(record, input.state);
+    if (record.state === input.state && record.terminalSummary && sameJson(record.terminalSummary, terminalSummary)) {
+      return clone(record);
+    }
+    if (recoveryAccess && record.state !== "RECOVERY_REQUIRED") {
+      throw new AppError("CONFLICT", "Current-access finalization is recovery-only.", { httpStatus: 409 });
+    }
+    if (!["EXECUTING", "RECOVERY_REQUIRED"].includes(record.state)) {
+      throw new AppError("CONFLICT", `Accounting Case cannot finalize from ${record.state}.`, { httpStatus: 409 });
+    }
+    const uncertainStates = new Set(["WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH"]);
+    const unfinishedStates = new Set(["PENDING", "PREPARED", "WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH"]);
+    const completedStates = new Set(["READBACK_VERIFIED", "NO_WRITE_REQUIRED"]);
+    const failedStates = new Set(["PROVIDER_REJECTED", "BLOCKED_VALIDATION"]);
+    const hasUncertain = record.operations.some((operation) => uncertainStates.has(operation.state));
+    const hasUnfinished = record.operations.some((operation) => unfinishedStates.has(operation.state));
+    const hasCompleted = record.operations.some((operation) => completedStates.has(operation.state));
+    const hasFailed = record.operations.some((operation) => failedStates.has(operation.state));
+    if (input.state === "RECOVERY_REQUIRED" && !hasUncertain) {
+      throw new AppError("CONFLICT", "Accounting Case recovery requires an uncertain or mismatched write.", {
+        httpStatus: 409,
+      });
+    }
+    if (["PARTIALLY_COMMITTED", "TERMINAL"].includes(input.state) && hasUnfinished) {
+      throw new AppError("CONFLICT", "Accounting Case cannot be terminal while write operations are unfinished.", {
+        httpStatus: 409,
+      });
+    }
+    if (input.state === "PARTIALLY_COMMITTED" && (!hasCompleted || !hasFailed)) {
+      throw new AppError("CONFLICT", "A partially committed Accounting Case requires both completed and definitely failed operations.", {
+        httpStatus: 409,
+      });
+    }
+    if (input.state === "TERMINAL" && hasCompleted && hasFailed) {
+      throw new AppError("CONFLICT", "A mixed completed/failed Accounting Case must be finalized as partially committed.", {
+        httpStatus: 409,
+      });
+    }
+    const updated: AccountingCaseVersionRecord = {
+      ...record,
+      state: input.state,
+      terminalSummary: clone(terminalSummary),
+      updatedAt: input.now,
+    };
+    aggregate.versions.set(input.version, clone(updated));
+    return clone(updated);
+  }
+
   async appendAudit(record: AuditRecord): Promise<void> {
     if (this.audits.some((audit) => audit.callId === record.callId)) {
       throw new AppError("CONFLICT", "Audit call identifier already exists.", { httpStatus: 409 });
@@ -2461,6 +5407,24 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       throw new AppError("CONFLICT", "Audit intent is already complete.", { httpStatus: 409 });
     }
     this.audits[index] = clone({ ...intent, ...completion });
+  }
+
+  async appendGovernanceAuditEvent(input: GovernanceAuditEventInput): Promise<GovernanceAuditEvent> {
+    if (this.governanceAuditEvents.some((event) => event.eventId === input.eventId)) {
+      throw new AppError("CONFLICT", "Governance audit event identifier already exists.", { httpStatus: 409 });
+    }
+    const previousEventHash = [...this.governanceAuditEvents]
+      .reverse()
+      .find((event) => event.streamId === input.streamId)?.eventHash;
+    const recordedAt = new Date();
+    const event: GovernanceAuditEvent = {
+      ...clone(input),
+      ...(previousEventHash ? { previousEventHash } : {}),
+      eventHash: governanceAuditEventHash(input, previousEventHash, recordedAt),
+      recordedAt,
+    };
+    this.governanceAuditEvents.push(event);
+    return clone(event);
   }
 
   #resolveActiveBinding(
@@ -2498,6 +5462,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     const resolved: ResolvedAgentConnectionBinding = {
       installationId: installation.installationId,
       bindingId: binding.bindingId,
+      bindingRevision: this.#currentBindingRevision(installation.installationId),
       workspaceId: binding.workspaceId,
       subjectType: binding.subjectType,
       subjectId: binding.subjectId,
@@ -2528,6 +5493,21 @@ export class InMemoryAccountingRepository implements AccountingRepository {
       agentId: binding.agentId,
       connectionId,
     });
+  }
+
+  #currentBindingId(installationId: string): string {
+    const explicit = this.#activeBindingIds.get(installationId);
+    if (explicit) return explicit;
+    return [...this.#agentConnectionBindings.values()].find(
+      (binding) => binding.installationId === installationId && binding.status === "ACTIVE",
+    )?.bindingId ?? "";
+  }
+
+  #currentBindingRevision(installationId: string): number {
+    const explicit = this.#activeBindingRevisions.get(installationId);
+    if (explicit !== undefined) return explicit;
+    // Compatibility for in-memory fixtures created before active-binding epochs were tracked.
+    return this.#currentBindingId(installationId) ? 1 : 0;
   }
 
   #requireActiveBindingTuple(
@@ -2603,24 +5583,6 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     }
   }
 
-  #hasUsableMcpRefreshToken(installationId: string, now: Date): boolean {
-    for (const family of this.#mcpRefreshTokenFamilies.values()) {
-      if (
-        family.installationId !== installationId ||
-        family.status !== "ACTIVE" ||
-        !this.#resolveActiveBindingByTuple(family.installationId, family.bindingId, family.connectionId)
-      ) continue;
-      if ([...this.#mcpRefreshTokens.values()].some((token) =>
-        token.familyId === family.familyId &&
-        !token.revokedAt &&
-        !token.consumedAt &&
-        token.issuedAt <= now &&
-        token.expiresAt > now
-      )) return true;
-    }
-    return false;
-  }
-
   #revokePendingBrokerGrant(flow: OAuthBrokerAuthorizationFlow, revokedAt: Date): void {
     if (flow.status !== "AWAITING_SELECTION" || !flow.authorizationId) return;
     const installation = this.#oauthInstallations.get(flow.installationId);
@@ -2667,6 +5629,30 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     return posting;
   }
 
+  #isLiveAccountingCaseTarget(binding: AccountingCaseBinding, now: Date): boolean {
+    if (!isValidDate(now) || binding.targetSessionExpiresAt <= now) return false;
+    const session = this.#ledgerTargetSessions.get(binding.targetSessionHash);
+    const activeBinding = this.#resolveActiveBindingByTuple(
+      binding.installationId,
+      binding.bindingId,
+      binding.connectionId,
+    );
+    return Boolean(
+      session && !session.revokedAt && session.expiresAt > now &&
+      session.sessionId === binding.targetSessionId &&
+      session.installationId === binding.installationId &&
+      session.bindingId === binding.bindingId &&
+      session.bindingRevision === binding.bindingRevision &&
+      session.connectionId === binding.connectionId &&
+      session.expiresAt.getTime() === binding.targetSessionExpiresAt.getTime() &&
+      activeBinding && activeBinding.bindingRevision === binding.bindingRevision &&
+      activeBinding.workspaceId === binding.workspaceId &&
+      activeBinding.subjectType === binding.subjectType &&
+      activeBinding.subjectId === binding.subjectId && activeBinding.agentId === binding.agentId &&
+      activeBinding.tenantId === binding.tenantId,
+    );
+  }
+
   #xeroMutationRequestKey(input: Pick<
     ConfirmXeroMutationPreparationInput,
     "actorId" | "tenantId" | "objectType" | "operation" | "requestId"
@@ -2693,11 +5679,11 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     writeReceipt?: Record<string, unknown>,
   ): void {
     if (
-      request.operation === "UPDATE" &&
+      xeroMutationTargetsExistingObject(request.operation) &&
       xeroObjectId &&
       request.targetXeroObjectId !== xeroObjectId
     ) {
-      throw new AppError("CONFLICT", "UPDATE result does not match its immutable Xero target.", {
+      throw new AppError("CONFLICT", "Mutation result does not match its immutable Xero target.", {
         httpStatus: 409,
       });
     }
@@ -2763,7 +5749,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
         candidate.objectType !== request.objectType ||
         candidate.xeroObjectId !== xeroObjectId
       ) return false;
-      if (request.operation !== "UPDATE") return true;
+      if (!xeroMutationTargetsExistingObject(request.operation)) return true;
       return ["WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH"].includes(candidate.state);
     });
     if (conflict) {

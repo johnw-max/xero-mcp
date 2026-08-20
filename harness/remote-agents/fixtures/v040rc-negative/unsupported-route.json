@@ -1,0 +1,60 @@
+{
+  "case_id": "negative-unsupported-route-001",
+  "expected_version": 0,
+  "source_label": "Synthetic foreign invoice and unsupported foreign credit",
+  "source_set_complete": true,
+  "documents": [
+    {
+      "document_type": "CUSTOMER_INVOICE",
+      "reference": "NEG-USD-INV-001",
+      "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+      "document_date": "2026-07-02",
+      "due_date": "2026-08-01",
+      "currency": "USD",
+      "contact": { "name": "Lion City Digital Pte. Ltd." },
+      "invoice_exchange_rate": "1.3500",
+      "lines": [
+        {
+          "description": "Synthetic USD service",
+          "quantity": "1",
+          "unit_amount_excluding_tax": "100.00",
+          "source_tax_amount": "9.00",
+          "account_code": "200",
+          "tax_type": "OUTPUTY24"
+        }
+      ],
+      "declared_net": "100.00",
+      "declared_tax": "9.00",
+      "declared_gross": "109.00",
+      "document_validity": "TEST_OR_NOT_VALID"
+    },
+    {
+      "document_type": "CUSTOMER_CREDIT_NOTE",
+      "reference": "NEG-USD-CN-001",
+      "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+      "document_date": "2026-07-22",
+      "currency": "USD",
+      "contact": { "name": "Lion City Digital Pte. Ltd." },
+      "invoice_exchange_rate": "1.3500",
+      "lines": [
+        {
+          "description": "Synthetic USD credit",
+          "quantity": "1",
+          "unit_amount_excluding_tax": "100.00",
+          "source_tax_amount": "9.00",
+          "account_code": "200",
+          "tax_type": "OUTPUTY24"
+        }
+      ],
+      "declared_net": "100.00",
+      "declared_tax": "9.00",
+      "declared_gross": "109.00",
+      "document_validity": "TEST_OR_NOT_VALID",
+      "original_document": {
+        "reference": "NEG-USD-INV-001",
+        "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+        "document_date": "2026-07-02"
+      }
+    }
+  ]
+}

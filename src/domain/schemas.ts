@@ -149,6 +149,8 @@ const draftLineSchema = z.object({
   description: z.string().trim().min(1).max(4_000),
   quantity: fourDecimalNumber.max(1_000_000),
   unit_amount: fourDecimalNumber.max(1_000_000_000),
+  /** Server-resolved provider binding; public preparation schemas do not expose this field. */
+  account_id: xeroId.optional(),
   account_code: z.string().trim().min(1).max(10),
   tax_type: z.string().trim().min(1).max(100),
 }).strict();
@@ -164,6 +166,7 @@ const supplierBillDraftPreparationLineSchema = z.object({
 }).strict();
 
 const salesInvoiceDraftPreparationLineSchema = supplierBillDraftPreparationLineSchema;
+const invoiceAuthoritativeProviderFieldSchema = z.enum(["INVOICE_NUMBER", "REFERENCE"]);
 
 /**
  * Fields are intentionally optional here. The preparation tool reports missing
@@ -172,26 +175,32 @@ const salesInvoiceDraftPreparationLineSchema = supplierBillDraftPreparationLineS
  */
 export const prepareSupplierBillDraftSchema = z.object({
   source_ref: z.string().trim().min(1).max(512).optional(),
+  source_unit_key: z.string().trim().min(1).max(256).optional(),
   source_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   supplier_name: z.string().trim().min(1).max(255).optional(),
   supplier_contact_number: z.string().trim().min(1).max(100).optional(),
   invoice_date: yyyyMmDd.optional(),
   due_date: yyyyMmDd.optional(),
   currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  currency_rate: fourDecimalNumber.optional(),
   reference: z.string().trim().min(1).max(255).optional(),
+  authoritative_provider_field: z.literal("INVOICE_NUMBER").optional(),
   line_amount_type: z.enum(["Exclusive", "Inclusive", "NoTax"]).optional(),
   lines: z.array(supplierBillDraftPreparationLineSchema).max(20).optional(),
 }).strict();
 
 export const prepareSalesInvoiceDraftSchema = z.object({
   source_ref: z.string().trim().min(1).max(512).optional(),
+  source_unit_key: z.string().trim().min(1).max(256).optional(),
   source_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   customer_name: z.string().trim().min(1).max(255).optional(),
   customer_contact_number: z.string().trim().min(1).max(100).optional(),
   invoice_date: yyyyMmDd.optional(),
   due_date: yyyyMmDd.optional(),
   currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  currency_rate: fourDecimalNumber.optional(),
   reference: z.string().trim().min(1).max(255).optional(),
+  authoritative_provider_field: invoiceAuthoritativeProviderFieldSchema.optional(),
   line_amount_type: z.enum(["Exclusive", "Inclusive", "NoTax"]).optional(),
   lines: z.array(salesInvoiceDraftPreparationLineSchema).max(20).optional(),
 }).strict();
@@ -211,7 +220,9 @@ export const createDraftSupplierBillSchema = z.object({
   invoice_date: yyyyMmDd,
   due_date: yyyyMmDd,
   currency: z.string().regex(/^[A-Z]{3}$/),
+  currency_rate: fourDecimalNumber.optional(),
   reference: z.string().trim().min(1).max(255),
+  authoritative_provider_field: invoiceAuthoritativeProviderFieldSchema,
   line_amount_type: z.enum(["Exclusive", "Inclusive", "NoTax"]),
   lines: z.array(draftLineSchema).min(1).max(20),
 }).strict().refine((value) => value.due_date >= value.invoice_date, {
@@ -239,6 +250,50 @@ export const trialBalanceSchema = z.object({
   date: yyyyMmDd.optional(),
 }).strict();
 
+/**
+ * Mirrors the trial-balance tool's minimalism: only the dimensions Xero's
+ * report actually varies by (a date range and a period comparison), not
+ * every optional SDK parameter (tracking categories are intentionally out of
+ * scope; standardLayout/paymentsOnly are left at the provider default so the
+ * read-evidence query-bounds projection - which assumes a report is either
+ * "as of" a single date or the provider default - stays accurate).
+ */
+export const profitAndLossSchema = z.object({
+  date_from: yyyyMmDd.optional(),
+  date_to: yyyyMmDd.optional(),
+  periods: z.number().int().min(1).max(12).optional(),
+  timeframe: z.enum(["MONTH", "QUARTER", "YEAR"]).optional(),
+}).strict().refine((value) => !value.date_from || !value.date_to || value.date_to >= value.date_from, {
+  message: "date_to must not be before date_from",
+  path: ["date_to"],
+});
+
+export const balanceSheetSchema = z.object({
+  date: yyyyMmDd.optional(),
+  periods: z.number().int().min(1).max(12).optional(),
+  timeframe: z.enum(["MONTH", "QUARTER", "YEAR"]).optional(),
+}).strict();
+
+export const agedReceivablesSchema = z.object({
+  contact_id: xeroId,
+  date: yyyyMmDd.optional(),
+  date_from: yyyyMmDd.optional(),
+  date_to: yyyyMmDd.optional(),
+}).strict().refine((value) => !value.date_from || !value.date_to || value.date_to >= value.date_from, {
+  message: "date_to must not be before date_from",
+  path: ["date_to"],
+});
+
+export const agedPayablesSchema = z.object({
+  contact_id: xeroId,
+  date: yyyyMmDd.optional(),
+  date_from: yyyyMmDd.optional(),
+  date_to: yyyyMmDd.optional(),
+}).strict().refine((value) => !value.date_from || !value.date_to || value.date_to >= value.date_from, {
+  message: "date_to must not be before date_from",
+  path: ["date_to"],
+});
+
 export type ListAccountsInput = z.infer<typeof listAccountsSchema>;
 export type ListContactsInput = z.infer<typeof listContactsSchema>;
 export type GetContactInput = z.infer<typeof getContactSchema>;
@@ -262,3 +317,7 @@ export type CreateDraftSalesInvoiceInput = z.infer<typeof createDraftSalesInvoic
 export type PrepareSalesInvoiceDraftInput = z.infer<typeof prepareSalesInvoiceDraftSchema>;
 export type AuthoriseSupplierBillInput = z.infer<typeof authoriseSupplierBillSchema>;
 export type TrialBalanceInput = z.infer<typeof trialBalanceSchema>;
+export type ProfitAndLossInput = z.infer<typeof profitAndLossSchema>;
+export type BalanceSheetInput = z.infer<typeof balanceSheetSchema>;
+export type AgedReceivablesInput = z.infer<typeof agedReceivablesSchema>;
+export type AgedPayablesInput = z.infer<typeof agedPayablesSchema>;

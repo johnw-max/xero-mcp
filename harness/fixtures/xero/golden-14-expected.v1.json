@@ -1,0 +1,57 @@
+{
+  "artifactCount": 14,
+  "sourceUnitCount": 18,
+  "factRequirementCount": 27,
+  "eventCount": 19,
+  "operationCount": 5,
+  "residualEventCount": 7,
+  "testTenantPrerequisites": {
+    "exactActiveContacts": [
+      "Lion City Digital Pte. Ltd.",
+      "OfficeHub Singapore Pte. Ltd.",
+      "CloudHost Inc."
+    ],
+    "contactCreatesExpected": 0
+  },
+  "eligibleOperations": {
+    "customer_invoice.create_draft": 1,
+    "supplier_bill.create_draft": 2,
+    "credit_note.create_draft": 2
+  },
+  "eventDispositions": {
+    "contact-lion-city": "EVIDENCE_ONLY",
+    "contact-officehub": "EVIDENCE_ONLY",
+    "ar-sales-invoice": "AUTO_EXECUTE",
+    "ap-officehub-bill": "AUTO_EXECUTE",
+    "ap-officehub-three-way-control": "EVIDENCE_ONLY",
+    "bank-opening-balance-review": "REVIEW_REQUIRED",
+    "ar-customer-receipt": "BLOCKED_UNSUPPORTED",
+    "ap-officehub-payment": "BLOCKED_UNSUPPORTED",
+    "bank-fee-2026-07-25": "BLOCKED_UNSUPPORTED",
+    "ar-lion-city-prepayment": "BLOCKED_UNSUPPORTED",
+    "bank-statement-summary": "EVIDENCE_ONLY",
+    "ar-customer-credit": "AUTO_EXECUTE",
+    "ap-supplier-credit": "AUTO_EXECUTE",
+    "expense-alice-july": "BLOCKED_UNSUPPORTED",
+    "contact-cloudhost": "EVIDENCE_ONLY",
+    "ap-cloudhost-bill": "AUTO_EXECUTE",
+    "ap-cloudhost-settlement": "BLOCKED_UNSUPPORTED",
+    "original-evidence-9e09c9e0c56436cfb13b783caec07b32": "EVIDENCE_ONLY",
+    "original-evidence-cd78d05eab4daddda82d38589e319cd4": "EVIDENCE_ONLY"
+  },
+  "nonPostingSourceUnits": ["doc-03", "doc-06", "doc-08", "doc-11"],
+  "requiredBankSourceUnits": [
+    "doc-07:opening",
+    "doc-07:customer-receipt",
+    "doc-07:supplier-payment",
+    "doc-07:bank-fee",
+    "doc-07:prepayment"
+  ],
+  "amountBridges": {
+    "ar-sales-invoice": { "currency": "SGD", "net": "4000.0000", "tax": "360.0000", "gross": "4360.0000" },
+    "ap-officehub-bill": { "currency": "SGD", "net": "800.0000", "tax": "72.0000", "gross": "872.0000" },
+    "ar-customer-credit": { "currency": "SGD", "net": "400.0000", "tax": "36.0000", "gross": "436.0000" },
+    "ap-supplier-credit": { "currency": "SGD", "net": "80.0000", "tax": "7.2000", "gross": "87.2000" },
+    "ap-cloudhost-bill": { "currency": "USD", "net": "1000.0000", "tax": "0.0000", "gross": "1000.0000" }
+  }
+}

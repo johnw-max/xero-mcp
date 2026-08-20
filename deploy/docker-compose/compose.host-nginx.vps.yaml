@@ -2,7 +2,7 @@ name: ${COMPOSE_PROJECT_NAME:-xero-accounting-mcp-demo}
 
 services:
   postgres:
-    image: ${POSTGRES_IMAGE:-postgres:17.10-alpine3.23}
+    image: postgres:17.10-alpine3.23@sha256:8189a1f6e40904781fc9e2612687877791d21679866db58b1de996b31fc312e4
     user: "70:70"
     restart: unless-stopped
     read_only: true
@@ -42,10 +42,18 @@ services:
         max-file: "3"
 
   accounting-mcp:
-    image: ${APP_IMAGE:-xero-accounting-mcp-demo:local}
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile
+    image: ${APP_IMAGE:?Set APP_IMAGE to the Gate-approved immutable repo@sha256 digest in deploy/.env.vps}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        case "$${APP_IMAGE:-}" in *@sha256:[0-9a-f][0-9a-f]*) ;; *)
+          echo "production release refused: APP_IMAGE must be an immutable repo@sha256 digest" >&2
+          exit 78
+        esac
+        exec "$$@"
+      - xero-production-release-guard
+    command: ["npm", "run", "start"]
     init: true
     restart: unless-stopped
     read_only: true
@@ -55,6 +63,7 @@ services:
       - ALL
     environment:
       NODE_ENV: production
+      APP_IMAGE: ${APP_IMAGE:?Set APP_IMAGE to the Gate-approved immutable repo@sha256 digest in deploy/.env.vps}
       HOST: 0.0.0.0
       PORT: "3000"
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env.vps}
@@ -65,8 +74,10 @@ services:
       REQUEST_BODY_LIMIT_BYTES: ${REQUEST_BODY_LIMIT_BYTES:-1048576}
       MCP_OAUTH_BROKER_ENABLED: ${MCP_OAUTH_BROKER_ENABLED:-false}
       PERSONAL_POC_ONLY: ${PERSONAL_POC_ONLY:-false}
+      SHARED_TEST_USERS: ${SHARED_TEST_USERS:-false}
       HOST_OAUTH_CLIENTS_JSON: ${HOST_OAUTH_CLIENTS_JSON:-}
       OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS: ${OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS:-}
+      OAUTH_MANUAL_RETURN_CLIENT_IDS: ${OAUTH_MANUAL_RETURN_CLIENT_IDS:-}
       OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${OAUTH_ACCESS_TOKEN_TTL_SECONDS:-900}
       OAUTH_REFRESH_TOKEN_TTL_SECONDS: ${OAUTH_REFRESH_TOKEN_TTL_SECONDS:-2592000}
       OAUTH_AUTH_CODE_TTL_SECONDS: ${OAUTH_AUTH_CODE_TTL_SECONDS:-300}
@@ -78,8 +89,12 @@ services:
       XERO_SCOPES: ${XERO_SCOPES:?Set XERO_SCOPES in deploy/.env.vps}
       XERO_WRITE_ENABLED: ${XERO_WRITE_ENABLED:-false}
       XERO_ALLOWED_TENANT_ID: ${XERO_ALLOWED_TENANT_ID:-}
+      XERO_ACCOUNTING_CASE_TEST_TENANT_IDS: ${XERO_ACCOUNTING_CASE_TEST_TENANT_IDS:-}
+      XERO_TENANT_COA_PROFILES_JSON: ${XERO_TENANT_COA_PROFILES_JSON:-[]}
       TOKEN_ENCRYPTION_KEY_B64: ${TOKEN_ENCRYPTION_KEY_B64:?Set TOKEN_ENCRYPTION_KEY_B64 in deploy/.env.vps}
       XERO_MUTATION_CONFIRMATION_KEY_B64: ${XERO_MUTATION_CONFIRMATION_KEY_B64:?Set XERO_MUTATION_CONFIRMATION_KEY_B64 in deploy/.env.vps}
+      XERO_TARGET_SESSION_REQUIRED: ${XERO_TARGET_SESSION_REQUIRED:-true}
+      XERO_TARGET_SESSION_TTL_SECONDS: ${XERO_TARGET_SESSION_TTL_SECONDS:-1800}
       DEMO_ACTOR_ID: ${DEMO_ACTOR_ID:-xero-demo-operator}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
@@ -108,73 +123,6 @@ services:
     pids_limit: 256
     mem_limit: ${APP_MEMORY_LIMIT:-768m}
     cpus: ${APP_CPU_LIMIT:-1.0}
-    stop_grace_period: 30s
-    logging: *bounded-logging
-
-  quickbooks-mcp:
-    image: ${QUICKBOOKS_APP_IMAGE:-xero-accounting-mcp-demo:local}
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile
-    command: ["npm", "run", "start:quickbooks"]
-    init: true
-    restart: unless-stopped
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    environment:
-      NODE_ENV: production
-      QUICKBOOKS_HOST: 0.0.0.0
-      QUICKBOOKS_PORT: "3000"
-      QUICKBOOKS_PUBLIC_BASE_URL: ${QUICKBOOKS_PUBLIC_BASE_URL:?Set QUICKBOOKS_PUBLIC_BASE_URL in deploy/.env.vps}
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in deploy/.env.vps}
-      QUICKBOOKS_MCP_BEARER_TOKEN: ${QUICKBOOKS_MCP_BEARER_TOKEN:?Set QUICKBOOKS_MCP_BEARER_TOKEN in deploy/.env.vps}
-      QUICKBOOKS_MCP_ALLOWED_ORIGINS: ${QUICKBOOKS_MCP_ALLOWED_ORIGINS:?Set QUICKBOOKS_MCP_ALLOWED_ORIGINS in deploy/.env.vps}
-      QUICKBOOKS_MCP_ALLOWED_HOSTS: ${QUICKBOOKS_MCP_ALLOWED_HOSTS:?Set QUICKBOOKS_MCP_ALLOWED_HOSTS in deploy/.env.vps}
-      QUICKBOOKS_REQUEST_BODY_LIMIT_BYTES: ${QUICKBOOKS_REQUEST_BODY_LIMIT_BYTES:-1048576}
-      QUICKBOOKS_MCP_OAUTH_ENABLED: ${QUICKBOOKS_MCP_OAUTH_ENABLED:-false}
-      QUICKBOOKS_MCP_OAUTH_CLIENT_ID: ${QUICKBOOKS_MCP_OAUTH_CLIENT_ID:-}
-      QUICKBOOKS_MCP_OAUTH_CLIENT_SECRET: ${QUICKBOOKS_MCP_OAUTH_CLIENT_SECRET:-}
-      QUICKBOOKS_MCP_OAUTH_REDIRECT_URIS: ${QUICKBOOKS_MCP_OAUTH_REDIRECT_URIS:-}
-      QUICKBOOKS_MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${QUICKBOOKS_MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS:-3600}
-      QUICKBOOKS_MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS: ${QUICKBOOKS_MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS:-2592000}
-      QUICKBOOKS_CLIENT_ID: ${QUICKBOOKS_CLIENT_ID:?Set QUICKBOOKS_CLIENT_ID in deploy/.env.vps}
-      QUICKBOOKS_CLIENT_SECRET: ${QUICKBOOKS_CLIENT_SECRET:?Set QUICKBOOKS_CLIENT_SECRET in deploy/.env.vps}
-      QUICKBOOKS_ENVIRONMENT: ${QUICKBOOKS_ENVIRONMENT:-sandbox}
-      QUICKBOOKS_MINOR_VERSION: ${QUICKBOOKS_MINOR_VERSION:-}
-      QUICKBOOKS_WRITE_ENABLED: ${QUICKBOOKS_WRITE_ENABLED:-false}
-      QUICKBOOKS_ALLOWED_REALM_ID: ${QUICKBOOKS_ALLOWED_REALM_ID:-}
-      QUICKBOOKS_TOKEN_ENCRYPTION_KEY_B64: ${QUICKBOOKS_TOKEN_ENCRYPTION_KEY_B64:?Set QUICKBOOKS_TOKEN_ENCRYPTION_KEY_B64 in deploy/.env.vps}
-      QUICKBOOKS_DEMO_ACTOR_ID: ${QUICKBOOKS_DEMO_ACTOR_ID:-quickbooks-agent2-test}
-      QUICKBOOKS_LOG_LEVEL: ${QUICKBOOKS_LOG_LEVEL:-info}
-    ports:
-      - target: 3000
-        published: ${QUICKBOOKS_LOOPBACK_PORT:-18003}
-        host_ip: 127.0.0.1
-        protocol: tcp
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777,uid=10001,gid=10001
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "fetch('http://127.0.0.1:3000/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
-      interval: 15s
-      timeout: 5s
-      retries: 8
-      start_period: 30s
-    networks:
-      - egress
-      - data
-    pids_limit: 256
-    mem_limit: ${QUICKBOOKS_MEMORY_LIMIT:-768m}
-    cpus: ${QUICKBOOKS_CPU_LIMIT:-1.0}
     stop_grace_period: 30s
     logging: *bounded-logging
 

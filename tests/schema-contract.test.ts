@@ -24,6 +24,7 @@ const validDraft = {
   due_date: "2026-08-17",
   currency: "SGD",
   reference: "ZC-XERO-DEMO-QA",
+  authoritative_provider_field: "INVOICE_NUMBER",
   line_amount_type: "Inclusive",
   lines: [
     {

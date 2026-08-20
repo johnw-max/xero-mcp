@@ -12,9 +12,40 @@ import type { XeroOAuthService } from "../src/oauth/xeroOAuthService.js";
 import type { AccountingService } from "../src/services/accountingService.js";
 import type { ConnectionTicketService } from "../src/services/connectionTicketService.js";
 import type { ReviewService } from "../src/services/reviewService.js";
-import { XERO_RELEASE_VERSION } from "../src/xeroRelease.js";
+import type { OrganisationSwitchService } from "../src/services/organisationSwitchService.js";
+import {
+  createXeroRuntimeAttestation,
+  XERO_RELEASE_ATTESTATION,
+  XERO_RELEASE_VERSION,
+} from "../src/xeroRelease.js";
+import { hashObject } from "../src/security/hash.js";
+import {
+  createLedgerAuthoritySnapshot,
+  type LedgerAuthoritySnapshot,
+} from "../src/domain/ledgerAuthority.js";
+import { XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION } from "../src/policy/xeroAccountingCaseProviderContract.js";
+import { XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION } from "../src/policy/xeroDeclaredLedgerPolicy.js";
 
 const issuer = "https://xero-mcp.example.test";
+const compatibleRecoveryProjection = {
+  status: "COMPATIBLE" as const,
+  activeCaseCount: 0,
+  storedPolicyProjectionVersions: [],
+  storedProviderProjectionVersions: [],
+  requiredPolicyProjectionVersion: XERO_DECLARED_LEDGER_POLICY_PROJECTION_VERSION,
+  requiredProviderProjectionVersion: XERO_ACCOUNTING_CASE_PROVIDER_PROJECTION_VERSION,
+};
+const notRequiredFirmGovernance = {
+  status: "NOT_REQUIRED" as const,
+  repositoryObservedAt: "2026-08-13T00:00:00.000Z",
+  requiredDelegationCount: 0,
+  authorityCount: 0,
+  authorityAggregateHash: null,
+  trustBundleFileSha256: null,
+  receiptsFileSha256: null,
+  statusFileSha256: null,
+  minEffectiveExpiresAt: null,
+};
 const hostClients = [{
   name: "Agent2",
   clientId: "agent2-client",
@@ -56,6 +87,7 @@ function config(): AppConfig {
       personalPocOnly: true,
       hostClients,
       missingResourceCompatClientIds: [],
+      manualReturnClientIds: [],
       accessTokenTtlSeconds: 900,
       refreshTokenTtlSeconds: 2_592_000,
       authorizationCodeTtlSeconds: 300,
@@ -83,10 +115,92 @@ describe("HTTP OAuth edge", () => {
     if (!server) return;
     const closing = server;
     server = undefined;
+    closing.closeAllConnections?.();
     await new Promise<void>((resolve, reject) => closing.close((error) => error ? reject(error) : resolve()));
   });
 
   const loopbackIt = process.env.TEST_HTTP_LOOPBACK === "true" ? it : it.skip;
+  loopbackIt("serves a private organisation picker and requires exact same-origin confirmation", async () => {
+    const baseConfig = config();
+    const { mcpOAuthBroker: _mcpOAuthBroker, ...withoutBroker } = baseConfig;
+    const appConfig: AppConfig = {
+      ...withoutBroker,
+      allowedHosts: ["127.0.0.1", "localhost"],
+    };
+    const getPage = vi.fn().mockResolvedValue({
+      currentOrganisation: {
+        connectionId: "connection-a",
+        tenantId: "tenant-a",
+        tenantName: "Company A",
+        current: true,
+      },
+      organisations: [{
+        connectionId: "connection-b",
+        tenantId: "tenant-b",
+        tenantName: "Company B",
+        current: false,
+      }],
+      csrfToken: "csrf-switch",
+      expiresAt: new Date("2026-08-10T05:10:00.000Z"),
+    });
+    const confirm = vi.fn().mockResolvedValue({
+      status: "SWITCHED",
+      currentOrganisation: {
+        connectionId: "connection-b",
+        tenantId: "tenant-b",
+        tenantName: "Company B",
+        current: true,
+      },
+    });
+    const app = createHttpApp({
+      config: appConfig,
+      repository: { readiness: vi.fn().mockResolvedValue(true) } as unknown as AccountingRepository,
+      accountingService: {} as AccountingService,
+      oauthService: {} as XeroOAuthService,
+      reviewService: {} as ReviewService,
+      connectionTickets: {} as ConnectionTicketService,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger,
+      organisationSwitchService: { getPage, confirm } as unknown as OrganisationSwitchService,
+    });
+    server = await new Promise<Server>((resolve, reject) => {
+      const listening = app.listen(0, "127.0.0.1");
+      listening.once("listening", () => resolve(listening));
+      listening.once("error", reject);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server has no TCP address");
+    const local = `http://127.0.0.1:${address.port}`;
+
+    const page = await fetch(`${local}/xero/organisation-switch?ticket=${"t".repeat(43)}`);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("cache-control")).toContain("no-store");
+    expect(page.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(page.headers.get("content-security-policy")).toContain("form-action 'self'");
+    expect(await page.text()).toContain("Company B");
+
+    const wrongOrigin = await fetch(`${local}/xero/organisation-switch`, {
+      method: "POST",
+      headers: { Origin: "https://agent2.zcloak.ai", "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ ticket: "t".repeat(43), csrf_token: "csrf-switch", connection_id: "connection-b" }),
+    });
+    expect(wrongOrigin.status).toBe(403);
+    expect(confirm).not.toHaveBeenCalled();
+
+    const confirmed = await fetch(`${local}/xero/organisation-switch`, {
+      method: "POST",
+      headers: { Origin: issuer, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ ticket: "t".repeat(43), csrf_token: "csrf-switch", connection_id: "connection-b" }),
+    });
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.headers.get("cache-control")).toContain("no-store");
+    expect(await confirmed.text()).toContain("Company B");
+    expect(confirm).toHaveBeenCalledWith({
+      ticket: "t".repeat(43),
+      csrfToken: "csrf-switch",
+      selectedConnectionId: "connection-b",
+    });
+  });
+
   loopbackIt("publishes exact discovery and challenges /mcp instead of accepting the legacy bearer", async () => {
     const clientsStore = new StaticOAuthClientsStore(hostClients, MCP_OAUTH_SCOPES);
     const provider = {
@@ -115,7 +229,33 @@ describe("HTTP OAuth edge", () => {
       handleXeroCallback: vi.fn(),
       handleOrganisationSelection: vi.fn(),
     } as unknown as McpOAuthBrokerProvider;
-    const readiness = vi.fn().mockResolvedValue(true);
+    const rev1Authority = createLedgerAuthoritySnapshot({
+      providerId: "xero",
+      revision: 1,
+      writeKillSwitchEnabled: true,
+      standingDelegations: [],
+      publishedAt: new Date("2026-08-13T00:00:00.000Z"),
+    });
+    let authoritySnapshot: LedgerAuthoritySnapshot | undefined = rev1Authority;
+    const readinessEvidence = vi.fn(async () => ({
+      ready: true,
+      storageMode: "POSTGRES" as const,
+      requiredMigration: XERO_RELEASE_ATTESTATION.requiredMigration,
+      requiredMigrationStatus: "APPLIED" as const,
+      migrationHead: XERO_RELEASE_ATTESTATION.requiredMigration,
+      activeAccountingCaseRecoveryProjection: compatibleRecoveryProjection,
+      authoritySnapshotRevision: authoritySnapshot?.revision ?? null,
+      authoritySnapshotHash: authoritySnapshot?.snapshotHash ?? null,
+      authorityWriteKillSwitchEnabled: authoritySnapshot?.writeKillSwitchEnabled ?? null,
+      firmGovernance: authoritySnapshot ? notRequiredFirmGovernance : {
+        ...notRequiredFirmGovernance,
+        status: "UNKNOWN" as const,
+        repositoryObservedAt: null,
+        requiredDelegationCount: null,
+        authorityCount: null,
+      },
+    }));
+    const getLedgerAuthoritySnapshot = vi.fn(async () => authoritySnapshot);
     const logger = {
       debug: vi.fn(),
       info: vi.fn(),
@@ -123,8 +263,8 @@ describe("HTTP OAuth edge", () => {
       error: vi.fn(),
     } as unknown as Logger;
     const app = createHttpApp({
-      config: config(),
-      repository: { readiness } as unknown as AccountingRepository,
+      config: { ...config(), xeroWriteEnabled: true },
+      repository: { readinessEvidence, getLedgerAuthoritySnapshot } as unknown as AccountingRepository,
       accountingService: {} as AccountingService,
       oauthService: {} as XeroOAuthService,
       reviewService: {} as ReviewService,
@@ -147,7 +287,14 @@ describe("HTTP OAuth edge", () => {
     await expect(health.clone().json()).resolves.toMatchObject({
       status: "ok",
       version: XERO_RELEASE_VERSION,
+      writeMode: "WRITE_ENABLED",
+      processWriteGateEnabled: true,
+      authoritySnapshotRevision: 1,
+      authoritySnapshotHash: rev1Authority.snapshotHash,
+      authorityWriteKillSwitchEnabled: true,
       toolCount: TOOL_ALLOWLIST.length,
+      attestation: XERO_RELEASE_ATTESTATION,
+      attestationHash: hashObject(XERO_RELEASE_ATTESTATION),
     });
     expect(health.headers.get("access-control-allow-origin")).toBe(agent2Origin);
     expect(health.headers.get("access-control-expose-headers")).toBe(
@@ -158,11 +305,161 @@ describe("HTTP OAuth edge", () => {
 
     const ready = await fetch(`${local}/readyz`, { headers: { Origin: agent2Origin } });
     expect(ready.status).toBe(200);
-    await expect(ready.clone().json()).resolves.toEqual({ status: "ready", version: XERO_RELEASE_VERSION });
+    const runtimeAttestation = createXeroRuntimeAttestation({
+      buildIdentityHash: null,
+      acceptanceSourceSha256: null,
+      sourceArchiveSha256: null,
+      writeMode: "WRITE_ENABLED",
+      processWriteGateEnabled: true,
+      authoritySnapshotRevision: 1,
+      authoritySnapshotHash: rev1Authority.snapshotHash,
+      authorityWriteKillSwitchEnabled: true,
+      storageMode: "POSTGRES",
+      repositoryReady: true,
+      requiredMigration: XERO_RELEASE_ATTESTATION.requiredMigration,
+      requiredMigrationStatus: "APPLIED",
+      migrationHead: XERO_RELEASE_ATTESTATION.requiredMigration,
+      activeAccountingCaseRecoveryProjection: compatibleRecoveryProjection,
+    });
+    await expect(ready.clone().json()).resolves.toEqual({
+      status: "ready",
+      version: XERO_RELEASE_VERSION,
+      writeMode: "WRITE_ENABLED",
+      processWriteGateEnabled: true,
+      authoritySnapshotRevision: 1,
+      authoritySnapshotHash: rev1Authority.snapshotHash,
+      authorityWriteKillSwitchEnabled: true,
+      buildIdentityHash: null,
+      acceptanceSourceSha256: null,
+      sourceArchiveSha256: null,
+      storageMode: "POSTGRES",
+      requiredMigration: XERO_RELEASE_ATTESTATION.requiredMigration,
+      requiredMigrationStatus: "APPLIED",
+      migrationHead: XERO_RELEASE_ATTESTATION.requiredMigration,
+      activeAccountingCaseRecoveryProjection: compatibleRecoveryProjection,
+      toolsetHash: hashObject(TOOL_ALLOWLIST),
+      attestationHash: hashObject(XERO_RELEASE_ATTESTATION),
+      runtimeAttestation,
+      runtimeAttestationHash: hashObject(runtimeAttestation),
+    });
     expect(ready.headers.get("access-control-allow-origin")).toBe(agent2Origin);
     expect(ready.headers.get("access-control-allow-origin")).not.toBe("*");
     expect(ready.headers.get("access-control-allow-credentials")).toBeNull();
-    expect(readiness).toHaveBeenCalledOnce();
+    expect(readinessEvidence).toHaveBeenCalledTimes(2);
+    expect(readinessEvidence).toHaveBeenCalledWith(XERO_RELEASE_ATTESTATION.requiredMigration);
+
+    const rev1RuntimeHash = hashObject(runtimeAttestation);
+    const rev2Authority = createLedgerAuthoritySnapshot({
+      providerId: "xero",
+      revision: 2,
+      writeKillSwitchEnabled: false,
+      standingDelegations: [],
+      publishedAt: new Date("2026-08-13T00:01:00.000Z"),
+    });
+    authoritySnapshot = rev2Authority;
+    const dynamicallyRevoked = await fetch(`${local}/readyz`, { headers: { Origin: agent2Origin } });
+    expect(dynamicallyRevoked.status).toBe(200);
+    const dynamicallyRevokedBody = await dynamicallyRevoked.json() as Record<string, unknown>;
+    expect(dynamicallyRevokedBody).toMatchObject({
+      status: "ready",
+      // Authority snapshots are retained as readiness evidence, but they no
+      // longer dynamically revoke the process write gate. The gate is the
+      // deployment's OAuth-target-bound XERO_WRITE_ENABLED switch.
+      writeMode: "WRITE_ENABLED",
+      processWriteGateEnabled: true,
+      authoritySnapshotRevision: 2,
+      authoritySnapshotHash: rev2Authority.snapshotHash,
+      authorityWriteKillSwitchEnabled: false,
+      runtimeAttestation: {
+        writeMode: "WRITE_ENABLED",
+        authoritySnapshotRevision: 2,
+        authoritySnapshotHash: rev2Authority.snapshotHash,
+      },
+    });
+    expect(dynamicallyRevokedBody.runtimeAttestationHash).not.toBe(rev1RuntimeHash);
+    const revokedHealth = await fetch(`${local}/healthz`, { headers: { Origin: agent2Origin } });
+    await expect(revokedHealth.json()).resolves.toMatchObject({
+      status: "ok",
+      writeMode: "WRITE_ENABLED",
+      processWriteGateEnabled: true,
+      authoritySnapshotRevision: 2,
+      authoritySnapshotHash: rev2Authority.snapshotHash,
+      authorityWriteKillSwitchEnabled: false,
+    });
+
+    readinessEvidence.mockResolvedValueOnce({
+      ready: false,
+      storageMode: "POSTGRES",
+      requiredMigration: XERO_RELEASE_ATTESTATION.requiredMigration,
+      requiredMigrationStatus: "MISSING",
+      migrationHead: "030_accounting_case_preflight_reseal.sql",
+      activeAccountingCaseRecoveryProjection: compatibleRecoveryProjection,
+      authoritySnapshotRevision: rev2Authority.revision,
+      authoritySnapshotHash: rev2Authority.snapshotHash,
+      authorityWriteKillSwitchEnabled: false,
+      firmGovernance: notRequiredFirmGovernance,
+    });
+    const missingMigration = await fetch(`${local}/readyz`, { headers: { Origin: agent2Origin } });
+    expect(missingMigration.status).toBe(503);
+    await expect(missingMigration.json()).resolves.toMatchObject({
+      status: "not_ready",
+      writeMode: "WRITE_ENABLED",
+      processWriteGateEnabled: true,
+      authoritySnapshotRevision: 2,
+      authoritySnapshotHash: rev2Authority.snapshotHash,
+      authorityWriteKillSwitchEnabled: false,
+      storageMode: "POSTGRES",
+      requiredMigration: XERO_RELEASE_ATTESTATION.requiredMigration,
+      requiredMigrationStatus: "MISSING",
+      migrationHead: "030_accounting_case_preflight_reseal.sql",
+      runtimeAttestation: {
+        repositoryReady: false,
+        requiredMigrationStatus: "MISSING",
+      },
+    });
+
+    const unsupportedRecoveryProjection = {
+      ...compatibleRecoveryProjection,
+      status: "UNSUPPORTED_ACTIVE_RECOVERY_PROJECTION" as const,
+      activeCaseCount: 1,
+      storedPolicyProjectionVersions: ["xero-sg-accounting-policy-projection:v3"],
+      storedProviderProjectionVersions: ["xero-accounting-case-provider-projection:v4"],
+    };
+    readinessEvidence.mockResolvedValueOnce({
+      ready: false,
+      storageMode: "POSTGRES",
+      requiredMigration: XERO_RELEASE_ATTESTATION.requiredMigration,
+      requiredMigrationStatus: "APPLIED",
+      migrationHead: XERO_RELEASE_ATTESTATION.requiredMigration,
+      activeAccountingCaseRecoveryProjection: unsupportedRecoveryProjection,
+      authoritySnapshotRevision: rev2Authority.revision,
+      authoritySnapshotHash: rev2Authority.snapshotHash,
+      authorityWriteKillSwitchEnabled: false,
+      firmGovernance: notRequiredFirmGovernance,
+    });
+    const unsupportedRecovery = await fetch(`${local}/readyz`, { headers: { Origin: agent2Origin } });
+    expect(unsupportedRecovery.status).toBe(503);
+    await expect(unsupportedRecovery.json()).resolves.toMatchObject({
+      status: "not_ready",
+      storageMode: "POSTGRES",
+      activeAccountingCaseRecoveryProjection: unsupportedRecoveryProjection,
+      runtimeAttestation: {
+        repositoryReady: false,
+        activeAccountingCaseRecoveryProjection: unsupportedRecoveryProjection,
+      },
+    });
+
+    authoritySnapshot = undefined;
+    const missingAuthority = await fetch(`${local}/readyz`, { headers: { Origin: agent2Origin } });
+    expect(missingAuthority.status).toBe(200);
+    await expect(missingAuthority.json()).resolves.toMatchObject({
+      status: "ready",
+      writeMode: "WRITE_ENABLED",
+      processWriteGateEnabled: true,
+      authoritySnapshotRevision: null,
+      authoritySnapshotHash: null,
+      authorityWriteKillSwitchEnabled: null,
+    });
 
     const healthHead = await fetch(`${local}/healthz`, { method: "HEAD", headers: { Origin: agent2Origin } });
     expect(healthHead.status).toBe(200);
@@ -372,12 +669,30 @@ describe("HTTP OAuth edge", () => {
       headers: { Origin: agent2Origin, "Content-Type": "application/json" },
       body: "{}",
     });
-    expect(reviewMutation.status).toBe(403);
+    // The legacy review AUTHORISE mutation is not part of the production
+    // composition root.  A missing route is stronger than an authenticated
+    // denial because no HTTP caller can reach a credential-backed writer.
+    expect(reviewMutation.status).toBe(404);
     expect(reviewMutation.headers.get("access-control-allow-origin")).toBeNull();
+
+    for (const [path, method] of [
+      ["/review/pr_cors_contract_1234", "GET"],
+      ["/review/pr_cors_contract_1234/reject", "POST"],
+    ] as const) {
+      const response = await fetch(`${local}${path}`, {
+        method,
+        ...(method === "POST" ? {
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        } : {}),
+      });
+      expect(response.status, `${method} ${path}`).toBe(404);
+    }
 
     for (const [path, method] of [
       ["/authorize", "GET"],
       ["/oauth/xero/callback", "GET"],
+      ["/oauth/xero/callback", "POST"],
       ["/oauth/xero/select", "POST"],
       ["/connect/xero", "GET"],
     ] as const) {
@@ -449,6 +764,20 @@ describe("HTTP OAuth edge", () => {
     expect(oversized.headers.get("access-control-allow-origin")).not.toBe("*");
     expect(oversized.headers.get("access-control-allow-credentials")).toBeNull();
 
+    const malformedJson = await fetch(`${local}/mcp`, {
+      method: "POST",
+      headers: {
+        Origin: agent2Origin,
+        Authorization: "Bearer malformed-json-test-token",
+        "Content-Type": "application/json",
+      },
+      body: "{",
+    });
+    expect(malformedJson.status).toBe(400);
+    await expect(malformedJson.json()).resolves.toEqual({
+      error: { code: "VALIDATION_FAILED", message: "Request body is not valid JSON." },
+    });
+
     const missing = await fetch(`${local}/mcp`, { headers: { Origin: agent2Origin } });
     expect(missing.status).toBe(401);
     expect(missing.headers.get("access-control-allow-origin")).toBe(agent2Origin);
@@ -488,6 +817,7 @@ describe("HTTP OAuth edge", () => {
           installationId: "installation-write-only",
           bindingId: "binding-write-only",
           connectionId: "connection-write-only",
+          bindingRevision: 1,
           authorizationId: "authorization-write-only",
           workspaceId: "workspace-write-only",
           subjectType: "USER",
@@ -566,6 +896,7 @@ describe("HTTP OAuth edge", () => {
     expect(readAttempt.status).toBe(200);
     const readPayload = await parseMcp(readAttempt);
     expect(JSON.stringify(readPayload)).toContain("xero.read");
-    expect(JSON.stringify(readPayload)).toContain("FORBIDDEN");
+    expect(JSON.stringify(readPayload)).toContain("SCOPE_MISSING");
+    expect(JSON.stringify(readPayload)).toContain("MCP_SCOPE");
   });
 });

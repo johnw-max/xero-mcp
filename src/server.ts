@@ -12,15 +12,27 @@ import { XeroAccountingProvider } from "./providers/xeroProvider.js";
 import { XeroControlledMutationProvider } from "./providers/xeroControlledMutationProvider.js";
 import { XeroCreditNoteManualJournalProvider } from "./providers/xeroCreditNoteManualJournalProvider.js";
 import { XeroContactItemMutationProvider } from "./providers/xeroContactItemMutationProvider.js";
+import { XeroControlledLedgerTransitionProvider } from "./providers/xeroControlledLedgerTransitionProvider.js";
+import { XeroTrackingMutationProvider } from "./providers/xeroTrackingMutationProvider.js";
+import { XeroLedgerAdjustmentProvider } from "./providers/xeroLedgerAdjustmentProvider.js";
+import { XeroPaymentBankTransactionProvider } from "./providers/xeroPaymentBankTransactionProvider.js";
 import { Aes256GcmTokenCipher } from "./security/tokenCipher.js";
 import { AccountingService } from "./services/accountingService.js";
 import { ConnectionTicketService } from "./services/connectionTicketService.js";
 import { EphemeralCleanupService } from "./services/ephemeralCleanupService.js";
-import { ReviewService } from "./services/reviewService.js";
 import { XeroControlledMutationService } from "./services/xeroControlledMutationService.js";
 import { XeroCreditNoteManualJournalService } from "./services/xeroCreditNoteManualJournalService.js";
 import { XeroContactItemMutationService } from "./services/xeroContactItemMutationService.js";
 import { XeroMutationService } from "./services/xeroMutationService.js";
+import { OrganisationSwitchService } from "./services/organisationSwitchService.js";
+import { LedgerTargetSessionService } from "./services/ledgerTargetSessionService.js";
+import { XeroRuntimeCapabilityService } from "./policy/xeroRuntimeCapabilityService.js";
+import { XeroAccountingCaseService } from "./services/xeroAccountingCaseService.js";
+import { XeroLedgerStateTransitionService } from "./services/xeroLedgerStateTransitionService.js";
+import { XeroDraftDocumentUpdateService } from "./services/xeroDraftDocumentUpdateService.js";
+import { XeroTrackingCaseMutationService } from "./services/xeroTrackingCaseMutationService.js";
+import { XeroLedgerAdjustmentService } from "./services/xeroLedgerAdjustmentService.js";
+import { XeroPaymentBankCaseService } from "./services/xeroPaymentBankCaseService.js";
 
 const XERO_CONTACT_NAMESPACE = "zcacct";
 
@@ -36,19 +48,24 @@ async function main(): Promise<void> {
     logger,
     legacyWriteEnabled: config.xeroWriteEnabled,
   });
-  const provider = new XeroAccountingProvider(repository, manager, undefined, config.xeroWriteEnabled);
+  const provider = new XeroAccountingProvider(repository, manager, config.xeroWriteEnabled);
+  const runtimeCapability = new XeroRuntimeCapabilityService(provider, config);
   const mutationFoundation = new XeroMutationService(repository, {
     confirmationSecret: config.xeroMutationConfirmationKey,
+    writeEnabled: config.xeroWriteEnabled,
+    providerCapabilityEvaluator: runtimeCapability,
   });
+  const controlledMutationProvider = new XeroControlledMutationProvider(manager);
+  const creditNoteManualJournalProvider = new XeroCreditNoteManualJournalProvider(manager);
   const controlledMutations = new XeroControlledMutationService(
     provider,
-    new XeroControlledMutationProvider(manager),
+    controlledMutationProvider,
     mutationFoundation,
     config,
   );
   const creditNoteManualJournalMutations = new XeroCreditNoteManualJournalService(
     provider,
-    new XeroCreditNoteManualJournalProvider(manager),
+    creditNoteManualJournalProvider,
     mutationFoundation,
     config,
   );
@@ -57,6 +74,32 @@ async function main(): Promise<void> {
     new XeroContactItemMutationProvider(manager, XERO_CONTACT_NAMESPACE),
     mutationFoundation,
     { ...config, contactNamespace: XERO_CONTACT_NAMESPACE },
+  );
+  const ledgerStateTransitions = new XeroLedgerStateTransitionService(
+    provider,
+    new XeroControlledLedgerTransitionProvider(manager),
+    mutationFoundation,
+  );
+  const draftDocumentUpdates = new XeroDraftDocumentUpdateService(
+    provider,
+    controlledMutationProvider,
+    creditNoteManualJournalProvider,
+    mutationFoundation,
+    config,
+  );
+  const trackingCaseMutations = new XeroTrackingCaseMutationService(
+    new XeroTrackingMutationProvider(manager),
+    mutationFoundation,
+  );
+  const ledgerAdjustments = new XeroLedgerAdjustmentService(
+    provider,
+    new XeroLedgerAdjustmentProvider(manager),
+    mutationFoundation,
+  );
+  const paymentBankCase = new XeroPaymentBankCaseService(
+    provider,
+    new XeroPaymentBankTransactionProvider(manager),
+    mutationFoundation,
   );
   const connectionTickets = new ConnectionTicketService(repository, config.publicBaseUrl);
   const accountingService = new AccountingService({
@@ -69,10 +112,43 @@ async function main(): Promise<void> {
     creditNoteManualJournalMutations,
     contactItemMutations,
     mutationFoundation,
+    ledgerStateTransitions,
+    draftDocumentUpdates,
+    trackingCaseMutations,
+    ledgerAdjustments,
+    paymentBankCase,
   });
-  const reviewService = new ReviewService(repository);
+  const accountingCaseService = new XeroAccountingCaseService(
+    repository,
+    provider,
+    accountingService,
+    mutationFoundation,
+    {
+      continuationSecret: config.xeroMutationConfirmationKey,
+      testTenantIds: config.xeroAccountingCaseTestTenantIds ?? [],
+      tenantCoaProfiles: config.xeroTenantCoaProfiles ?? [],
+      businessAuthorityProfiles: config.xeroAccountingCaseBusinessAuthorities ?? [],
+    },
+  );
   const oauthService = new XeroOAuthService({ repository, manager, cipher, config });
   const brokerConfig = config.mcpOAuthBroker;
+  const organisationSwitchService = brokerConfig?.enabled
+    ? new OrganisationSwitchService({
+        repository,
+        publicBaseUrl: config.publicBaseUrl,
+        // Domain-separated HMAC use; no confirmation token or raw ticket is persisted.
+        secret: config.xeroMutationConfirmationKey,
+      })
+    : undefined;
+  const ledgerTargetSessionService = brokerConfig?.enabled
+    ? new LedgerTargetSessionService({
+        repository,
+        // Domain-separated HMAC use; raw target session references are never persisted.
+        secret: config.xeroMutationConfirmationKey,
+        required: config.xeroTargetSessionRequired ?? false,
+        ttlMs: (config.xeroTargetSessionTtlSeconds ?? 1_800) * 1_000,
+      })
+    : undefined;
   const mcpOAuthProvider = brokerConfig?.enabled
     ? new McpOAuthBrokerProvider({
         config,
@@ -88,10 +164,12 @@ async function main(): Promise<void> {
     repository,
     accountingService,
     oauthService,
-    reviewService,
     connectionTickets,
     logger,
     ...(mcpOAuthProvider ? { mcpOAuthProvider } : {}),
+    ...(organisationSwitchService ? { organisationSwitchService } : {}),
+    ...(ledgerTargetSessionService ? { ledgerTargetSessionService } : {}),
+    accountingCaseService,
   });
 
   const server = await new Promise<Server>((resolve, reject) => {

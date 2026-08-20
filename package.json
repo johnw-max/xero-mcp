@@ -1,6 +1,6 @@
 {
   "name": "@zcloak/xero-accounting-mcp-demo",
-  "version": "0.3.0",
+  "version": "0.4.0-rc.1",
   "private": true,
   "type": "module",
   "description": "Controlled remote MCP bridge between zCloak agents and a Xero demo organisation.",
@@ -9,22 +9,26 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "dev:quickbooks": "tsx watch src/quickbooks/server.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "preview:oauth-pages": "tsx scripts/preview-oauth-pages.ts",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-oauth-assets.mjs",
     "migrate": "node dist/db/migrate.js",
     "migrate:dev": "tsx src/db/migrate.ts",
     "start": "node dist/server.js",
-    "start:quickbooks": "node dist/quickbooks/server.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.harness.json --noEmit",
     "test": "vitest run",
+    "validate:capabilities": "node scripts/validate-capability-manifest.mjs --format fields",
     "test:watch": "vitest",
     "test:postgres:oauth-identity": "vitest run tests/postgres-oauth-identity.integration.test.ts",
     "test:postgres:oauth-broker-flow": "vitest run tests/postgres-oauth-broker-flow.integration.test.ts",
-    "test:postgres:required": "node scripts/require-test-database-url.mjs && vitest run tests/postgres-oauth-broker-flow.integration.test.ts tests/postgres-oauth-identity.integration.test.ts tests/postgres-source-evidence.integration.test.ts tests/postgres-xero-duplicate-guards.integration.test.ts tests/postgres-xero-provenance.integration.test.ts tests/postgres-xero-mutation-foundation.integration.test.ts --maxWorkers=1",
+    "test:postgres:required": "node scripts/require-test-database-url.mjs && vitest run tests/xero-autonomous-authorization-migration.test.ts tests/postgres-oauth-broker-flow.integration.test.ts tests/postgres-oauth-identity.integration.test.ts tests/postgres-organisation-switch-governance.integration.test.ts tests/postgres-ledger-target-session.integration.test.ts tests/postgres-ledger-authority.integration.test.ts tests/postgres-source-evidence.integration.test.ts tests/postgres-xero-duplicate-guards.integration.test.ts tests/postgres-xero-provenance.integration.test.ts tests/postgres-xero-mutation-foundation.integration.test.ts tests/postgres-native-recovery-claim.integration.test.ts tests/accounting-case-postgres-repository.integration.test.ts tests/accounting-case-economic-readback-migration.integration.test.ts tests/accounting-case-business-reservation-migration.integration.test.ts tests/accounting-case-continuation-migration.integration.test.ts tests/ledger-authority-migration.integration.test.ts --maxWorkers=1",
     "test:http:required": "TEST_HTTP_LOOPBACK=true vitest run tests/http-oauth-edge.test.ts",
+    "validate:traceability": "node scripts/review/validate-requirements-traceability.mjs",
+    "evidence:local-agent": "node scripts/release/run-local-agent-evidence.mjs",
+    "evidence:process-crash-restart": "node scripts/release/generate-process-crash-restart-evidence.mjs",
+    "release:local:gate": "node scripts/release/run-local-acceptance-gate.mjs",
     "verify:postgres:ephemeral-cleanup": "node dist/scripts/verifyPostgresEphemeralCleanup.js",
     "verify:postgres:audit-continuity": "node dist/scripts/verifyPostgresAuditContinuity.js",
-    "verify:quickbooks:oauth-concurrency": "node dist/scripts/verifyQuickBooksMcpOAuthConcurrency.js"
+    "test:review-subsystem": "vitest run --config vitest.review.config.ts tests/independent-review-evidence.test.ts tests/traceability-validator.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
@@ -37,6 +41,7 @@
     "@types/express": "5.0.3",
     "@types/node": "24.3.0",
     "@types/pg": "8.15.5",
+    "esbuild": "0.25.12",
     "tsx": "4.20.5",
     "typescript": "5.9.2",
     "vitest": "3.2.7"

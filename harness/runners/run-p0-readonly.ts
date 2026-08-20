@@ -9,9 +9,11 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { AppConfig } from "../../src/config.js";
 import { InMemoryAccountingRepository } from "../../src/db/inMemoryRepository.js";
 import type { AuditLog, ResolvedMcpAccessToken } from "../../src/domain/models.js";
+import { AppError } from "../../src/errors.js";
 import { createHttpApp } from "../../src/http/app.js";
 import type { Logger } from "../../src/logging.js";
 import { createAccountingMcpServer } from "../../src/mcp/createServer.js";
+import { TOOL_ALLOWLIST } from "../../src/mcp/toolNames.js";
 import type {
   CreditNoteListResult,
   InvoiceListResult,
@@ -21,6 +23,7 @@ import { createOAuthRequestContext } from "../../src/security/requestContext.js"
 import { hashObject } from "../../src/security/hash.js";
 import { AccountingService } from "../../src/services/accountingService.js";
 import { ConnectionTicketService } from "../../src/services/connectionTicketService.js";
+import type { XeroAccountingCaseService } from "../../src/services/xeroAccountingCaseService.js";
 import { XERO_RELEASE_VERSION } from "../../src/xeroRelease.js";
 import {
   oracleRunSchema,
@@ -42,57 +45,12 @@ const TARGET_CASE_IDS = [
   "DC-CONNECTION-001",
   "DC-LEDGER-002",
   "DC-HISTORY-003",
-  "DC-MATCH-004",
   "DC-PAYMENT-005",
   "DC-CREDIT-006",
   "DC-VERSION-008",
 ] as const;
 
-const PINNED_TOOL_SURFACE = [
-  "xero_connection_status",
-  "xero_get_organisation",
-  "xero_list_accounts",
-  "xero_list_tax_rates",
-  "xero_list_contacts",
-  "xero_get_contact",
-  "xero_search_contacts",
-  "xero_prepare_contact_create",
-  "xero_create_contact",
-  "xero_prepare_contact_update",
-  "xero_update_contact",
-  "xero_list_invoices",
-  "xero_list_credit_notes",
-  "xero_prepare_credit_note_draft",
-  "xero_create_credit_note_draft",
-  "xero_list_payments",
-  "xero_list_quotes",
-  "xero_get_quote",
-  "xero_list_purchase_orders",
-  "xero_get_purchase_order",
-  "xero_list_manual_journals",
-  "xero_get_manual_journal",
-  "xero_prepare_manual_journal_draft",
-  "xero_create_manual_journal_draft",
-  "xero_list_items",
-  "xero_get_item",
-  "xero_prepare_item_create",
-  "xero_create_item",
-  "xero_prepare_item_update",
-  "xero_update_item",
-  "xero_list_bank_transactions",
-  "xero_get_bank_transaction",
-  "xero_get_invoice",
-  "xero_get_supplier_bill",
-  "xero_prepare_supplier_bill_draft",
-  "xero_create_draft_supplier_bill",
-  "xero_prepare_sales_invoice_draft",
-  "xero_create_draft_sales_invoice",
-  "xero_prepare_quote_draft",
-  "xero_create_quote_draft",
-  "xero_prepare_purchase_order_draft",
-  "xero_create_purchase_order_draft",
-  "xero_get_trial_balance",
-] as const;
+const PINNED_TOOL_SURFACE = TOOL_ALLOWLIST;
 
 type JsonObject = Record<string, unknown>;
 type EvidenceKind = "TOOL_CALL" | "TOOL_OUTPUT" | "PROVIDER_CALL" | "REPOSITORY_STATE" | "NETWORK_RECEIPT" | "STATE_PROBE";
@@ -245,6 +203,7 @@ function readOnlyResolvedToken(tenantId: string): ResolvedMcpAccessToken {
     installationId: "installation_p0_readonly_001",
     bindingId: "binding_p0_readonly_001",
     connectionId: SYNTHETIC_CONNECTION_ID,
+    bindingRevision: 1,
     authorizationId: "authorization_p0_readonly_001",
     workspaceId: "workspace_p0_readonly",
     subjectType: "USER",
@@ -275,6 +234,7 @@ function applicationConfig(tenantId: string): AppConfig {
     xeroWriteEnabled: false,
     xeroAllowedTenantId: tenantId,
     tokenEncryptionKey: Buffer.alloc(32, 7),
+    xeroMutationConfirmationKey: Buffer.alloc(32, 8),
     demoActorId: "p0-readonly-demo-actor",
     logLevel: "error",
   };
@@ -306,6 +266,19 @@ function callToolPayload(callToolResult: CallToolResult | undefined): unknown {
 
 function toolResult(callToolResult: CallToolResult | undefined): unknown {
   return valueObject(callToolPayload(callToolResult))?.result;
+}
+
+function readEvidence(execution: ToolExecution | undefined): JsonObject | undefined {
+  return valueObject(callToolPayload(execution?.callToolResult));
+}
+
+function safeXeroTargetRef(tenantId: string): string {
+  return `xero-target:${hashObject({ provider: "xero", tenantId }).slice(0, 32)}`;
+}
+
+function auditReferenceWasPersisted(execution: ToolExecution | undefined, evidence: JsonObject | undefined): boolean {
+  const auditRef = evidence?.tool_call_or_audit_ref;
+  return typeof auditRef === "string" && execution?.audits.some((audit) => audit.callId === auditRef) === true;
 }
 
 function unique(values: string[]): string[] {
@@ -589,7 +562,22 @@ async function executeTool(options: {
   let isError = false;
   let thrown: unknown;
   try {
-    callToolResult = await options.client.callTool({ name: tool, arguments: input });
+    const rawResult = await options.client.callTool({ name: tool, arguments: input });
+    // callTool()'s declared return type is a union with the legacy
+    // toolResult-shaped CompatibilityCallToolResultSchema branch, but the
+    // SDK's own runtime default (resultSchema = CallToolResultSchema; see
+    // @modelcontextprotocol/sdk client/index.js) already guarantees a
+    // content-shaped result whenever no compatibility schema is requested,
+    // which this harness never does. Verify that guarantee instead of just
+    // asserting it: the two content-shaped declarations in the SDK's own
+    // .d.ts (this call's inline return type and the separately exported
+    // CallToolResult) are not nominally identical under
+    // exactOptionalPropertyTypes, so structural narrowing alone cannot
+    // collapse them.
+    if (!("content" in rawResult) || !Array.isArray(rawResult.content)) {
+      throw new Error(`Tool ${tool} returned a non-standard MCP result without a content array.`);
+    }
+    callToolResult = rawResult as CallToolResult;
     structuredContent = callToolResult.structuredContent;
     modelText = firstModelText(callToolResult);
     isError = callToolResult.isError === true;
@@ -657,7 +645,9 @@ function evaluateConnection(options: {
   writeProbe: ToolExecution;
 }): OracleCaseResult {
   const status = valueObject(options.executions.get("connection_status")?.result);
-  const organisation = valueObject(options.executions.get("get_organisation")?.result);
+  const organisationExecution = options.executions.get("get_organisation");
+  const organisation = valueObject(organisationExecution?.result);
+  const organisationEvidence = readEvidence(organisationExecution);
   const refs = [...options.executions.values()].flatMap((execution) => execution.evidenceRefs);
   const providerCalls = [...options.executions.values()].flatMap((execution) => execution.providerCalls);
   const inputHasTenantSelector = [...options.executions.values()].some((execution) => recursiveContainsTenantSelector(execution.input));
@@ -674,18 +664,44 @@ function evaluateConnection(options: {
     (JSON.stringify(options.writeProbe.structuredContent) ?? "").includes("xero.draft.write") &&
     options.writeProbe.providerCalls.every((call) => call.method !== "createDraftSupplierBill") &&
     options.provider.writeAttempts === 0;
+  const expectedSafeTargetRef = safeXeroTargetRef(options.tenantId);
+  const organisationFactPaths = Array.isArray(organisationEvidence?.fact_paths)
+    ? organisationEvidence.fact_paths.map(String)
+    : [];
+  const targetEvidencePassed = organisation?.name === options.provider.tenantName &&
+    typeof organisation?.baseCurrency === "string" &&
+    !hasOwn(organisation, "organisationId") &&
+    organisationEvidence?.capability_id === "ledger.target.resolve" &&
+    organisationEvidence?.bound_target_ref_safe === expectedSafeTargetRef &&
+    organisationEvidence?.organisation_display_name === options.provider.tenantName &&
+    organisationEvidence?.base_currency === organisation.baseCurrency &&
+    typeof organisationEvidence?.binding_revision === "string" &&
+    !String(organisationEvidence.binding_revision).includes(options.tenantId) &&
+    auditReferenceWasPersisted(organisationExecution, organisationEvidence) &&
+    organisationFactPaths.includes("/result/name") &&
+    organisationFactPaths.includes("/result/baseCurrency") &&
+    !JSON.stringify(callToolPayload(organisationExecution?.callToolResult)).includes(options.tenantId);
   const oracleResults = [
-    oracle("exact_43_tools", sameStringSet(options.listTools, PINNED_TOOL_SURFACE), options.listTools, [options.listToolsRef], "tools/list must equal the independent pinned 43-tool surface."),
+    oracle("exact_current_tools", sameStringSet(options.listTools, PINNED_TOOL_SURFACE), options.listTools, [options.listToolsRef], "tools/list must equal the release-candidate Accounting Case allowlist."),
     oracle("connected_true", status?.connected === true, status?.connected ?? null, options.executions.get("connection_status")?.evidenceRefs ?? [], "Connection status must be true from parsed model-visible MCP output."),
     oracle("write_scope_absent", scopes.includes("xero.draft.write") === false && sameStringSet(scopes, ["xero.read"]), scopes, options.executions.get("connection_status")?.evidenceRefs ?? [], "The bound installation must expose only xero.read."),
-    oracle("exact_org_id", organisation?.organisationId === options.tenantId, organisation?.organisationId ?? null, options.executions.get("get_organisation")?.evidenceRefs ?? [], "Organisation output must match the server-bound synthetic tenant."),
+    oracle("exact_org_id", targetEvidencePassed, {
+      name: organisation?.name ?? null,
+      baseCurrency: organisation?.baseCurrency ?? null,
+      rawOrganisationIdPresent: hasOwn(organisation, "organisationId"),
+      capabilityId: organisationEvidence?.capability_id ?? null,
+      boundTargetRefSafe: organisationEvidence?.bound_target_ref_safe ?? null,
+      bindingRevision: organisationEvidence?.binding_revision ?? null,
+      auditRefPersisted: auditReferenceWasPersisted(organisationExecution, organisationEvidence),
+      factPaths: organisationFactPaths,
+    }, organisationExecution?.evidenceRefs ?? [], "Organisation output must match the server-bound synthetic tenant through a safe target/binding evidence envelope without exposing the raw tenant locator."),
     oracle("provider_binding_exact", bindingPassed, bindingObserved, refs, "Every Provider call must use the OAuth connection binding and one exact tenant."),
     oracle("no_tenant_parameter", !inputHasTenantSelector, { inputHasTenantSelector }, refs, "No MCP tool input may select a tenant or organisation."),
     oracle("read_scope_blocks_schema_valid_write", writeBlocked, {
       isError: options.writeProbe.isError,
       providerWriteAttempts: options.provider.writeAttempts,
       providerMethods: options.writeProbe.providerCalls.map((call) => call.method),
-    }, options.writeProbe.evidenceRefs, "A schema-valid confirmed DRAFT must fail at the read-only scope before any Provider write."),
+    }, options.writeProbe.evidenceRefs, "A schema-valid ordinary Accounting Case execute request may enter state inspection, but must fail for missing draft-write scope before any Provider write."),
   ];
   return finalizeCase({
     scenario: options.scenario,
@@ -750,11 +766,23 @@ function evaluateHistory(options: {
   const page2 = options.executions.get("ap_page_2")?.result as InvoiceListResult | undefined;
   const payments1 = options.executions.get("payment_page_1")?.result as PaymentListResult | undefined;
   const payments2 = options.executions.get("payment_page_2")?.result as PaymentListResult | undefined;
-  const exact = valueObject(options.executions.get("exact_bill")?.result);
+  const exactExecution = options.executions.get("exact_bill");
+  const exact = valueObject(exactExecution?.result);
+  const exactEvidence = readEvidence(exactExecution);
   const invoiceIds = unique([...(page1?.invoices ?? []), ...(page2?.invoices ?? [])].map((invoice) => invoice.invoiceId));
   const paymentTypes = unique([...(payments1?.payments ?? []), ...(payments2?.payments ?? [])].map((payment) => payment.type));
   const requiredTypes = ["ACCPAYPAYMENT", "APCREDITPAYMENT", "APPREPAYMENTPAYMENT", "APOVERPAYMENTPAYMENT"];
   const refs = [...options.executions.values()].flatMap((execution) => execution.evidenceRefs);
+  const expectedSafeTargetRef = safeXeroTargetRef(options.tenantId);
+  const exactFactPaths = Array.isArray(exactEvidence?.fact_paths) ? exactEvidence.fact_paths.map(String) : [];
+  const exactReadPassed = exact?.invoiceId === "40000000-0000-4000-8000-000000000001" &&
+    !hasOwn(exact, "tenantId") &&
+    exactEvidence?.capability_id === "ledger.object.read_exact" &&
+    exactEvidence?.bound_target_ref_safe === expectedSafeTargetRef &&
+    typeof exactEvidence?.binding_revision === "string" &&
+    auditReferenceWasPersisted(exactExecution, exactEvidence) &&
+    exactFactPaths.includes("/result/invoiceId") &&
+    !JSON.stringify(callToolPayload(exactExecution?.callToolResult)).includes(options.tenantId);
   const oracleResults = [
     successfulManifestSteps(options.scenario, options.executions),
     oracle("ap_page_1_has_next", page1?.pagination.hasNextPage === true, page1?.pagination ?? null, options.executions.get("ap_page_1")?.evidenceRefs ?? [], "AP page 1 must explicitly prove another page exists."),
@@ -766,37 +794,16 @@ function evaluateHistory(options: {
     ].every((id) => invoiceIds.includes(id)), invoiceIds, refs, "Both pages must aggregate to the three unique synthetic AP bills."),
     oracle("payment_history_complete", payments2?.pagination.hasNextPage === false, payments2?.pagination ?? null, options.executions.get("payment_page_2")?.evidenceRefs ?? [], "The second payment page must explicitly complete the history."),
     oracle("all_ap_payment_types_seen", requiredTypes.every((type) => paymentTypes.includes(type as never)), paymentTypes, refs, "Cash payment, AP credit, AP prepayment, and AP overpayment types must all be evidenced."),
-    oracle("exact_bill_same_id", exact?.invoiceId === "40000000-0000-4000-8000-000000000001" && exact?.tenantId === options.tenantId, {
+    oracle("exact_bill_same_id", exactReadPassed, {
       invoiceId: exact?.invoiceId ?? null,
-      tenantId: exact?.tenantId ?? null,
+      rawTenantIdPresent: hasOwn(exact, "tenantId"),
+      capabilityId: exactEvidence?.capability_id ?? null,
+      boundTargetRefSafe: exactEvidence?.bound_target_ref_safe ?? null,
+      bindingRevision: exactEvidence?.binding_revision ?? null,
+      auditRefPersisted: auditReferenceWasPersisted(exactExecution, exactEvidence),
+      factPaths: exactFactPaths,
       linesTruncated: exact?.linesTruncated ?? null,
-    }, options.executions.get("exact_bill")?.evidenceRefs ?? [], "Exact-ID supplier bill readback must preserve both record ID and bound tenant ID."),
-  ];
-  return finalizeCase({ scenario: options.scenario, oracleResults, evidenceRefs: refs });
-}
-
-function evaluateMatch(options: {
-  scenario: ScenarioCase;
-  executions: Map<string, ToolExecution>;
-  provider: SyntheticXeroAccountingProvider;
-}): OracleCaseResult {
-  const noMatch = valueObject(options.executions.get("no_contact_match")?.result);
-  const ambiguous = valueObject(options.executions.get("ambiguous_contact_match")?.result);
-  const noMatchBlockers = Array.isArray(noMatch?.blockers) ? noMatch.blockers : [];
-  const ambiguousBlockers = Array.isArray(ambiguous?.blockers) ? ambiguous.blockers : [];
-  const blockerCodes = (blockers: unknown[]) => blockers.map((blocker) => valueObject(blocker)?.code ?? null);
-  const refs = [...options.executions.values()].flatMap((execution) => execution.evidenceRefs);
-  const providerMethods = [...options.executions.values()].flatMap((execution) => execution.providerCalls.map((call) => call.method));
-  const oracleResults = [
-    successfulManifestSteps(options.scenario, options.executions),
-    oracle("no_match_blocks", blockerCodes(noMatchBlockers).includes("NO_EXACT_MATCH"), blockerCodes(noMatchBlockers), options.executions.get("no_contact_match")?.evidenceRefs ?? [], "No exact supplier match must produce a structured blocker."),
-    oracle("no_match_no_proposal", noMatch?.proposal === null, noMatch?.proposal ?? null, options.executions.get("no_contact_match")?.evidenceRefs ?? [], "No exact supplier match must not produce a posting proposal."),
-    oracle("ambiguous_blocks", blockerCodes(ambiguousBlockers).includes("AMBIGUOUS_MATCH"), blockerCodes(ambiguousBlockers), options.executions.get("ambiguous_contact_match")?.evidenceRefs ?? [], "Duplicate exact suppliers must produce an ambiguity blocker."),
-    oracle("ambiguous_no_proposal", ambiguous?.proposal === null, ambiguous?.proposal ?? null, options.executions.get("ambiguous_contact_match")?.evidenceRefs ?? [], "Ambiguity must fail closed without a posting proposal."),
-    oracle("prepare_never_writes", options.provider.writeAttempts === 0 && !providerMethods.includes("createDraftSupplierBill"), {
-      providerWriteAttempts: options.provider.writeAttempts,
-      providerMethods,
-    }, refs, "Prepare-only calls must never reach the Provider write method."),
+    }, exactExecution?.evidenceRefs ?? [], "Exact-ID supplier bill readback must preserve the record ID and matching safe target/binding evidence without exposing the raw tenant locator."),
   ];
   return finalizeCase({ scenario: options.scenario, oracleResults, evidenceRefs: refs });
 }
@@ -863,6 +870,15 @@ function evaluateVersion(options: {
   const receiptsComplete = options.http.health.status === 200 && options.http.readiness.status === 200 &&
     healthBody?.status === "ok" && readinessBody?.status === "ready" &&
     options.serverVersion?.name === "zcloak-xero-accounting-mcp-demo";
+  const authorityControlPlaneAttested =
+    healthBody?.writeMode === "READ_ONLY" && readinessBody?.writeMode === "READ_ONLY" &&
+    healthBody?.processWriteGateEnabled === false && readinessBody?.processWriteGateEnabled === false &&
+    healthBody?.authorityWriteKillSwitchEnabled === false &&
+    readinessBody?.authorityWriteKillSwitchEnabled === false &&
+    healthBody?.authoritySnapshotRevision === 1 && readinessBody?.authoritySnapshotRevision === 1 &&
+    typeof healthBody?.authoritySnapshotHash === "string" &&
+    /^[a-f0-9]{64}$/u.test(healthBody.authoritySnapshotHash) &&
+    readinessBody?.authoritySnapshotHash === healthBody.authoritySnapshotHash;
   const oracleResults = [
     oracle("all_versions_equal", versionsEqual, versions, options.evidenceRefs, "Package, MCP initialize, health, readiness, and shared release constant must be identical."),
     oracle("version_evidence_complete", receiptsComplete, {
@@ -872,6 +888,14 @@ function evaluateVersion(options: {
       healthBodyStatus: healthBody?.status ?? null,
       readinessBodyStatus: readinessBody?.status ?? null,
     }, options.evidenceRefs, "All four runtime version surfaces must have executable receipts."),
+    oracle("read_only_authority_control_plane_attested", authorityControlPlaneAttested, {
+      healthWriteMode: healthBody?.writeMode ?? null,
+      readinessWriteMode: readinessBody?.writeMode ?? null,
+      processWriteGateEnabled: readinessBody?.processWriteGateEnabled ?? null,
+      authorityWriteKillSwitchEnabled: readinessBody?.authorityWriteKillSwitchEnabled ?? null,
+      authoritySnapshotRevision: readinessBody?.authoritySnapshotRevision ?? null,
+      authoritySnapshotHash: readinessBody?.authoritySnapshotHash ?? null,
+    }, options.evidenceRefs, "The read-only harness must publish and attest a durable disabled authority snapshot."),
   ];
   return finalizeCase({
     scenario: options.scenario,
@@ -956,6 +980,13 @@ export async function executeP0ReadOnlySuite(
   });
   const provider = new SyntheticXeroAccountingProvider(fixture);
   const repository = new InMemoryAccountingRepository();
+  await repository.publishLedgerAuthoritySnapshot({
+    providerId: "xero",
+    revision: 1,
+    writeKillSwitchEnabled: false,
+    standingDelegations: [],
+    publishedAt: new Date(),
+  });
   const connectionTickets = new ConnectionTicketService(repository, "https://xero-mcp.p0-harness.invalid");
   const config = applicationConfig(provider.tenantId);
   const service = new AccountingService({
@@ -970,7 +1001,31 @@ export async function executeP0ReadOnlySuite(
     issuer: "https://issuer.p0-harness.invalid",
     resolvedToken,
   });
-  const server = createAccountingMcpServer(service, context);
+  const rejectOrdinaryReadOnlyExecution = async (): Promise<never> => {
+    throw new AppError(
+      "SCOPE_MISSING",
+      "The exact ordinary Accounting Case requires xero.draft.write before preflight or execution.",
+      {
+        httpStatus: 403,
+        details: {
+          failureLayer: "MCP_SCOPE",
+          reasonCodes: ["MISSING_MCP_SCOPE"],
+          recoveryAction: "REAUTHORISE_MCP_SCOPE",
+          providerMutationPossible: false,
+        },
+      },
+    );
+  };
+  const unavailableCaseOperation = async (): Promise<never> => {
+    throw new AppError("NOT_FOUND", "The synthetic read-only Case fixture is unavailable.", { httpStatus: 404 });
+  };
+  const accountingCases = {
+    prepare: unavailableCaseOperation,
+    execute: rejectOrdinaryReadOnlyExecution,
+    status: unavailableCaseOperation,
+    listAttentionCases: unavailableCaseOperation,
+  } as unknown as Pick<XeroAccountingCaseService, "prepare" | "execute" | "status" | "listAttentionCases">;
+  const server = createAccountingMcpServer(service, context, undefined, undefined, accountingCases);
   const client = new Client({ name: "xero-p0-readonly-harness", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const evidence = new EvidenceCollector(runId);
@@ -1025,15 +1080,15 @@ export async function executeP0ReadOnlySuite(
     const connectionScenario = targetCases.find((item) => item.id === "DC-CONNECTION-001") as ScenarioCase;
     const writeProbe = await executeTool({
       scenario: connectionScenario,
-      step: { id: "read_only_write_probe", action: "MCP_CALL", tool: "xero_create_draft_supplier_bill" },
+      step: { id: "read_only_write_probe", action: "MCP_CALL", tool: "xero_execute_accounting_case" },
       client,
       provider,
       repository,
       evidence,
       overrideInput: {
-        preparation_id: `xmp_${"a".repeat(32)}`,
+        case_id: "p0-readonly-scope-probe",
+        case_version: 1,
         request_id: "p0-readonly-write-probe-001",
-        confirmation_phrase: "Scope probe only; must never reach Xero",
       },
     });
 
@@ -1065,11 +1120,6 @@ export async function executeP0ReadOnlySuite(
         scenario: byId.get("DC-HISTORY-003") as ScenarioCase,
         executions: executions.get("DC-HISTORY-003") as Map<string, ToolExecution>,
         tenantId: provider.tenantId,
-      }),
-      evaluateMatch({
-        scenario: byId.get("DC-MATCH-004") as ScenarioCase,
-        executions: executions.get("DC-MATCH-004") as Map<string, ToolExecution>,
-        provider,
       }),
       evaluateUnknownPayment({
         scenario: byId.get("DC-PAYMENT-005") as ScenarioCase,

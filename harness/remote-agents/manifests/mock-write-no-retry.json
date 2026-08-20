@@ -1,6 +1,7 @@
 {
   "version": 1,
-  "name": "offline-write-no-retry-regression",
+  "name": "offline-accounting-case-write-no-retry-regression",
+  "releaseContract": "0.4.0-rc.1 / pinned OAuth target + released typed Case action + write gate / Case execute identity only",
   "settings": {
     "concurrency": 2,
     "timeoutMs": 5000,
@@ -13,7 +14,7 @@
     {
       "alias": "controlled_writer",
       "id": "mock-writer-agent",
-      "persona": "Controlled accounting operator who writes only after explicit confirmation and always performs exact read-back."
+      "persona": "Controlled accounting operator who executes only a stored Accounting Case for the pinned OAuth target and released typed action while the write gate is active, and always requires Provider receipt plus exact readback."
     }
   ],
   "cases": [
@@ -30,11 +31,11 @@
         },
         {
           "role": "user",
-          "content": "CONFIRMED_FOR_DRAFT. Create exactly one DRAFT from this synthetic candidate and read it back."
+          "content": "{{fixture}}\n\nFor the pinned OAuth target and released typed Case action while the write gate is active, execute Accounting Case synthetic-case-001 version 1 once with request_id synthetic-case-request-001. Do not submit accounting payload at execute time. Stop after the first unknown result and recover by Case status/readback only."
         }
       ],
       "expect": {
-        "requiredTools": ["*create_draft*"],
+        "requiredTools": ["*xero_execute_accounting_case"],
         "minToolCalls": 1,
         "maxToolCalls": 1,
         "allCallsHaveOutput": true
@@ -59,8 +60,8 @@
                 {
                   "type": "function_call",
                   "call_id": "call_should_never_be_reached",
-                  "name": "accounting__xero_create_draft_bill",
-                  "arguments": "{}",
+                  "name": "accounting__xero_execute_accounting_case",
+                  "arguments": "{\"case_id\":\"synthetic-case-001\",\"case_version\":1,\"request_id\":\"synthetic-case-request-001\"}",
                   "status": "completed"
                 },
                 {

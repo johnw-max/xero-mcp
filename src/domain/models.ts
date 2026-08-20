@@ -105,6 +105,8 @@ export interface ResolveAgentConnectionBindingInput {
 export interface ResolvedAgentConnectionBinding {
   installationId: string;
   bindingId: string;
+  /** Monotonic revision of the installation's server-owned active binding row. */
+  bindingRevision: number;
   workspaceId: string;
   subjectType: BindingSubjectType;
   subjectId: string;
@@ -115,6 +117,85 @@ export interface ResolvedAgentConnectionBinding {
   tenantName: string;
   providerConnectionId?: string;
   policyId: string;
+}
+
+/**
+ * One short-lived, one-time browser capability created from an authenticated
+ * MCP conversation. Only its keyed hash is persisted; the raw ticket remains
+ * in the user-facing URL and is never logged or stored.
+ */
+export interface OrganisationSwitchSession {
+  sessionHash: string;
+  installationId: string;
+  workspaceId: string;
+  subjectType: BindingSubjectType;
+  subjectId: string;
+  agentId: string;
+  authorizationId: string;
+  sourceBindingId: string;
+  sourceConnectionId: string;
+  /** Keyed hash of the initiating ledger target; never the raw capability. */
+  sourceTargetSessionHash?: string;
+  createdAt: Date;
+  expiresAt: Date;
+  consumedAt?: Date;
+}
+
+export interface OrganisationSwitchContext {
+  session: OrganisationSwitchSession;
+  currentBinding: ResolvedAgentConnectionBinding;
+  connections: AuthorizedProviderConnection[];
+}
+
+export interface CompleteOrganisationSwitchInput {
+  sessionHash: string;
+  selectedConnectionId: string;
+  newBindingId: string;
+  now: Date;
+}
+
+export interface CompleteOrganisationSwitchResult {
+  session: OrganisationSwitchSession;
+  previousBinding: ResolvedAgentConnectionBinding;
+  currentBinding: ResolvedAgentConnectionBinding;
+  changed: boolean;
+  sourceTargetRevoked: boolean;
+}
+
+/**
+ * One short-lived, installation-owned ledger target. The raw capability is
+ * returned only to the MCP client; only its keyed hash is persisted.
+ *
+ * Unlike oauth_installation_active_bindings, this record is immutable. It can
+ * therefore keep one conversation pinned to Organisation A while another
+ * conversation changes the installation's compatibility pointer to B.
+ */
+export interface LedgerTargetSession {
+  sessionId: string;
+  sessionHash: string;
+  installationId: string;
+  bindingId: string;
+  connectionId: string;
+  bindingRevision: number;
+  createdAt: Date;
+  expiresAt: Date;
+  lastUsedAt?: Date;
+  revokedAt?: Date;
+}
+
+export interface ResolveLedgerTargetSessionInput {
+  sessionHash: string;
+  installationId: string;
+  workspaceId: string;
+  subjectType: BindingSubjectType;
+  subjectId: string;
+  agentId: string;
+  now: Date;
+}
+
+export interface ResolvedLedgerTargetSession {
+  session: LedgerTargetSession;
+  binding: ResolvedAgentConnectionBinding;
 }
 
 export interface OAuthBrokerFlow {
@@ -341,6 +422,8 @@ export interface ResolvedMcpAccessToken {
   installationId: string;
   bindingId: string;
   connectionId: string;
+  /** Monotonic revision resolved from the current active binding, never from token claims. */
+  bindingRevision: number;
   authorizationId: string;
   workspaceId: string;
   subjectType: BindingSubjectType;
@@ -584,6 +667,46 @@ export interface AuditCompletion {
 }
 
 export type AuditLog = AuditIntent | AuditRecord;
+
+export type GovernanceAuditSource = "MCP" | "USER_UI" | "OAUTH" | "SYSTEM";
+export type GovernanceDisposition = "NOT_EVALUATED" | "OBSERVE" | "AUTO_EXECUTE" | "ESCALATE" | "DENY";
+export type GovernanceOutcome = "PROPOSED" | "SUCCEEDED" | "REJECTED" | "FAILED";
+
+/**
+ * Portable, provider-neutral evidence envelope. It intentionally records
+ * decisions and receipts rather than prompts or hidden model reasoning.
+ */
+export interface GovernanceAuditEventInput {
+  eventId: string;
+  streamId: string;
+  schemaVersion: "zcloak.governance-event.v1";
+  eventType: string;
+  source: GovernanceAuditSource;
+  action: string;
+  actorId: string;
+  workspaceId?: string;
+  agentId?: string;
+  installationId?: string;
+  bindingId?: string;
+  connectionId?: string;
+  tenantId?: string;
+  mandateId?: string;
+  policyId?: string;
+  correlationId: string;
+  causationId?: string;
+  disposition: GovernanceDisposition;
+  outcome: GovernanceOutcome;
+  inputHash?: string;
+  outputHash?: string;
+  evidence: Record<string, unknown>;
+  occurredAt: Date;
+}
+
+export interface GovernanceAuditEvent extends GovernanceAuditEventInput {
+  previousEventHash?: string;
+  eventHash: string;
+  recordedAt: Date;
+}
 
 export interface CreatePostingInput {
   postingRequestId: string;

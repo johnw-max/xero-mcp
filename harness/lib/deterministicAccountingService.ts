@@ -59,6 +59,7 @@ export function createDeterministicAccountingService(): {
       taxType: "NONE",
       status: "ACTIVE",
       displayTaxRate: "0.0000",
+      effectiveRate: "0.0000",
       canApplyToExpenses: true,
     }]),
     listContacts: record("listContacts", {

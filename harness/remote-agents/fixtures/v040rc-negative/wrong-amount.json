@@ -1,0 +1,31 @@
+{
+  "case_id": "negative-wrong-amount-001",
+  "expected_version": 0,
+  "source_label": "Synthetic invoice with false gross",
+  "source_set_complete": true,
+  "documents": [
+    {
+      "document_type": "CUSTOMER_INVOICE",
+      "reference": "NEG-AMOUNT-001",
+      "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+      "document_date": "2026-07-02",
+      "due_date": "2026-08-01",
+      "currency": "SGD",
+      "contact": { "name": "Lion City Digital Pte. Ltd." },
+      "lines": [
+        {
+          "description": "Synthetic consulting",
+          "quantity": "20",
+          "unit_amount_excluding_tax": "200.00",
+          "source_tax_amount": "360.00",
+          "account_code": "200",
+          "tax_type": "OUTPUTY24"
+        }
+      ],
+      "declared_net": "4000.00",
+      "declared_tax": "360.00",
+      "declared_gross": "87.20",
+      "document_validity": "TEST_OR_NOT_VALID"
+    }
+  ]
+}

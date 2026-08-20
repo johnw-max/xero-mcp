@@ -1,0 +1,68 @@
+{
+  "contacts": [
+    {
+      "accountNumber": "HALSTEAD_CLEANING_001",
+      "addresses": [
+        {
+          "addressType": "STREET",
+          "city": "",
+          "country": "",
+          "postalCode": "",
+          "region": ""
+        },
+        {
+          "addressType": "POBOX",
+          "city": "",
+          "country": "",
+          "postalCode": "",
+          "region": ""
+        }
+      ],
+      "bankAccountDetails": "",
+      "contactGroups": [],
+      "contactID": "e2497490-6310-471d-b391-75293a0426ae",
+      "contactNumber": "ZC:zcacct:51ba1cf9d7d125581bc5f5e468b1b4f3",
+      "contactPersons": [],
+      "contactStatus": "ACTIVE",
+      "emailAddress": "",
+      "hasAttachments": false,
+      "hasValidationErrors": false,
+      "isCustomer": false,
+      "isSupplier": true,
+      "name": "Halstead Cleaning Services",
+      "phones": [
+        {
+          "phoneAreaCode": "",
+          "phoneCountryCode": "",
+          "phoneNumber": "",
+          "phoneType": "DDI"
+        },
+        {
+          "phoneAreaCode": "",
+          "phoneCountryCode": "",
+          "phoneNumber": "",
+          "phoneType": "DEFAULT"
+        },
+        {
+          "phoneAreaCode": "",
+          "phoneCountryCode": "",
+          "phoneNumber": "",
+          "phoneType": "FAX"
+        },
+        {
+          "phoneAreaCode": "",
+          "phoneCountryCode": "",
+          "phoneNumber": "",
+          "phoneType": "MOBILE"
+        }
+      ],
+      "updatedDateUTC": "2026-08-19T08:50:58.300Z"
+    }
+  ],
+  "pagination": {
+    "itemCount": 1,
+    "page": 1,
+    "pageCount": 1,
+    "pageSize": 100
+  }
+}

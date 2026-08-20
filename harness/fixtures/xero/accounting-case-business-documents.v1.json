@@ -1,0 +1,132 @@
+{
+  "case_id": "business-documents-5-xero-2026-07",
+  "expected_version": 0,
+  "source_label": "Five synthetic July 2026 business documents",
+  "source_set_complete": true,
+  "documents": [
+    {
+      "document_type": "CUSTOMER_INVOICE",
+      "reference": "INV-2026-0702",
+      "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+      "document_date": "2026-07-02",
+      "due_date": "2026-08-01",
+      "currency": "SGD",
+      "contact": { "name": "Lion City Digital Pte. Ltd." },
+      "lines": [
+        {
+          "description": "Consulting services - July 2026",
+          "quantity": "20",
+          "unit_amount_excluding_tax": "200.00",
+          "source_tax_amount": "360.00",
+          "account_code": "200",
+          "tax_type": "OUTPUTY24"
+        }
+      ],
+      "declared_net": "4000.00",
+      "declared_tax": "360.00",
+      "declared_gross": "4360.00",
+      "document_validity": "TEST_OR_NOT_VALID"
+    },
+    {
+      "document_type": "SUPPLIER_BILL",
+      "reference": "OH-260701",
+      "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+      "document_date": "2026-07-03",
+      "due_date": "2026-07-17",
+      "currency": "SGD",
+      "contact": { "name": "OfficeHub Singapore Pte. Ltd." },
+      "lines": [
+        {
+          "description": "Premium copier paper",
+          "quantity": "10",
+          "unit_amount_excluding_tax": "80.00",
+          "source_tax_amount": "72.00",
+          "account_code": "453",
+          "tax_type": "INPUTY24"
+        }
+      ],
+      "declared_net": "800.00",
+      "declared_tax": "72.00",
+      "declared_gross": "872.00",
+      "document_validity": "TEST_OR_NOT_VALID"
+    },
+    {
+      "document_type": "SUPPLIER_BILL",
+      "reference": "CH-INV-78142",
+      "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+      "document_date": "2026-07-10",
+      "due_date": "2026-08-09",
+      "currency": "USD",
+      "contact": { "name": "CloudHost Inc." },
+      "invoice_exchange_rate": "1.3500",
+      "lines": [
+        {
+          "description": "Cloud infrastructure subscription",
+          "quantity": "1",
+          "unit_amount_excluding_tax": "1000.00",
+          "source_tax_amount": "0.00",
+          "account_code": "485",
+          "tax_type": "NONE"
+        }
+      ],
+      "declared_net": "1000.00",
+      "declared_tax": "0.00",
+      "declared_gross": "1000.00",
+      "document_validity": "TEST_OR_NOT_VALID"
+    },
+    {
+      "document_type": "CUSTOMER_CREDIT_NOTE",
+      "reference": "CN-2026-0001",
+      "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+      "document_date": "2026-07-22",
+      "currency": "SGD",
+      "contact": { "name": "Lion City Digital Pte. Ltd." },
+      "lines": [
+        {
+          "description": "Two disputed consulting hours",
+          "quantity": "2",
+          "unit_amount_excluding_tax": "200.00",
+          "source_tax_amount": "36.00",
+          "account_code": "200",
+          "tax_type": "OUTPUTY24"
+        }
+      ],
+      "declared_net": "400.00",
+      "declared_tax": "36.00",
+      "declared_gross": "436.00",
+      "document_validity": "TEST_OR_NOT_VALID",
+      "original_document": {
+        "reference": "INV-2026-0702",
+        "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+        "document_date": "2026-07-02"
+      }
+    },
+    {
+      "document_type": "SUPPLIER_CREDIT_NOTE",
+      "reference": "OH-CN-260722",
+      "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+      "document_date": "2026-07-22",
+      "currency": "SGD",
+      "contact": { "name": "OfficeHub Singapore Pte. Ltd." },
+      "lines": [
+        {
+          "description": "One undelivered carton",
+          "quantity": "1",
+          "unit_amount_excluding_tax": "80.00",
+          "source_tax_amount": "7.20",
+          "account_code": "453",
+          "tax_type": "INPUTY24"
+        }
+      ],
+      "declared_net": "80.00",
+      "declared_tax": "7.20",
+      "declared_gross": "87.20",
+      "document_validity": "TEST_OR_NOT_VALID",
+      "original_document": {
+        "reference": "OH-260701",
+        "reference_kind": "FORMAL_DOCUMENT_NUMBER",
+        "document_date": "2026-07-03"
+      }
+    }
+  ]
+}

@@ -11,7 +11,8 @@ import {
   type PurchaseOrderSort,
   type QuoteSort,
 } from "../domain/extendedReadSchemas.js";
-import type { ReadPageEvidence } from "./types.js";
+import type { JournalPageEvidence, ReadPageEvidence } from "./types.js";
+import { xeroProviderDate as xeroDate, xeroProviderInstant } from "./xeroProviderDate.js";
 
 export const MAX_EXTENDED_READ_LINES = 100;
 export const MAX_EXTENDED_READ_TRACKING = 2;
@@ -150,6 +151,46 @@ export interface ManualJournalSummary extends AttachmentEvidence, ProjectionEvid
 
 export interface ManualJournalSnapshot extends ManualJournalSummary {
   lines: ManualJournalLineSnapshot[];
+  lineItemCount: number;
+  linesTruncated: boolean;
+  omittedInvalidLines: number;
+}
+
+/**
+ * One debit/credit line of a posted `/Journals` entry. Unlike Quote/PurchaseOrder/
+ * ManualJournal lines, every field here already comes from a finished, immutable
+ * ledger record - there is no attachment/URL/validation-error tail to track as
+ * omitted, so this (unlike ManualJournalLineSnapshot) carries no ProjectionEvidence.
+ */
+export interface JournalLineSummary {
+  journalLineId?: string;
+  accountId?: string;
+  accountCode?: string;
+  accountType?: string;
+  accountName?: string;
+  description?: string;
+  descriptionTruncated?: boolean;
+  /** Positive for a debit, negative for a credit - the sign is the evidence. */
+  netAmount?: string;
+  grossAmount?: string;
+  taxAmount?: string;
+  taxType?: string;
+  taxName?: string;
+  tracking: ExtendedTrackingSnapshot[];
+  trackingCount: number;
+  trackingTruncated: boolean;
+  omittedInvalidTracking: number;
+}
+
+export interface JournalSummary {
+  journalId: string;
+  journalNumber: number;
+  journalDate?: string;
+  createdAt?: string;
+  reference?: string;
+  sourceId?: string;
+  sourceType?: string;
+  lines: JournalLineSummary[];
   lineItemCount: number;
   linesTruncated: boolean;
   omittedInvalidLines: number;
@@ -324,22 +365,10 @@ function boundedTracking(value: unknown): Pick<
   };
 }
 
-function xeroDate(value: unknown): string | undefined {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
-  }
-  if (typeof value !== "string") return undefined;
-  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
-  const match = /^\/Date\((-?\d+)/.exec(value);
-  if (!match?.[1]) return undefined;
-  const parsed = new Date(Number(match[1]));
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString().slice(0, 10);
-}
-
 function xeroUpdatedAt(value: ProviderObject): string | undefined {
-  const direct = value.updatedDateUTC;
-  if (direct instanceof Date && !Number.isNaN(direct.getTime())) return direct.toISOString();
-  const candidate = direct ?? value.updatedDateUTCString;
+  const candidate = value.updatedDateUTC ?? value.updatedDateUTCString;
+  const instant = xeroProviderInstant(candidate);
+  if (instant) return instant.toISOString();
   if (typeof candidate !== "string" || candidate.length === 0) return undefined;
   const parsed = new Date(candidate);
   return Number.isNaN(parsed.getTime()) ? boundedText(candidate, 64) : parsed.toISOString();
@@ -642,6 +671,155 @@ export function mapManualJournalSnapshot(input: unknown): ManualJournalSnapshot 
     ...boundedLines(journal.journalLines, mapManualJournalLine),
     ...projectionEvidence(journal, ["url", "validationErrors"]),
   };
+}
+
+function mapJournalLine(value: unknown): JournalLineSummary | undefined {
+  const line = providerObject(value);
+  if (!line) return undefined;
+  const journalLineId = providerId(line.journalLineID);
+  const accountId = providerId(line.accountID);
+  const accountCode = boundedText(line.accountCode, 10);
+  const accountType = boundedText(line.accountType, 32);
+  const accountName = boundedText(line.accountName, 150);
+  const description = textWithTruncation(line.description, MAX_LINE_DESCRIPTION);
+  const netAmount = decimal(line.netAmount);
+  const grossAmount = decimal(line.grossAmount);
+  const taxAmount = decimal(line.taxAmount);
+  const taxType = boundedText(line.taxType, 100);
+  const taxName = boundedText(line.taxName, 100);
+  const tracking = boundedTracking(line.trackingCategories);
+  const core: Omit<
+    JournalLineSummary,
+    "tracking" | "trackingCount" | "trackingTruncated" | "omittedInvalidTracking"
+  > = {
+    ...(journalLineId ? { journalLineId } : {}),
+    ...(accountId ? { accountId } : {}),
+    ...(accountCode ? { accountCode } : {}),
+    ...(accountType ? { accountType } : {}),
+    ...(accountName ? { accountName } : {}),
+    ...(description.text ? { description: description.text } : {}),
+    ...(description.truncated ? { descriptionTruncated: true } : {}),
+    ...(netAmount !== undefined ? { netAmount } : {}),
+    ...(grossAmount !== undefined ? { grossAmount } : {}),
+    ...(taxAmount !== undefined ? { taxAmount } : {}),
+    ...(taxType ? { taxType } : {}),
+    ...(taxName ? { taxName } : {}),
+  };
+  if (Object.keys(core).length === 0 && tracking.tracking.length === 0) return undefined;
+  return { ...core, ...tracking };
+}
+
+/** journalNumber, not journalID, is what `/Journals` pages by - both must be present and valid to trust this record. */
+export function mapJournalSummary(input: unknown): JournalSummary | undefined {
+  const journal = providerObject(input);
+  const journalId = providerId(journal?.journalID);
+  const journalNumber = journal?.journalNumber;
+  if (!journal || !journalId || typeof journalNumber !== "number" || !Number.isInteger(journalNumber)) {
+    return undefined;
+  }
+  const journalDate = xeroDate(journal.journalDate);
+  const createdAt = xeroProviderInstant(journal.createdDateUTC)?.toISOString();
+  const reference = boundedText(journal.reference, MAX_HEADER_TEXT);
+  const sourceId = providerId(journal.sourceID);
+  const sourceType = boundedText(journal.sourceType, 64);
+  return {
+    journalId,
+    journalNumber,
+    ...(journalDate ? { journalDate } : {}),
+    ...(createdAt ? { createdAt } : {}),
+    ...(reference ? { reference } : {}),
+    ...(sourceId ? { sourceId } : {}),
+    ...(sourceType ? { sourceType } : {}),
+    ...boundedLines(journal.journalLines, mapJournalLine),
+  };
+}
+
+function rawJournalNumber(value: unknown): number | undefined {
+  const raw = providerObject(value)?.journalNumber;
+  return typeof raw === "number" && Number.isInteger(raw) ? raw : undefined;
+}
+
+/**
+ * Shapes one `/Journals` page. This does not reuse `mapBoundedExtendedReadPage`:
+ * Xero pages `/Journals` by an offset on JournalNumber, not by page number, and
+ * proves exhaustion only by returning an empty page - there is no provider page
+ * count or item count to report, and no agent-facing page_size to bound against
+ * (Xero alone decides how many journals one call returns). `nextOffset` is read
+ * from the raw JournalNumber of every returned entry, not only the successfully
+ * mapped ones, so paging stays possible even if one entry fails to map.
+ */
+export function mapJournalsPage(
+  providerJournals: readonly unknown[] | undefined,
+  input: { offset?: number },
+): { journals: JournalSummary[]; pagination: JournalPageEvidence } {
+  const source = providerJournals ?? [];
+  const journals: JournalSummary[] = [];
+  let omittedInvalid = 0;
+  let nextOffset: number | undefined;
+  for (const entry of source) {
+    const rawNumber = rawJournalNumber(entry);
+    if (rawNumber !== undefined && (nextOffset === undefined || rawNumber > nextOffset)) {
+      nextOffset = rawNumber;
+    }
+    const mapped = mapJournalSummary(entry);
+    if (mapped) journals.push(mapped);
+    else omittedInvalid += 1;
+  }
+  const exhausted = source.length === 0;
+  return {
+    journals,
+    pagination: {
+      requestedOffset: input.offset ?? 0,
+      returned: journals.length,
+      ...(nextOffset !== undefined ? { nextOffset } : {}),
+      exhausted,
+      // Xero proves "no more" only by an empty page; a non-empty page never
+      // proves the opposite, so treat it as an unverified "maybe more".
+      hasNextPage: !exhausted,
+      hasNextPageIsEstimated: !exhausted,
+      omittedInvalid,
+    },
+  };
+}
+
+/**
+ * Recursively converts a Xero SDK report object (Trial Balance, Profit and
+ * Loss, Balance Sheet, Aged Receivables/Payables - all `ReportWithRows`) into
+ * a plain JSON-safe structure. Deliberately untyped beyond this generic walk:
+ * the row/section layout is report-specific and provider-controlled, and a
+ * hand-picked field list would have to be re-derived - and could silently
+ * drop a field - for every new report this server reads.
+ *
+ * The walk still has to go through xeroProviderDate.ts's kernel: the SDK
+ * silently promotes any field it declares as a string (report metadata like
+ * `reportDate`, but potentially a display cell's `value` too - Report/Row/Cell
+ * all reuse the same generic string-typed fields for arbitrary content) into a
+ * native `Date` when the wire value matches Xero's legacy `/Date(ms+tz)/`
+ * format. A `Date` that reaches JSON.stringify - or the generic MCP read-safety
+ * walk in xeroReadEvidence.ts, which has no Date branch of its own - is
+ * silently dropped rather than represented, so every leaf must be resolved
+ * through `xeroProviderInstant` before this function can trust `typeof`.
+ */
+function toJsonSafeReportValue(value: unknown, depth = 0): unknown {
+  if (value === null || value === undefined) return null;
+  const instant = xeroProviderInstant(value);
+  if (instant) return instant.toISOString();
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "object") return null;
+  if (depth >= 32) return "[MCP omitted value beyond nesting limit]";
+  if (Array.isArray(value)) return value.map((entry) => toJsonSafeReportValue(entry, depth + 1));
+  const result: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as ProviderObject)) {
+    result[key] = toJsonSafeReportValue(entry, depth + 1);
+  }
+  return result;
+}
+
+/** Faithful pass-through entry point for any Xero `ReportWithRows` response. See toJsonSafeReportValue. */
+export function mapXeroReportEnvelope(input: unknown): Record<string, unknown> {
+  const safe = toJsonSafeReportValue(providerObject(input) ?? {});
+  return safe && typeof safe === "object" && !Array.isArray(safe) ? safe as Record<string, unknown> : {};
 }
 
 function mapItemDefaults(value: unknown): ItemAccountingDefaults | undefined {

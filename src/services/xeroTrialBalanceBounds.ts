@@ -1,5 +1,9 @@
+import { hashObject } from "../security/hash.js";
+
 export const XERO_TRIAL_BALANCE_MAX_MODEL_TEXT_UTF8_BYTES = 96 * 1_024;
 export const XERO_TRIAL_BALANCE_MAX_CALL_TOOL_RESULT_UTF8_BYTES = 128 * 1_024;
+/** Reserved for the normalized provenance envelope added at the MCP boundary. */
+export const XERO_TRIAL_BALANCE_READ_EVIDENCE_RESERVE_UTF8_BYTES = 8 * 1_024;
 export const XERO_TRIAL_BALANCE_MAX_RETURNED_VISITED_JSON_NODES = 5_000;
 export const XERO_TRIAL_BALANCE_MAX_RETURNED_NESTING_DEPTH = 64;
 export const XERO_TRIAL_BALANCE_MAX_SOURCE_INSPECTED_JSON_NODES = 20_000;
@@ -499,12 +503,12 @@ function orderedReasons(reasons: ReadonlySet<XeroTrialBalanceTruncationReason>):
   return REASON_ORDER.filter((reason) => reasons.has(reason));
 }
 
-function transportSnapshot(result: XeroTrialBalanceAgentResult): {
+function transportSnapshot(result: XeroTrialBalanceAgentResult, evidence?: object): {
   modelText: string;
   modelTextUtf8Bytes: number;
   callToolResultUtf8Bytes: number;
 } {
-  const modelText = JSON.stringify({ result });
+  const modelText = JSON.stringify(evidence ? { result, ...evidence } : { result });
   const callToolResult = { content: [{ type: "text", text: modelText }] };
   return {
     modelText,
@@ -513,9 +517,12 @@ function transportSnapshot(result: XeroTrialBalanceAgentResult): {
   };
 }
 
-function stabilizeTransportByteCounts(result: XeroTrialBalanceAgentResult): ReturnType<typeof transportSnapshot> {
+function stabilizeTransportByteCounts(
+  result: XeroTrialBalanceAgentResult,
+  evidence?: object,
+): ReturnType<typeof transportSnapshot> {
   for (let iteration = 0; iteration < 16; iteration += 1) {
-    const snapshot = transportSnapshot(result);
+    const snapshot = transportSnapshot(result, evidence);
     if (
       result.pagination.modelTextUtf8Bytes === snapshot.modelTextUtf8Bytes &&
       result.pagination.callToolResultUtf8Bytes === snapshot.callToolResultUtf8Bytes
@@ -585,8 +592,10 @@ function buildCandidate(
 }
 
 function candidateFits(candidate: Candidate): boolean {
-  return candidate.modelTextUtf8Bytes <= XERO_TRIAL_BALANCE_MAX_MODEL_TEXT_UTF8_BYTES &&
-    candidate.callToolResultUtf8Bytes <= XERO_TRIAL_BALANCE_MAX_CALL_TOOL_RESULT_UTF8_BYTES;
+  return candidate.modelTextUtf8Bytes <=
+      XERO_TRIAL_BALANCE_MAX_MODEL_TEXT_UTF8_BYTES - XERO_TRIAL_BALANCE_READ_EVIDENCE_RESERVE_UTF8_BYTES &&
+    candidate.callToolResultUtf8Bytes <=
+      XERO_TRIAL_BALANCE_MAX_CALL_TOOL_RESULT_UTF8_BYTES - XERO_TRIAL_BALANCE_READ_EVIDENCE_RESERVE_UTF8_BYTES;
 }
 
 /** Returns a deterministic, JSON-safe, non-mutating Agent view of a Xero Trial Balance. */
@@ -602,10 +611,16 @@ export function boundXeroTrialBalanceForAgent(source: Record<string, unknown>): 
   if (candidateFits(candidate)) return candidate.result;
 
   const transportReasons = new Set<XeroTrialBalanceTruncationReason>();
-  if (candidate.modelTextUtf8Bytes > XERO_TRIAL_BALANCE_MAX_MODEL_TEXT_UTF8_BYTES) {
+  if (
+    candidate.modelTextUtf8Bytes >
+    XERO_TRIAL_BALANCE_MAX_MODEL_TEXT_UTF8_BYTES - XERO_TRIAL_BALANCE_READ_EVIDENCE_RESERVE_UTF8_BYTES
+  ) {
     transportReasons.add("MAX_MODEL_TEXT_UTF8_BYTES");
   }
-  if (candidate.callToolResultUtf8Bytes > XERO_TRIAL_BALANCE_MAX_CALL_TOOL_RESULT_UTF8_BYTES) {
+  if (
+    candidate.callToolResultUtf8Bytes >
+    XERO_TRIAL_BALANCE_MAX_CALL_TOOL_RESULT_UTF8_BYTES - XERO_TRIAL_BALANCE_READ_EVIDENCE_RESERVE_UTF8_BYTES
+  ) {
     transportReasons.add("MAX_CALL_TOOL_RESULT_UTF8_BYTES");
   }
 
@@ -647,8 +662,17 @@ export function boundXeroTrialBalanceForAgent(source: Record<string, unknown>): 
 /** Serializes the one canonical, content-only Trial Balance MCP model output. */
 export function createXeroTrialBalanceCallToolResult(
   result: XeroTrialBalanceAgentResult,
+  evidence?: object,
 ): XeroTrialBalanceContentOnlyCallToolResult {
-  const snapshot = transportSnapshot(result);
+  const normalizedEvidence = evidence
+    ? { ...evidence, output_hash: `sha256:${"0".repeat(64)}` }
+    : undefined;
+  if (normalizedEvidence) {
+    stabilizeTransportByteCounts(result, normalizedEvidence);
+    normalizedEvidence.output_hash = `sha256:${hashObject(result)}`;
+  }
+  const snapshot = transportSnapshot(result, normalizedEvidence);
+  const bareSnapshot = transportSnapshot(result);
   if (
     snapshot.modelTextUtf8Bytes !== result.pagination.modelTextUtf8Bytes ||
     snapshot.callToolResultUtf8Bytes !== result.pagination.callToolResultUtf8Bytes
@@ -660,6 +684,17 @@ export function createXeroTrialBalanceCallToolResult(
     snapshot.callToolResultUtf8Bytes > XERO_TRIAL_BALANCE_MAX_CALL_TOOL_RESULT_UTF8_BYTES
   ) {
     throw new Error("Trial Balance MCP result exceeds its transport byte contract.");
+  }
+  if (
+    normalizedEvidence &&
+    (
+      snapshot.modelTextUtf8Bytes - bareSnapshot.modelTextUtf8Bytes >
+        XERO_TRIAL_BALANCE_READ_EVIDENCE_RESERVE_UTF8_BYTES ||
+      snapshot.callToolResultUtf8Bytes - bareSnapshot.callToolResultUtf8Bytes >
+        XERO_TRIAL_BALANCE_READ_EVIDENCE_RESERVE_UTF8_BYTES
+    )
+  ) {
+    throw new Error("Trial Balance read evidence exceeds its reserved transport budget.");
   }
   return { content: [{ type: "text", text: snapshot.modelText }] };
 }

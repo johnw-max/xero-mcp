@@ -1,3 +1,11 @@
+/**
+ * LEGACY INTERNAL MUTATION-KERNEL REGRESSION ONLY.
+ *
+ * This runner exposes object-level tools behind the test-only switch so old
+ * idempotency/recovery fixtures remain executable. It is not a 0.4
+ * Agent-facing release gate; current evidence comes from the 28-tool
+ * Accounting Case contract and Case service suites.
+ */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -281,6 +289,14 @@ class CaseHarness {
     const tickets = new ConnectionTicketService(repository, "https://xero-mcp.p0-write-harness.invalid");
     const mutationFoundation = new XeroMutationService(repository, {
       confirmationSecret: CONFIRMATION_SECRET,
+      writeEnabled: this.gate.isOpen,
+      providerCapabilityEvaluator: {
+        evaluate: async (_context, actionId) => ({
+          allowed: this.gate.isOpen,
+          denyReasons: this.gate.isOpen ? [] : ["WRITE_GATE_CLOSED"],
+          receiptHash: hashObject({ actionId, writeGateOpen: this.gate.isOpen, instanceId }),
+        }),
+      },
     });
     const service = new AccountingService({
       repository,
@@ -302,7 +318,14 @@ class CaseHarness {
   }
 
   async openEndpoint(runtime: RuntimeInstance, suffix: string): Promise<McpEndpoint> {
-    const server = createAccountingMcpServer(runtime.service, this.context);
+    const server = createAccountingMcpServer(
+      runtime.service,
+      this.context,
+      undefined,
+      undefined,
+      undefined,
+      { unsafeExposeLegacyObjectMutationToolsForTests: true },
+    );
     const client = new Client({ name: `xero-p0-write-${suffix}`, version: "1.0.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport as unknown as Transport);
@@ -368,6 +391,7 @@ function writeResolvedToken(tenantId: string): ResolvedMcpAccessToken {
     installationId: "installation_p0_write_001",
     bindingId: "binding_p0_write_001",
     connectionId: "connection_xero_harness_001",
+    bindingRevision: 1,
     authorizationId: "authorization_p0_write_001",
     workspaceId: "workspace_p0_write",
     subjectType: "USER",
@@ -414,6 +438,7 @@ function createRepositoryFacade(
             subjectId: token.subjectId,
             agentId: token.agentId,
             connectionId: token.connectionId,
+            bindingRevision: token.bindingRevision,
             authorizationId: token.authorizationId,
             tenantId,
             tenantName: "Harbour Light Advisory Limited - SYNTHETIC",
@@ -675,7 +700,6 @@ function preparedExecuteInput(
   return executePreparedXeroMutationSchema.parse({
     preparation_id: result?.preparation_id,
     request_id: requestId,
-    confirmation_phrase: result?.confirmation_phrase,
   });
 }
 
@@ -714,7 +738,6 @@ async function postingForInput(
   input: CreateDraftSupplierBillInput,
 ): Promise<PostingRequest | undefined> {
   return harness.backingRepository.findActivePostingDuplicate({
-    actorId: harness.context.actorId,
     tenantId: harness.provider.tenantId,
     sourceSha256: input.source_sha256,
     contactId: input.contact_id.trim().toLowerCase(),
@@ -844,7 +867,7 @@ async function runIdempotencyCase(options: {
     const mutation = mutationRequestId(first)
       ? await harness.backingRepository.getXeroMutationRequest(mutationRequestId(first) as string)
       : undefined;
-    const mutationRef = harness.evidence.add(harness.caseId, "REPOSITORY_STATE", "idempotency-confirmation-state", {
+    const mutationRef = harness.evidence.add(harness.caseId, "REPOSITORY_STATE", "idempotency-mutation-state", {
       mutation: mutation ?? null,
     });
     refs.push(postingRef, mutationRef, harness.closeGate());
@@ -875,9 +898,9 @@ async function runIdempotencyCase(options: {
     const oracleResults = [
       oracle("write_gate_starts_closed", closedProbe.errorCode === "FORBIDDEN" && !first.isError && harness.provider.writeAttempts === 1, {
         closedProbeCode: closedProbe.errorCode ?? null,
-        confirmationReusedAfterOpen: !first.isError,
+        preparedCommandReusableAfterOpen: !first.isError,
         finalCreateCallCount: harness.provider.writeAttempts,
-      }, [...closedProbe.evidenceRefs, ...first.evidenceRefs], "The prepared one-time confirmation must be rejected while the gate is closed without being consumed, then remain usable after the gate opens."),
+      }, [...closedProbe.evidenceRefs, ...first.evidenceRefs], "The immutable prepared command must be rejected while the emergency gate is closed without being consumed, then remain usable after the gate opens."),
       oracle("same_request_same_ids", sameIds, {
         firstPostingRequestId: postingId(first) ?? null,
         replayPostingRequestId: postingId(replay) ?? null,
@@ -888,14 +911,14 @@ async function runIdempotencyCase(options: {
         first: isReplay(first) ?? null,
         replay: isReplay(replay) ?? null,
       }, [...first.evidenceRefs, ...replay.evidenceRefs], "Only the second identical request may be reported as an idempotent replay."),
-      oracle("payload_conflict", ["APPROVAL_INVALID", "CONFLICT"].includes(changed.errorCode ?? ""), changed.errorCode ?? null, changed.evidenceRefs, "A separately prepared changed payload under one request_id must be rejected by the one-time confirmation boundary."),
+      oracle("payload_conflict", ["APPROVAL_INVALID", "CONFLICT"].includes(changed.errorCode ?? ""), changed.errorCode ?? null, changed.evidenceRefs, "A separately prepared changed payload under one request_id must be rejected by immutable preparation and idempotency controls."),
       oracle("one_provider_write", harness.provider.writeAttempts === 1, harness.provider.writeAttempts, refs, "Exactly one Provider create call is allowed."),
       oracle("one_provider_record", harness.provider.records.length === 1, harness.provider.records.length, refs, "Exactly one synthetic Xero DRAFT record is allowed."),
       oracle("one_repository_posting", posting?.postingRequestId === postingId(first) && posting?.state === "APPROVAL_PENDING", {
         postingRequestId: posting?.postingRequestId ?? null,
         state: posting?.state ?? null,
       }, [postingRef], "The repository must retain one approval-pending posting."),
-      oracle("one_time_confirmation_readback_verified", mutation?.state === "READBACK_VERIFIED" && mutation?.xeroObjectId === invoiceId(first), {
+      oracle("mutation_readback_verified", mutation?.state === "READBACK_VERIFIED" && mutation?.xeroObjectId === invoiceId(first), {
         mutationRequestId: mutation?.mutationRequestId ?? null,
         state: mutation?.state ?? null,
         xeroObjectId: mutation?.xeroObjectId ?? null,
@@ -1226,7 +1249,7 @@ async function runRecoveryCase(options: {
     const genericMutationRef = harness.evidence.add(
       harness.caseId,
       "REPOSITORY_STATE",
-      "timeout-recovery-one-time-confirmation-state",
+      "timeout-recovery-mutation-state",
       { mutation: genericMutation ?? null },
     );
     const recoveryProviderMethods = harness.provider.calls.slice(providerCallsBeforeRecovery).map((call) => call.method);
@@ -1455,7 +1478,7 @@ async function runRepositoryCompletionCase(options: {
     const genericMutationRef = harness.evidence.add(
       harness.caseId,
       "REPOSITORY_STATE",
-      "repository-completion-one-time-confirmation-state",
+      "repository-completion-mutation-state",
       { mutation: genericMutation ?? null },
     );
     const recoveryProviderMethods = harness.provider.calls.slice(providerCallsBeforeRecovery).map((call) => call.method);

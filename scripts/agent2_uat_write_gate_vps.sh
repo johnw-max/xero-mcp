@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
+# HISTORICAL 0.3.1 UAT SCRIPT ONLY. Its 44-tool and per-document workflow
+# assertions are preserved as deployment evidence and must not gate 0.4.0-rc.1.
 set -euo pipefail
 
-readonly RELEASE_DIR="/opt/xero-accounting-mcp-demo-0.3.0-20260808.4"
-readonly EXPECTED_IMAGE_REF="xero-accounting-mcp-demo:0.3.0-xero-pilot-20260808.4"
-readonly EXPECTED_VERSION="0.3.0"
-readonly EXPECTED_TOOL_COUNT="43"
-readonly EXPECTED_TOOLSET_HASH="a76bf853dc4bc71bf33e5b42f936fbcc9d6593d67d23e40dedccc4d1e2ae5d65"
+readonly RELEASE_DIR="/opt/xero-accounting-mcp-demo-0.3.1-20260810.1"
+readonly EXPECTED_IMAGE_REF="xero-accounting-mcp-demo:0.3.1-xero-pilot-20260810.1"
+readonly EXPECTED_VERSION="0.3.1"
+readonly EXPECTED_TOOL_COUNT="44"
+readonly EXPECTED_TOOLSET_HASH="d2ac8c01f7a68182e3fd88edd4e5f294dd16a8f7c0fb96260f55f47a4e290224"
 readonly EXPECTED_PUBLIC_BASE_URL="https://mcp.jiayuanwang.xyz"
 readonly EXPECTED_RESOURCE="${EXPECTED_PUBLIC_BASE_URL}/mcp"
 readonly EXPECTED_LOOPBACK_BASE_URL="http://127.0.0.1:18004"
 readonly TEST_TENANT_ID="7c3cc738-eef0-4d4e-83f8-d528390e1e61"
 readonly EXPECTED_CLIENT_ID="agent2-xero-bd0796db041ee01e"
-readonly BASELINE_FILE="/tmp/xero-agent2-uat-write-gate-0.3.0-20260808.4.baseline"
-readonly LOCK_FILE="/run/lock/xero-agent2-uat-write-gate-0.3.0-20260808.4.lock"
-readonly AUTOCLOSE_UNIT="xero-write-gate-autoclose-030-20260808-4"
+readonly BASELINE_FILE="/tmp/xero-agent2-uat-write-gate-0.3.1-20260810.1.baseline"
+readonly LOCK_FILE="/run/lock/xero-agent2-uat-write-gate-0.3.1-20260810.1.lock"
+readonly AUTOCLOSE_UNIT="xero-write-gate-autoclose-031-20260810-1"
 readonly AUTOCLOSE_DELAY="15m"
 readonly RETRY_DELAY="15s"
 readonly RETRY_WINDOW="15min"
 readonly RETRY_START_LIMIT_BURST="4"
-readonly BOOT_FAILSAFE_UNIT="xero-write-gate-boot-close-030-20260808-4.service"
-readonly BOOT_FAILSAFE_SCRIPT="/usr/local/sbin/xero-agent2-uat-write-gate-030-20260808-4"
+readonly BOOT_FAILSAFE_UNIT="xero-write-gate-boot-close-031-20260810-1.service"
+readonly BOOT_FAILSAFE_SCRIPT="/usr/local/sbin/xero-agent2-uat-write-gate-031-20260810-1"
 readonly BOOT_FAILSAFE_UNIT_PATH="/etc/systemd/system/${BOOT_FAILSAFE_UNIT}"
 readonly BOOT_FAILSAFE_WANTS_LINK="/etc/systemd/system/nginx.service.wants/${BOOT_FAILSAFE_UNIT}"
 readonly LEGACY_BOOT_FAILSAFE_REQUIRES_LINK="/etc/systemd/system/nginx.service.requires/${BOOT_FAILSAFE_UNIT}"
@@ -32,9 +34,6 @@ GATE_MAY_BE_OPEN=0
 ENV_TEMP_FILE=""
 UNIT_TEMP_FILE=""
 BOOT_DEPENDENCY_SNAPSHOT_VALID=0
-BOOT_QB_ID=""
-BOOT_QB_IMAGE=""
-BOOT_QB_STARTED=""
 BOOT_PG_ID=""
 BOOT_PG_IMAGE=""
 BOOT_PG_STARTED=""
@@ -423,22 +422,17 @@ verify_xero_restart_policy() {
 }
 
 write_baseline() {
-  local app_id qb_id pg_id env_hash tmp
+  local app_id pg_id env_hash tmp
   app_id="$(green_compose ps -q accounting-mcp-green)"
-  qb_id="$(main_compose ps -q quickbooks-mcp)"
   pg_id="$(main_compose ps -q postgres)"
   test -n "$app_id" || fail "BASELINE_XERO_CONTAINER_MISSING"
-  test -n "$qb_id" || fail "BASELINE_QUICKBOOKS_CONTAINER_MISSING"
   test -n "$pg_id" || fail "BASELINE_POSTGRES_CONTAINER_MISSING"
   env_hash="$(sha256sum "$ENV_FILE" | awk '{print $1}')"
   tmp="$(mktemp "${BASELINE_FILE}.XXXXXX")"
   chmod 600 "$tmp"
-  printf 'ENV_HASH=%s\nAPP_IMAGE=%s\nQB_ID=%s\nQB_IMAGE=%s\nQB_STARTED=%s\nPG_ID=%s\nPG_IMAGE=%s\nPG_STARTED=%s\n' \
+  printf 'ENV_HASH=%s\nAPP_IMAGE=%s\nPG_ID=%s\nPG_IMAGE=%s\nPG_STARTED=%s\n' \
     "$env_hash" \
     "$(docker inspect -f '{{.Image}}' "$app_id")" \
-    "$qb_id" \
-    "$(docker inspect -f '{{.Image}}' "$qb_id")" \
-    "$(docker inspect -f '{{.State.StartedAt}}' "$qb_id")" \
     "$pg_id" \
     "$(docker inspect -f '{{.Image}}' "$pg_id")" \
     "$(docker inspect -f '{{.State.StartedAt}}' "$pg_id")" >"$tmp"
@@ -448,18 +442,14 @@ write_baseline() {
 
 capture_boot_dependency_snapshot() {
   BOOT_DEPENDENCY_SNAPSHOT_VALID=0
-  BOOT_QB_ID="$(main_compose ps -a -q quickbooks-mcp 2>/dev/null || true)"
   BOOT_PG_ID="$(main_compose ps -a -q postgres 2>/dev/null || true)"
-  if test -z "$BOOT_QB_ID" || test -z "$BOOT_PG_ID"; then
+  if test -z "$BOOT_PG_ID"; then
     audit "BOOT_DEPENDENCY_SNAPSHOT" "INCOMPLETE"
     return 0
   fi
-  BOOT_QB_IMAGE="$(docker inspect -f '{{.Image}}' "$BOOT_QB_ID" 2>/dev/null || true)"
-  BOOT_QB_STARTED="$(docker inspect -f '{{.State.StartedAt}}' "$BOOT_QB_ID" 2>/dev/null || true)"
   BOOT_PG_IMAGE="$(docker inspect -f '{{.Image}}' "$BOOT_PG_ID" 2>/dev/null || true)"
   BOOT_PG_STARTED="$(docker inspect -f '{{.State.StartedAt}}' "$BOOT_PG_ID" 2>/dev/null || true)"
-  if test -z "$BOOT_QB_IMAGE" || test -z "$BOOT_QB_STARTED" ||
-    test -z "$BOOT_PG_IMAGE" || test -z "$BOOT_PG_STARTED"; then
+  if test -z "$BOOT_PG_IMAGE" || test -z "$BOOT_PG_STARTED"; then
     audit "BOOT_DEPENDENCY_SNAPSHOT" "INCOMPLETE"
     return 0
   fi
@@ -469,11 +459,6 @@ capture_boot_dependency_snapshot() {
 
 verify_boot_dependency_continuity() {
   test "$BOOT_DEPENDENCY_SNAPSHOT_VALID" -eq 1 || fail "BOOT_DEPENDENCY_SNAPSHOT_INVALID"
-  test "$(main_compose ps -a -q quickbooks-mcp)" = "$BOOT_QB_ID" || fail "BOOT_QUICKBOOKS_CONTAINER_CHANGED"
-  test "$(docker inspect -f '{{.Image}}' "$BOOT_QB_ID")" = "$BOOT_QB_IMAGE" ||
-    fail "BOOT_QUICKBOOKS_IMAGE_CHANGED"
-  test "$(docker inspect -f '{{.State.StartedAt}}' "$BOOT_QB_ID")" = "$BOOT_QB_STARTED" ||
-    fail "BOOT_QUICKBOOKS_RESTARTED"
   test "$(main_compose ps -a -q postgres)" = "$BOOT_PG_ID" || fail "BOOT_POSTGRES_CONTAINER_CHANGED"
   test "$(docker inspect -f '{{.Image}}' "$BOOT_PG_ID")" = "$BOOT_PG_IMAGE" ||
     fail "BOOT_POSTGRES_IMAGE_CHANGED"
@@ -487,19 +472,14 @@ read_baseline_value() {
 }
 
 verify_continuity() {
-  local app_id qb_id pg_id
+  local app_id pg_id
   test -f "$BASELINE_FILE" || fail "BASELINE_FILE_MISSING"
   test ! -L "$BASELINE_FILE" || fail "BASELINE_FILE_MUST_NOT_BE_SYMLINK"
   app_id="$(green_compose ps -q accounting-mcp-green)"
-  qb_id="$(main_compose ps -q quickbooks-mcp)"
   pg_id="$(main_compose ps -q postgres)"
   test -n "$app_id" || fail "CONTINUITY_XERO_CONTAINER_MISSING"
-  test -n "$qb_id" || fail "CONTINUITY_QUICKBOOKS_CONTAINER_MISSING"
   test -n "$pg_id" || fail "CONTINUITY_POSTGRES_CONTAINER_MISSING"
   test "$(docker inspect -f '{{.Image}}' "$app_id")" = "$(read_baseline_value APP_IMAGE)" || fail "CONTINUITY_XERO_IMAGE_CHANGED"
-  test "$qb_id" = "$(read_baseline_value QB_ID)" || fail "CONTINUITY_QUICKBOOKS_CONTAINER_CHANGED"
-  test "$(docker inspect -f '{{.Image}}' "$qb_id")" = "$(read_baseline_value QB_IMAGE)" || fail "CONTINUITY_QUICKBOOKS_IMAGE_CHANGED"
-  test "$(docker inspect -f '{{.State.StartedAt}}' "$qb_id")" = "$(read_baseline_value QB_STARTED)" || fail "CONTINUITY_QUICKBOOKS_RESTARTED"
   test "$pg_id" = "$(read_baseline_value PG_ID)" || fail "CONTINUITY_POSTGRES_CONTAINER_CHANGED"
   test "$(docker inspect -f '{{.Image}}' "$pg_id")" = "$(read_baseline_value PG_IMAGE)" || fail "CONTINUITY_POSTGRES_IMAGE_CHANGED"
   test "$(docker inspect -f '{{.State.StartedAt}}' "$pg_id")" = "$(read_baseline_value PG_STARTED)" || fail "CONTINUITY_POSTGRES_RESTARTED"
@@ -527,7 +507,7 @@ schedule_autoclose() {
   systemctl reset-failed "${AUTOCLOSE_UNIT}.timer" "${AUTOCLOSE_UNIT}.service" >/dev/null 2>&1 || true
   systemd-run \
     --unit="$AUTOCLOSE_UNIT" \
-    --description="Close the Xero 0.3.0 Agent2 UAT write gate" \
+    --description="Close the Xero 0.3.1 Agent2 UAT write gate" \
     --on-active="$AUTOCLOSE_DELAY" \
     --timer-property=AccuracySec=1s \
     --property=Type=oneshot \
@@ -654,10 +634,9 @@ open_gate() {
   audit "WRITE_GATE" "OPEN"
   audit "BINDING" "PASS"
   audit "AUTOCLOSE" "ACTIVE"
-  audit "RELEASE" "0.3.0-20260808.4"
+  audit "RELEASE" "0.3.1-20260810.1"
   audit "RESOURCE" "$EXPECTED_RESOURCE"
   audit "XERO_IMAGE" "PINNED"
-  audit "QUICKBOOKS_CONTINUITY" "PASS"
   audit "POSTGRES_CONTINUITY" "PASS"
   audit "HEALTH" "PASS"
 }
@@ -678,10 +657,9 @@ boot_close_gate() {
   verify_boot_dependency_continuity
   loopback_health_check
   audit "BOOT_WRITE_GATE" "CLOSED"
-  audit "RELEASE" "0.3.0-20260808.4"
+  audit "RELEASE" "0.3.1-20260810.1"
   audit "RESOURCE" "$EXPECTED_RESOURCE"
   audit "XERO_IMAGE" "PINNED"
-  audit "QUICKBOOKS_CONTINUITY" "PASS"
   audit "POSTGRES_CONTINUITY" "PASS"
   audit "LOOPBACK_HEALTH" "PASS"
 }
@@ -700,14 +678,12 @@ close_gate() {
   deployment_check
   verify_xero_restart_policy "unless-stopped"
   verify_continuity
-  binding_check
   health_check
   audit "WRITE_GATE" "CLOSED"
-  audit "BINDING" "PASS"
-  audit "RELEASE" "0.3.0-20260808.4"
+  audit "BINDING" "NOT_REQUIRED_WRITE_CLOSED"
+  audit "RELEASE" "0.3.1-20260810.1"
   audit "RESOURCE" "$EXPECTED_RESOURCE"
   audit "XERO_IMAGE" "PINNED"
-  audit "QUICKBOOKS_CONTINUITY" "PASS"
   audit "POSTGRES_CONTINUITY" "PASS"
   audit "HEALTH" "PASS"
 }
@@ -716,20 +692,21 @@ status_gate() {
   verify_boot_failsafe
   verify_boot_failsafe_activation
   deployment_check
-  binding_check
   health_check
   if green_compose exec -T accounting-mcp-green sh -eu -c 'test "$XERO_WRITE_ENABLED" = "true"'; then
+    binding_check
     verify_autoclose_schedule
     verify_xero_restart_policy "no"
     audit "WRITE_GATE" "OPEN"
+    audit "BINDING" "PASS"
     audit "AUTOCLOSE" "ACTIVE"
   else
     green_compose exec -T accounting-mcp-green sh -eu -c 'test "$XERO_WRITE_ENABLED" = "false"' || fail "WRITE_GATE_VALUE_INVALID"
     verify_xero_restart_policy "unless-stopped"
     audit "WRITE_GATE" "CLOSED"
+    audit "BINDING" "NOT_REQUIRED_WRITE_CLOSED"
   fi
-  audit "BINDING" "PASS"
-  audit "RELEASE" "0.3.0-20260808.4"
+  audit "RELEASE" "0.3.1-20260810.1"
   audit "RESOURCE" "$EXPECTED_RESOURCE"
   audit "XERO_IMAGE" "PINNED"
   audit "HEALTH" "PASS"

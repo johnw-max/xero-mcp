@@ -1,6 +1,7 @@
 import { AppError } from "../../src/errors.js";
 import type {
   CreditNoteType,
+  CreateDraftSalesInvoiceInput,
   CreateDraftSupplierBillInput,
   InvoiceType,
   ListContactsInput,
@@ -10,27 +11,48 @@ import type {
   PaymentType,
 } from "../../src/domain/schemas.js";
 import type {
+  ListBankTransactionsInput,
+  ListItemsInput,
+  ListManualJournalsInput,
+  ListPurchaseOrdersInput,
+  ListQuotesInput,
+} from "../../src/domain/extendedReadSchemas.js";
+import type {
   AccountingPrincipal,
   AccountingProvider,
   AccountSummary,
   ActorTenantContext,
+  BankTransactionListResult,
   ConnectionSummary,
   ContactSearchResult,
   ContactListResult,
   ContactSummary,
   CreditNoteListResult,
+  CreditNoteSnapshot,
   CreditNoteSummary,
   InvoiceListResult,
   InvoiceSnapshot,
   InvoiceSummary,
+  ItemListResult,
+  ManualJournalListResult,
   OrganisationSummary,
   PaymentListResult,
   PaymentSummary,
+  ProviderSalesInvoiceWriteResult,
   ProviderWriteResult,
+  PurchaseOrderListResult,
+  QuoteListResult,
   SupplierBillDraftReferenceData,
   SupplierBillSnapshot,
   TaxRateSummary,
 } from "../../src/providers/types.js";
+import type {
+  BankTransactionSnapshot,
+  ItemSummary,
+  ManualJournalSnapshot,
+  PurchaseOrderSnapshot,
+  QuoteSnapshot,
+} from "../../src/providers/xeroExtendedReadMapper.js";
 
 export const SYNTHETIC_CONNECTION_ID = "connection_xero_harness_001";
 
@@ -65,9 +87,22 @@ interface SyntheticLedgerFixture {
   };
 }
 
+/**
+ * `authoriseSupplierBill` is not part of the real `AccountingProvider`
+ * interface: it is a legacy test-only escape hatch that `AccountingService`
+ * exposes behind `#assertUnsafeDirectMutationForTests` /
+ * `#unsafeLegacyAuthoriseProvider` (see src/services/accountingService.ts),
+ * duck-typed onto whatever provider is configured rather than declared on
+ * the interface. The synthetic providers implement it anyway, purely as a
+ * write-escape guard: run-p0-controlled-write.ts asserts it is never
+ * reached. Widening the recorded-method type here (not `AccountingProvider`
+ * itself) is what makes that call honest instead of unchecked.
+ */
+export type SyntheticProviderMethod = keyof AccountingProvider | "authoriseSupplierBill";
+
 export interface ProviderCallEvidence {
   sequence: number;
-  method: keyof AccountingProvider;
+  method: SyntheticProviderMethod;
   principal: {
     actorId: string;
     workspaceId?: string;
@@ -118,7 +153,12 @@ function normalized(value: string | undefined): string {
 function page<T>(items: T[], pageNumber: number, pageSize: number): { items: T[]; pagination: FixturePageEvidence } {
   const start = (pageNumber - 1) * pageSize;
   const selected = items.slice(start, start + pageSize);
-  const providerPageCount = Math.max(1, Math.ceil(items.length / pageSize));
+  // Real Xero reports pageCount 0 for a filter that matches nothing (see the
+  // captured contacts_empty_filter fixture) - an exact, exhausted answer, not
+  // "at least one page". Forcing a floor of 1 here made every empty result look
+  // like a single, non-empty page, which is the same test-double-echoes-back
+  // shape this repo has already been bitten by more than once.
+  const providerPageCount = Math.ceil(items.length / pageSize);
   return {
     items: selected,
     pagination: {
@@ -197,7 +237,7 @@ export class SyntheticXeroAccountingProvider implements AccountingProvider {
   }
 
   #record(
-    method: keyof AccountingProvider,
+    method: SyntheticProviderMethod,
     principal: AccountingPrincipal,
     input: Record<string, unknown> = {},
     outputEvidence?: Record<string, unknown>,
@@ -376,6 +416,75 @@ export class SyntheticXeroAccountingProvider implements AccountingProvider {
     return { payments: clone(selected.items), pagination: selected.pagination };
   }
 
+  /**
+   * Quotes, purchase orders, manual journals, items and bank transactions: the
+   * P0 read-only fixture (harness/fixtures/xero/synthetic-ledger.json) does not
+   * model any of these object types. Until it does, a call here is a bug in the
+   * caller, not a value this fixture can plausibly fabricate - so it records
+   * the attempt (consistent with every other Provider call) and fails loudly
+   * with ACTION_UNSUPPORTED rather than returning an empty-but-plausible list.
+   */
+  #notImplemented(method: keyof AccountingProvider, principal: AccountingPrincipal, input: Record<string, unknown> = {}): never {
+    this.#record(method, principal, input, { implemented: false });
+    throw new AppError(
+      "ACTION_UNSUPPORTED",
+      `Not implemented in synthetic provider: ${method}. The P0 fixture does not model this capability.`,
+      { httpStatus: 501, details: { providerMutationPossible: false } },
+    );
+  }
+
+  async listQuotes(principal: AccountingPrincipal, input: ListQuotesInput): Promise<QuoteListResult> {
+    this.#notImplemented("listQuotes", principal, { ...input });
+  }
+
+  async getQuote(principal: AccountingPrincipal, quoteId: string): Promise<QuoteSnapshot> {
+    this.#notImplemented("getQuote", principal, { quoteId });
+  }
+
+  async listPurchaseOrders(
+    principal: AccountingPrincipal,
+    input: ListPurchaseOrdersInput,
+  ): Promise<PurchaseOrderListResult> {
+    this.#notImplemented("listPurchaseOrders", principal, { ...input });
+  }
+
+  async getPurchaseOrder(principal: AccountingPrincipal, purchaseOrderId: string): Promise<PurchaseOrderSnapshot> {
+    this.#notImplemented("getPurchaseOrder", principal, { purchaseOrderId });
+  }
+
+  async listManualJournals(
+    principal: AccountingPrincipal,
+    input: ListManualJournalsInput,
+  ): Promise<ManualJournalListResult> {
+    this.#notImplemented("listManualJournals", principal, { ...input });
+  }
+
+  async getManualJournal(principal: AccountingPrincipal, manualJournalId: string): Promise<ManualJournalSnapshot> {
+    this.#notImplemented("getManualJournal", principal, { manualJournalId });
+  }
+
+  async listItems(principal: AccountingPrincipal, input: ListItemsInput): Promise<ItemListResult> {
+    this.#notImplemented("listItems", principal, { ...input });
+  }
+
+  async getItem(principal: AccountingPrincipal, itemId: string): Promise<ItemSummary> {
+    this.#notImplemented("getItem", principal, { itemId });
+  }
+
+  async listBankTransactions(
+    principal: AccountingPrincipal,
+    input: ListBankTransactionsInput,
+  ): Promise<BankTransactionListResult> {
+    this.#notImplemented("listBankTransactions", principal, { ...input });
+  }
+
+  async getBankTransaction(
+    principal: AccountingPrincipal,
+    bankTransactionId: string,
+  ): Promise<BankTransactionSnapshot> {
+    this.#notImplemented("getBankTransaction", principal, { bankTransactionId });
+  }
+
   async getInvoice(
     principal: AccountingPrincipal,
     invoiceId: string,
@@ -388,6 +497,18 @@ export class SyntheticXeroAccountingProvider implements AccountingProvider {
     });
     if (!invoice) throw new AppError("NOT_FOUND", "The synthetic invoice was not found.", { httpStatus: 404 });
     return clone(invoice);
+  }
+
+  async getCreditNote(
+    principal: AccountingPrincipal,
+    creditNoteId: string,
+    expectedType?: CreditNoteType,
+  ): Promise<CreditNoteSnapshot> {
+    this.#record("getCreditNote", principal, {
+      creditNoteId,
+      ...(expectedType ? { expectedType } : {}),
+    }, { found: false });
+    throw new AppError("NOT_FOUND", "The synthetic fixture has no exact credit-note snapshot.", { httpStatus: 404 });
   }
 
   async getSupplierBill(principal: AccountingPrincipal, invoiceId: string): Promise<SupplierBillSnapshot> {
@@ -409,6 +530,19 @@ export class SyntheticXeroAccountingProvider implements AccountingProvider {
       idempotencyKey,
     });
     throw new Error("P0_READ_ONLY_WRITE_ESCAPE: createDraftSupplierBill reached the Provider");
+  }
+
+  async createDraftSalesInvoice(
+    principal: AccountingPrincipal,
+    input: CreateDraftSalesInvoiceInput,
+    idempotencyKey: string,
+  ): Promise<ProviderSalesInvoiceWriteResult> {
+    this.#writeAttemptCount += 1;
+    this.#record("createDraftSalesInvoice", principal, {
+      requestId: input.request_id,
+      idempotencyKey,
+    });
+    throw new Error("P0_READ_ONLY_WRITE_ESCAPE: createDraftSalesInvoice reached the Provider");
   }
 
   async authoriseSupplierBill(
@@ -459,6 +593,38 @@ export class SyntheticXeroAccountingProvider implements AccountingProvider {
         rows,
       }],
     };
+  }
+
+  async listJournals(...[principal, input]: Parameters<AccountingProvider["listJournals"]>) {
+    return this.#notImplemented("listJournals", principal, { ...input });
+  }
+
+  async getProfitAndLoss(...[principal, input]: Parameters<AccountingProvider["getProfitAndLoss"]>) {
+    return this.#notImplemented("getProfitAndLoss", principal, { ...input });
+  }
+
+  async getBalanceSheet(...[principal, input]: Parameters<AccountingProvider["getBalanceSheet"]>) {
+    return this.#notImplemented("getBalanceSheet", principal, { ...input });
+  }
+
+  async getAgedReceivables(...[principal, input]: Parameters<AccountingProvider["getAgedReceivables"]>) {
+    return this.#notImplemented("getAgedReceivables", principal, { ...input });
+  }
+
+  async getAgedPayables(...[principal, input]: Parameters<AccountingProvider["getAgedPayables"]>) {
+    return this.#notImplemented("getAgedPayables", principal, { ...input });
+  }
+
+  async getPayment(...[principal, paymentId]: Parameters<AccountingProvider["getPayment"]>) {
+    return this.#notImplemented("getPayment", principal, { paymentId });
+  }
+
+  async listTrackingCategories(...[principal, input]: Parameters<AccountingProvider["listTrackingCategories"]>) {
+    return this.#notImplemented("listTrackingCategories", principal, { ...input });
+  }
+
+  async listContactGroups(...[principal, input]: Parameters<AccountingProvider["listContactGroups"]>) {
+    return this.#notImplemented("listContactGroups", principal, { ...input });
   }
 }
 

@@ -99,6 +99,7 @@ function accountingService(
     },
     logger,
     connectionTickets: {} as ConnectionTicketService,
+    unsafeAllowDirectMutationForTests: true,
   });
 }
 
@@ -178,19 +179,21 @@ describe("human Review Gate authorisation flow", () => {
   });
 
   it.each([
-    ["writes are disabled", false, tenantId, tenantId],
-    ["the connected tenant is not allowlisted", true, "tenant-b", tenantId],
-    ["the posting belongs to another tenant", true, "tenant-b", "tenant-b"],
+    ["writes are disabled", false, tenantId, tenantId, "WRITE_GATE_DISABLED"],
+    ["the connected tenant is not allowlisted", true, "tenant-b", tenantId, "STANDING_DELEGATION_REQUIRED"],
+    ["the posting belongs to another tenant", true, "tenant-b", "tenant-b", "FORBIDDEN"],
   ] as const)(
     "does not consume CSRF or change state when %s",
-    async (_label, enabled, allowedTenantId, connectedTenantId) => {
+    async (_label, enabled, allowedTenantId, connectedTenantId, expectedCode) => {
       const { repository, reviewService, authenticated, csrfToken } = await pendingReview();
       const provider = providerWith({ connectedTenantId });
       const accounting = accountingService(repository, provider, { enabled, allowedTenantId });
 
       await expect(
         approveThroughReview({ reviewService, authenticated, csrfToken, accounting }),
-      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+      ).rejects.toMatchObject({
+        code: expectedCode,
+      });
 
       await expect(repository.getPosting(postingRequestId)).resolves.toMatchObject({ state: "APPROVAL_PENDING" });
       await expect(repository.consumeReviewCsrf(

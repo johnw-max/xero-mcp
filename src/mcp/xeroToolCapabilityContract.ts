@@ -16,14 +16,9 @@ export interface XeroToolAnnotationsContract {
 }
 
 const STATEFUL_PREPARATION_TOOL_NAMES: ReadonlySet<AccountingToolName> = new Set([
-  "xero_prepare_quote_draft",
-  "xero_prepare_purchase_order_draft",
-  "xero_prepare_credit_note_draft",
-  "xero_prepare_manual_journal_draft",
-  "xero_prepare_contact_create",
-  "xero_prepare_contact_update",
-  "xero_prepare_item_create",
-  "xero_prepare_item_update",
+  "xero_start_organisation_switch",
+  "xero_pin_current_organisation",
+  "xero_prepare_accounting_case",
 ]);
 
 export interface XeroToolCapabilityBinding {
@@ -36,9 +31,15 @@ export interface XeroToolCapabilityBinding {
   readonly actionIds: readonly XeroCapabilityActionId[];
   readonly riskClass: Extract<
     XeroRiskClass,
-    "READ_PREPARE" | "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE"
+    "READ_PREPARE" | "AUTONOMOUS_CONTROLLED_WRITE"
   >;
   readonly mutating: boolean;
+  /**
+   * Scopes accepted at the MCP routing boundary. Accounting Case execute is
+   * state-dependent: read may enter for recovery/replay, while fresh writes
+   * are still required to satisfy requiredMcpScope inside the Case service.
+   */
+  readonly entryMcpScopesAnyOf: readonly XeroToolRequiredMcpScope[];
   readonly requiredMcpScope: XeroToolRequiredMcpScope;
   readonly requiredPermission: Extract<
     XeroCapabilityPermission,
@@ -56,48 +57,80 @@ export interface XeroToolCapabilityBinding {
  */
 export const XERO_TOOL_CAPABILITY_ACTION_IDS = {
   xero_connection_status: ["system.connection_status"],
+  xero_start_organisation_switch: ["system.organisation_switch_prepare"],
+  xero_pin_current_organisation: ["system.ledger_target_session_issue"],
   xero_get_organisation: ["organisation.read_prepare"],
   xero_list_accounts: ["account.read_prepare"],
   xero_list_tax_rates: ["tax_rate.read_prepare"],
   xero_list_contacts: ["contact.read_prepare"],
   xero_get_contact: ["contact.read_prepare"],
   xero_search_contacts: ["contact.read_prepare"],
-  xero_prepare_contact_create: ["contact.read_prepare"],
-  xero_create_contact: ["contact.create_basic"],
-  xero_prepare_contact_update: ["contact.read_prepare"],
-  xero_update_contact: ["contact.update_basic"],
+  xero_prepare_accounting_case: ["organisation.read_prepare"],
+  xero_execute_accounting_case: [
+    "contact.create_basic",
+    "contact.update_basic",
+    "customer_invoice.create_draft",
+    "customer_invoice.update_draft",
+    "customer_invoice.authorise",
+    "customer_invoice.void",
+    "supplier_bill.create_draft",
+    "supplier_bill.update_draft",
+    "supplier_bill.authorise",
+    "supplier_bill.void",
+    "credit_note.create_draft",
+    "credit_note.update_draft",
+    "credit_note.authorise",
+    "credit_note.allocate",
+    "credit_note.refund",
+    "credit_note.unallocate",
+    "credit_note.void",
+    "quote.create_draft",
+    "quote.update_draft",
+    "purchase_order.create_draft",
+    "purchase_order.update_draft",
+    "manual_journal.create_draft",
+    "manual_journal.update_draft",
+    "manual_journal.post",
+    "manual_journal.void",
+    "payment.create",
+    "payment.reverse",
+    "bank_transaction.create",
+    "bank_transaction.update",
+    "bank_transaction.reverse",
+    "item.create_basic_untracked",
+    "item.update_basic_untracked",
+    "tracking_category.create",
+    "tracking_category.update",
+    "tracking_option.create",
+    "tracking_option.update",
+  ],
+  xero_get_accounting_case_status: ["organisation.read_prepare"],
+  xero_list_accounting_cases: ["organisation.read_prepare"],
   xero_list_invoices: ["customer_invoice.read_prepare", "supplier_bill.read_prepare"],
   xero_list_credit_notes: ["credit_note.read_prepare"],
-  xero_prepare_credit_note_draft: ["credit_note.read_prepare"],
-  xero_create_credit_note_draft: ["credit_note.create_draft"],
+  xero_get_credit_note: ["credit_note.read_prepare"],
   xero_list_payments: ["payment.read_prepare"],
+  xero_get_payment: ["payment.read_prepare"],
   xero_list_quotes: ["quote.read_prepare"],
   xero_get_quote: ["quote.read_prepare"],
   xero_list_purchase_orders: ["purchase_order.read_prepare"],
   xero_get_purchase_order: ["purchase_order.read_prepare"],
   xero_list_manual_journals: ["manual_journal.read_prepare"],
   xero_get_manual_journal: ["manual_journal.read_prepare"],
-  xero_prepare_manual_journal_draft: ["manual_journal.read_prepare"],
-  xero_create_manual_journal_draft: ["manual_journal.create_draft"],
   xero_list_items: ["item.read_prepare"],
   xero_get_item: ["item.read_prepare"],
-  xero_prepare_item_create: ["item.read_prepare"],
-  xero_create_item: ["item.create_basic_untracked"],
-  xero_prepare_item_update: ["item.read_prepare"],
-  xero_update_item: ["item.update_basic_untracked"],
   xero_list_bank_transactions: ["bank_transaction.read_prepare"],
   xero_get_bank_transaction: ["bank_transaction.read_prepare"],
+  xero_list_journals: ["journal.read_prepare"],
+  xero_list_tracking_categories: ["tracking_category.read_prepare"],
+  xero_list_contact_groups: ["contact_group.read_prepare"],
   xero_get_invoice: ["customer_invoice.read_prepare", "supplier_bill.read_prepare"],
   xero_get_supplier_bill: ["supplier_bill.read_prepare"],
-  xero_prepare_supplier_bill_draft: ["supplier_bill.read_prepare"],
-  xero_create_draft_supplier_bill: ["supplier_bill.create_draft"],
-  xero_prepare_sales_invoice_draft: ["customer_invoice.read_prepare"],
-  xero_create_draft_sales_invoice: ["customer_invoice.create_draft"],
-  xero_prepare_quote_draft: ["quote.read_prepare"],
-  xero_create_quote_draft: ["quote.create_draft"],
-  xero_prepare_purchase_order_draft: ["purchase_order.read_prepare"],
-  xero_create_purchase_order_draft: ["purchase_order.create_draft"],
   xero_get_trial_balance: ["report.trial_balance_read"],
+  xero_get_profit_and_loss: ["report.profit_and_loss_read"],
+  xero_get_balance_sheet: ["report.balance_sheet_read"],
+  xero_get_aged_receivables: ["report.aged_receivables_read"],
+  xero_get_aged_payables: ["report.aged_payables_read"],
 } as const satisfies {
   readonly [ToolName in AccountingToolName]: readonly XeroCapabilityActionId[];
 };
@@ -127,17 +160,21 @@ function buildBinding(toolName: AccountingToolName): XeroToolCapabilityBinding {
   const riskClass = decisions[0]?.riskClass;
   if (
     riskClass !== "READ_PREPARE" &&
-    riskClass !== "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE"
+    riskClass !== "AUTONOMOUS_CONTROLLED_WRITE"
   ) {
     throw new Error(`Xero public tool maps to a non-executable risk class: ${toolName}`);
   }
 
-  const mutating = riskClass === "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE";
+  const mutating = riskClass === "AUTONOMOUS_CONTROLLED_WRITE";
   const statefulPreparation = STATEFUL_PREPARATION_TOOL_NAMES.has(toolName);
   const requiredMcpScope: XeroToolRequiredMcpScope = mutating
     ? "xero.draft.write"
     : "xero.read";
   const requiredPermission = mutating ? "XERO_DRAFT_WRITE" : "XERO_ACCOUNTING_READ";
+  const entryMcpScopesAnyOf: readonly XeroToolRequiredMcpScope[] =
+    toolName === "xero_execute_accounting_case"
+      ? ["xero.read", "xero.draft.write"]
+      : [requiredMcpScope];
 
   for (const decision of decisions) {
     if (
@@ -157,6 +194,7 @@ function buildBinding(toolName: AccountingToolName): XeroToolCapabilityBinding {
     actionIds: Object.freeze([...actionIds]),
     riskClass,
     mutating,
+    entryMcpScopesAnyOf: Object.freeze([...entryMcpScopesAnyOf]),
     requiredMcpScope,
     requiredPermission,
     annotations: Object.freeze(statefulPreparation

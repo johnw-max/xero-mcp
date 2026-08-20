@@ -1,16 +1,20 @@
-name: xero-accounting-mcp-green-030
+name: xero-accounting-mcp-green-040-rc1
 
 # Release-only green slot for an already running host-Nginx deployment.
-# It deliberately defines no PostgreSQL, QuickBooks, Nginx, stock, or trade
+# It deliberately defines no PostgreSQL, Nginx, stock, or trade
 # service. The existing data/egress networks are joined as external networks,
 # so bringing this file up cannot recreate those services.
 services:
   accounting-mcp-green:
-    image: ${APP_IMAGE:?Set APP_IMAGE in deploy/.env.vps}
+    image: ${APP_IMAGE:?Set APP_IMAGE to the Gate-approved immutable repo@sha256 digest in deploy/.env.vps}
     entrypoint:
       - /bin/sh
       - -ec
       - |
+        case "$${APP_IMAGE:-}" in *@sha256:[0-9a-f][0-9a-f]*) ;; *)
+          echo "green release refused: APP_IMAGE must be an immutable repo@sha256 digest" >&2
+          exit 78
+        esac
         [ "$${MCP_OAUTH_BROKER_ENABLED:-}" = "true" ] || {
           echo "green release refused: MCP_OAUTH_BROKER_ENABLED must be true" >&2
           exit 78
@@ -31,6 +35,9 @@ services:
       - ALL
     environment:
       NODE_ENV: production
+      APP_IMAGE: ${APP_IMAGE:?Set APP_IMAGE to repo@sha256 in deploy/.env.vps}
+      # The same semantic identity is embedded in the image ENV at build time;
+      # Compose does not accept an operator-supplied override.
       HOST: 0.0.0.0
       PORT: "3000"
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env.vps}
@@ -41,8 +48,10 @@ services:
       REQUEST_BODY_LIMIT_BYTES: ${REQUEST_BODY_LIMIT_BYTES:-1048576}
       MCP_OAUTH_BROKER_ENABLED: ${MCP_OAUTH_BROKER_ENABLED:?MCP_OAUTH_BROKER_ENABLED must be explicitly set to true for the green release}
       PERSONAL_POC_ONLY: ${PERSONAL_POC_ONLY:?PERSONAL_POC_ONLY must be explicitly set to true for the green release}
+      SHARED_TEST_USERS: ${SHARED_TEST_USERS:-false}
       HOST_OAUTH_CLIENTS_JSON: ${HOST_OAUTH_CLIENTS_JSON:-}
       OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS: ${OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS:-}
+      OAUTH_MANUAL_RETURN_CLIENT_IDS: ${OAUTH_MANUAL_RETURN_CLIENT_IDS:-}
       OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${OAUTH_ACCESS_TOKEN_TTL_SECONDS:-900}
       OAUTH_REFRESH_TOKEN_TTL_SECONDS: ${OAUTH_REFRESH_TOKEN_TTL_SECONDS:-2592000}
       OAUTH_AUTH_CODE_TTL_SECONDS: ${OAUTH_AUTH_CODE_TTL_SECONDS:-300}
@@ -56,8 +65,12 @@ services:
       # single 15-minute synthetic-write window and recreates only this service.
       XERO_WRITE_ENABLED: ${XERO_WRITE_ENABLED:-false}
       XERO_ALLOWED_TENANT_ID: ${XERO_ALLOWED_TENANT_ID:-}
+      XERO_ACCOUNTING_CASE_TEST_TENANT_IDS: ${XERO_ACCOUNTING_CASE_TEST_TENANT_IDS:-}
+      XERO_TENANT_COA_PROFILES_JSON: ${XERO_TENANT_COA_PROFILES_JSON:-[]}
       TOKEN_ENCRYPTION_KEY_B64: ${TOKEN_ENCRYPTION_KEY_B64:?Set TOKEN_ENCRYPTION_KEY_B64 in deploy/.env.vps}
       XERO_MUTATION_CONFIRMATION_KEY_B64: ${XERO_MUTATION_CONFIRMATION_KEY_B64:?Set XERO_MUTATION_CONFIRMATION_KEY_B64 in deploy/.env.vps}
+      XERO_TARGET_SESSION_REQUIRED: ${XERO_TARGET_SESSION_REQUIRED:-true}
+      XERO_TARGET_SESSION_TTL_SECONDS: ${XERO_TARGET_SESSION_TTL_SECONDS:-1800}
       DEMO_ACTOR_ID: ${DEMO_ACTOR_ID:-xero-demo-operator}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:

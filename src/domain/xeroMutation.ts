@@ -1,3 +1,5 @@
+import type { LedgerFirmGovernanceClaim } from "../control-kernel/ledgerControlKernel.js";
+
 export const XERO_MUTATION_OBJECT_TYPES = [
   "SUPPLIER_BILL",
   "SALES_INVOICE",
@@ -7,6 +9,10 @@ export const XERO_MUTATION_OBJECT_TYPES = [
   "MANUAL_JOURNAL",
   "CONTACT",
   "ITEM",
+  "TRACKING_CATEGORY",
+  "TRACKING_OPTION",
+  "PAYMENT",
+  "BANK_TRANSACTION",
   "ATTACHMENT",
 ] as const;
 
@@ -21,12 +27,54 @@ export const XERO_MUTATION_EXPECTED_READBACK_STATUS = Object.freeze({
   MANUAL_JOURNAL: "DRAFT",
   CONTACT: "ACTIVE",
   ITEM: "UNTRACKED",
+  TRACKING_CATEGORY: "ACTIVE",
+  TRACKING_OPTION: "ACTIVE",
+  PAYMENT: "AUTHORISED",
+  BANK_TRANSACTION: "AUTHORISED",
   ATTACHMENT: "UPLOADED",
 } as const satisfies Readonly<Record<XeroMutationObjectType, string>>);
 
-export const XERO_MUTATION_OPERATIONS = ["CREATE_DRAFT", "CREATE", "UPDATE", "UPLOAD"] as const;
+export const XERO_MUTATION_OPERATIONS = [
+  "CREATE_DRAFT",
+  "CREATE",
+  "UPDATE",
+  "AUTHORISE",
+  "POST",
+  "ALLOCATE",
+  "REFUND",
+  "UNALLOCATE",
+  "REVERSE",
+  "VOID",
+  "UPLOAD",
+] as const;
 
 export type XeroMutationOperation = typeof XERO_MUTATION_OPERATIONS[number];
+
+export const XERO_EXISTING_TARGET_OPERATIONS = Object.freeze([
+  "UPDATE", "AUTHORISE", "POST", "ALLOCATE", "REFUND", "REVERSE", "VOID",
+] as const satisfies readonly XeroMutationOperation[]);
+
+export function xeroMutationTargetsExistingObject(operation: XeroMutationOperation): boolean {
+  return (XERO_EXISTING_TARGET_OPERATIONS as readonly XeroMutationOperation[]).includes(operation);
+}
+
+/** The expected persisted Xero state is a transition result, not only an object kind. */
+export function expectedXeroMutationReadbackStatus(
+  objectType: XeroMutationObjectType,
+  operation: XeroMutationOperation,
+): string {
+  if (operation === "AUTHORISE" &&
+      (objectType === "SUPPLIER_BILL" || objectType === "SALES_INVOICE" || objectType === "CREDIT_NOTE")) {
+    return "AUTHORISED";
+  }
+  if ((operation === "ALLOCATE" || operation === "REFUND") && objectType === "CREDIT_NOTE") {
+    return "AUTHORISED";
+  }
+  if (operation === "POST" && objectType === "MANUAL_JOURNAL") return "POSTED";
+  if (operation === "VOID") return "VOIDED";
+  if (operation === "REVERSE" && (objectType === "PAYMENT" || objectType === "BANK_TRANSACTION")) return "DELETED";
+  return XERO_MUTATION_EXPECTED_READBACK_STATUS[objectType];
+}
 
 export const XERO_MUTATION_SOURCE_EVIDENCE_TYPES = [
   "AGENT_ASSERTED_UNVERIFIED",
@@ -37,14 +85,18 @@ export const XERO_MUTATION_SOURCE_EVIDENCE_TYPES = [
 export type XeroMutationSourceEvidenceType = typeof XERO_MUTATION_SOURCE_EVIDENCE_TYPES[number];
 
 export const XERO_MUTATION_ALLOWED_OPERATIONS = Object.freeze({
-  SUPPLIER_BILL: Object.freeze(["CREATE_DRAFT"] as const),
-  SALES_INVOICE: Object.freeze(["CREATE_DRAFT"] as const),
-  QUOTE: Object.freeze(["CREATE_DRAFT"] as const),
-  PURCHASE_ORDER: Object.freeze(["CREATE_DRAFT"] as const),
-  CREDIT_NOTE: Object.freeze(["CREATE_DRAFT"] as const),
-  MANUAL_JOURNAL: Object.freeze(["CREATE_DRAFT"] as const),
+  SUPPLIER_BILL: Object.freeze(["CREATE_DRAFT", "UPDATE", "AUTHORISE", "VOID"] as const),
+  SALES_INVOICE: Object.freeze(["CREATE_DRAFT", "UPDATE", "AUTHORISE", "VOID"] as const),
+  QUOTE: Object.freeze(["CREATE_DRAFT", "UPDATE"] as const),
+  PURCHASE_ORDER: Object.freeze(["CREATE_DRAFT", "UPDATE"] as const),
+  CREDIT_NOTE: Object.freeze(["CREATE_DRAFT", "UPDATE", "AUTHORISE", "ALLOCATE", "REFUND", "UNALLOCATE", "VOID"] as const),
+  MANUAL_JOURNAL: Object.freeze(["CREATE_DRAFT", "UPDATE", "POST", "VOID"] as const),
   CONTACT: Object.freeze(["CREATE", "UPDATE"] as const),
   ITEM: Object.freeze(["CREATE", "UPDATE"] as const),
+  TRACKING_CATEGORY: Object.freeze(["CREATE", "UPDATE"] as const),
+  TRACKING_OPTION: Object.freeze(["CREATE", "UPDATE"] as const),
+  PAYMENT: Object.freeze(["CREATE", "REVERSE"] as const),
+  BANK_TRANSACTION: Object.freeze(["CREATE", "UPDATE", "REVERSE"] as const),
   ATTACHMENT: Object.freeze(["UPLOAD"] as const),
 }) satisfies Readonly<Record<XeroMutationObjectType, readonly XeroMutationOperation[]>>;
 
@@ -66,6 +118,10 @@ export interface XeroMutationBindingIdentity {
   installationId: string;
   bindingId: string;
   connectionId: string;
+  /** Active-binding epoch captured at prepare time. */
+  bindingRevision?: number;
+  /** Internal short-lived target id; never the raw target capability. */
+  targetSessionId?: string;
 }
 
 export interface XeroMutationPreparation extends XeroMutationBindingIdentity {
@@ -102,14 +158,20 @@ export interface XeroMutationRequest extends XeroMutationBindingIdentity {
   sourceSha256: string;
   sourceEvidenceType: XeroMutationSourceEvidenceType;
   confirmationSummaryHash: string;
+  /** Immutable server-issued authority evidence; never supplied by the model. */
+  authorizationReceipt: Record<string, unknown>;
   state: XeroMutationRequestState;
   xeroObjectId?: string;
   writeReceipt?: Record<string, unknown>;
+  /** Independent CAS marker for the single bounded native-idempotency replay. */
+  nativeRecoveryClaim?: Record<string, unknown>;
   readbackSnapshot?: Record<string, unknown>;
   readbackSnapshotHash?: string;
   readbackCanonicalPayload?: Record<string, unknown>;
   readbackPayloadHash?: string;
   readbackStatus?: string;
+  /** Durable discriminator and exact reason codes for a failed readback gate. */
+  readbackMismatchReceipt?: Record<string, unknown>;
   validationReceipt?: Record<string, unknown>;
   providerRejectionReceipt?: Record<string, unknown>;
   confirmedAt: Date;
@@ -154,6 +216,16 @@ export interface ConfirmXeroMutationPreparationInput extends XeroMutationBinding
   sourceEvidenceType: XeroMutationSourceEvidenceType;
   confirmationSummaryHash: string;
   confirmationPhraseHash: string;
+  authorizationReceipt: Record<string, unknown>;
+  /** Successful deterministic validation evidence, persisted before provider I/O. */
+  successfulValidationReceipt?: Record<string, unknown>;
+  /** Autonomous execution atomically consumes the preparation and claims the provider write slot. */
+  claimForWrite?: boolean;
+  /** Durable authority row that must still be current inside the claim transaction. */
+  expectedAuthoritySnapshotRevision?: number;
+  expectedAuthoritySnapshotHash?: string;
+  /** Exact normalized authority projection repeated under the locked snapshot row. */
+  expectedFirmGovernanceClaim?: LedgerFirmGovernanceClaim;
   now: Date;
 }
 

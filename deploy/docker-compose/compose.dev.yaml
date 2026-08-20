@@ -1,0 +1,15 @@
+name: xero-accounting-mcp-local-dev
+
+# DEV-ONLY rebuild path. It is not a production compose input and is rejected
+# by the production-release scanner if referenced by a production runbook.
+services:
+  accounting-mcp-dev:
+    image: xero-accounting-mcp-dev:local
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    environment:
+      NODE_ENV: development
+      XERO_WRITE_ENABLED: "false"
+    ports:
+      - "127.0.0.1:3000:3000"

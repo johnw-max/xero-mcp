@@ -107,6 +107,23 @@ describe("Xero Trial Balance Provider transport boundary", () => {
     await closeServer(server);
   });
 
+  it("sends paymentsOnly=false and no invented date when the caller omits the as-of date", async () => {
+    let observedUrl = "";
+    const { baseUrl, server } = await listen((request, response) => {
+      observedUrl = request.url ?? "";
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ Reports: [{ ReportID: "TrialBalance", Rows: [] }] }));
+    });
+
+    await expect(transport(baseUrl).getTrialBalance({
+      tenantId: input.tenantId,
+      accessToken: input.accessToken,
+    })).resolves.toMatchObject({ reports: [{ reportID: "TrialBalance", rows: [] }] });
+
+    expect(observedUrl).toBe("/Reports/TrialBalance?paymentsOnly=false");
+    await closeServer(server);
+  });
+
   it("preserves an ordinary gzip-compressed Xero report within both byte budgets", async () => {
     const compressed = gzipSync(JSON.stringify({
       Reports: [{ ReportID: "TrialBalance", ReportName: "Trial Balance", Rows: [] }],
@@ -252,23 +269,13 @@ describe("Xero Trial Balance Provider transport boundary", () => {
     await closeServer(server);
   });
 
-  it("routes Provider reads through the bounded transport after manager token refresh/binding", async () => {
+  it("delegates Provider reads to the manager-owned bounded capability", async () => {
     const report = { reports: [{ reportName: "Trial Balance" }] };
-    const getTrialBalance = vi.fn().mockResolvedValue(report);
-    const boundedTransport = { getTrialBalance } satisfies XeroTrialBalanceTransport;
-    const withAccessToken = vi.fn(async <T>(
-      _principal: unknown,
-      action: (accessToken: string, connection: { tenantId: string }) => Promise<T>,
-    ): Promise<T> => action("test-refreshed-token", { tenantId: "tenant-bound" }));
-    const manager = { withAccessToken } as unknown as XeroClientManager;
-    const provider = new XeroAccountingProvider({} as AccountingRepository, manager, boundedTransport);
+    const getManagedTrialBalance = vi.fn().mockResolvedValue(report);
+    const manager = { getTrialBalance: getManagedTrialBalance } as unknown as XeroClientManager;
+    const provider = new XeroAccountingProvider({} as AccountingRepository, manager);
 
     await expect(provider.getTrialBalance("actor-a", "2026-08-06")).resolves.toEqual(report);
-    expect(getTrialBalance).toHaveBeenCalledWith({
-      tenantId: "tenant-bound",
-      accessToken: "test-refreshed-token",
-      date: "2026-08-06",
-    });
-    expect(withAccessToken).toHaveBeenCalledOnce();
+    expect(getManagedTrialBalance).toHaveBeenCalledWith("actor-a", "2026-08-06");
   });
 });

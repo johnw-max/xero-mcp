@@ -8,7 +8,7 @@ import {
   canonicalSalesInvoiceDraftExtractionFingerprint,
   canonicalSalesInvoiceDraftRequest,
 } from "../domain/canonical.js";
-import type { AuditCompletion, AuditIntent, PostingRequest } from "../domain/models.js";
+import type { AuditCompletion, AuditIntent, GovernanceDisposition, PostingRequest } from "../domain/models.js";
 import type {
   AuthoriseSupplierBillInput,
   CreateDraftSalesInvoiceInput,
@@ -20,6 +20,10 @@ import type {
   ListCreditNotesInput,
   ListInvoicesInput,
   ListPaymentsInput,
+  ProfitAndLossInput,
+  BalanceSheetInput,
+  AgedReceivablesInput,
+  AgedPayablesInput,
   PrepareSupplierBillDraftInput,
   PrepareSalesInvoiceDraftInput,
   SearchContactsInput,
@@ -30,20 +34,28 @@ import { createDraftSupplierBillSchema } from "../domain/schemas.js";
 import type {
   GetBankTransactionInput,
   GetItemInput,
+  GetCreditNoteInput,
   GetManualJournalInput,
   GetPurchaseOrderInput,
   GetQuoteInput,
+  GetPaymentInput,
   ListBankTransactionsInput,
+  ListContactGroupsInput,
   ListItemsInput,
+  ListJournalsInput,
   ListManualJournalsInput,
   ListPurchaseOrdersInput,
   ListQuotesInput,
+  ListTrackingCategoriesInput,
 } from "../domain/extendedReadSchemas.js";
 import type {
   PreparePurchaseOrderDraftInput,
   PrepareQuoteDraftInput,
 } from "../domain/xeroQuotePurchaseOrderDraft.js";
-import type { ExecutePreparedXeroMutationInput } from "../domain/xeroControlledMutationSchemas.js";
+import {
+  executePreparedXeroMutationSchema,
+  type ExecutePreparedXeroMutationInput,
+} from "../domain/xeroControlledMutationSchemas.js";
 import type {
   PrepareCreditNoteDraftInput,
   PrepareManualJournalDraftInput,
@@ -57,8 +69,18 @@ import type {
 import type { AccountingRepository } from "../db/repository.js";
 import { xeroSupplierPostingIdentity } from "../db/xeroPostingDuplicate.js";
 import { AppError, toSafeError } from "../errors.js";
+import { xeroCapabilityDenied } from "../policy/xeroCapabilityError.js";
+import { resolveStableXeroTaxRate } from "../policy/xeroTaxRateResolver.js";
+import {
+  XeroDeclaredLedgerBindingError,
+  assertXeroDeclaredLedgerExecutionConstraints,
+  parseXeroDeclaredLedgerExecutionConstraints,
+  type XeroDeclaredLedgerExecutionConstraints,
+} from "../policy/xeroDeclaredLedgerBinding.js";
 import type { Logger } from "../logging.js";
 import { hashObject, safeEqual, sha256 } from "../security/hash.js";
+import { safeLedgerTargetReference } from "../security/ledgerTargetReference.js";
+import type { LedgerProviderWritePermit } from "../control-kernel/ledgerProviderWritePermit.js";
 import type {
   AccountingPrincipal,
   AccountingProvider,
@@ -70,6 +92,7 @@ import type {
   SalesInvoiceSnapshot,
   SupplierBillSnapshot,
   TaxRateSummary,
+  ActorTenantContext,
 } from "../providers/types.js";
 import type { ConnectionTicketService } from "./connectionTicketService.js";
 import { requireOAuthBoundRequestContext, type RequestContext } from "../security/requestContext.js";
@@ -77,7 +100,31 @@ import { boundXeroTrialBalanceForAgent } from "./xeroTrialBalanceBounds.js";
 import type { XeroControlledMutationService } from "./xeroControlledMutationService.js";
 import type { XeroCreditNoteManualJournalService } from "./xeroCreditNoteManualJournalService.js";
 import type { XeroContactItemMutationService } from "./xeroContactItemMutationService.js";
+import type {
+  DraftDocumentUpdateEnvelope,
+  PrepareDraftDocumentUpdateInput,
+  XeroDraftDocumentUpdateService,
+} from "./xeroDraftDocumentUpdateService.js";
+import type { DraftDocumentUpdateAction } from "../domain/accountingCase.js";
 import type { XeroMutationService } from "./xeroMutationService.js";
+import type {
+  ExecuteLedgerStateTransitionInput,
+  PrepareLedgerStateTransitionInput,
+  XeroLedgerStateTransitionService,
+} from "./xeroLedgerStateTransitionService.js";
+import type {
+  ExecuteTrackingCaseMutationInput,
+  PrepareTrackingCaseMutationInput,
+  XeroTrackingCaseMutationService,
+} from "./xeroTrackingCaseMutationService.js";
+import type {
+  ExecuteLedgerAdjustmentInput,
+  PrepareLedgerAdjustmentInput,
+  XeroLedgerAdjustmentService,
+} from "./xeroLedgerAdjustmentService.js";
+import type { ExecutePaymentBankCaseInput, PreparePaymentBankCaseInput, XeroPaymentBankCaseService } from "./xeroPaymentBankCaseService.js";
+import { issueObjectPreparationValidationReceipt } from "../control-kernel/deterministicValidation.js";
+import type { XeroFirmGovernanceExpectation } from "../policy/xeroFirmGovernanceClaim.js";
 
 const MAX_AGENT_INVOICE_LINES = 100;
 const MAX_AGENT_LINE_DESCRIPTION_CHARS = 1_000;
@@ -164,8 +211,8 @@ export interface SupplierBillDraftPreparationWarning {
 
 export interface SupplierBillDraftPreparationResult {
   technicallyReady: boolean;
-  readyForUserConfirmation: boolean;
-  requiresUserConfirmation: true;
+  readyForAutonomousExecution: boolean;
+  requiresUserConfirmation: false;
   executionAllowed: false;
   proposal: Omit<CreateDraftSupplierBillInput, "user_confirmation"> | null;
   evidence: {
@@ -201,8 +248,9 @@ export interface SupplierBillDraftPreparationResult {
   blockers: SupplierBillDraftPreparationBlocker[];
   warnings: SupplierBillDraftPreparationWarning[];
   preparation_id: string | null;
-  confirmation_phrase: string | null;
   expires_at: string | null;
+  execution_mode: "STANDING_AUTONOMOUS_DELEGATION";
+  next_action: "CALL_EXECUTE_TOOL" | "RESOLVE_BLOCKERS";
 }
 
 export interface SalesInvoiceDraftPreparationResult extends Omit<
@@ -224,6 +272,9 @@ function safeContactCandidate(contact: ContactSummary): Record<string, unknown> 
   return {
     contactId: contact.contactId,
     ...(contact.name ? { name: contact.name } : {}),
+    ...(contact.email ? { email: contact.email } : {}),
+    ...(contact.companyNumber ? { companyNumber: contact.companyNumber } : {}),
+    ...(contact.accountNumber ? { accountNumber: contact.accountNumber } : {}),
     ...(contact.contactNumber ? { contactNumber: contact.contactNumber } : {}),
     ...(contact.status ? { status: contact.status } : {}),
     ...(contact.isSupplier !== undefined ? { isSupplier: contact.isSupplier } : {}),
@@ -248,18 +299,8 @@ function safeTaxCandidate(tax: TaxRateSummary): Record<string, unknown> {
     ...(tax.name ? { name: tax.name } : {}),
     ...(tax.status ? { status: tax.status } : {}),
     ...(tax.displayTaxRate ? { displayTaxRate: tax.displayTaxRate } : {}),
+    ...(tax.effectiveRate ? { effectiveRate: tax.effectiveRate } : {}),
   };
-}
-
-function canTaxApplyToAccountClass(tax: TaxRateSummary, accountClass?: string): boolean {
-  switch (accountClass?.toUpperCase()) {
-    case "EXPENSE": return tax.canApplyToExpenses !== false;
-    case "ASSET": return tax.canApplyToAssets !== false;
-    case "LIABILITY": return tax.canApplyToLiabilities !== false;
-    case "REVENUE": return tax.canApplyToRevenue !== false;
-    case "EQUITY": return tax.canApplyToEquity !== false;
-    default: return true;
-  }
 }
 
 interface InternalAuthoriseInput {
@@ -301,6 +342,12 @@ export class AccountingService {
   readonly #creditNoteManualJournalMutations: XeroCreditNoteManualJournalService | undefined;
   readonly #contactItemMutations: XeroContactItemMutationService | undefined;
   readonly #mutationFoundation: XeroMutationService | undefined;
+  readonly #ledgerStateTransitions: XeroLedgerStateTransitionService | undefined;
+  readonly #draftDocumentUpdates: XeroDraftDocumentUpdateService | undefined;
+  readonly #trackingCaseMutations: XeroTrackingCaseMutationService | undefined;
+  readonly #ledgerAdjustments: XeroLedgerAdjustmentService | undefined;
+  readonly #paymentBankCase: XeroPaymentBankCaseService | undefined;
+  readonly #allowUnsafeDirectMutationForTests: boolean;
 
   constructor(options: {
     repository: AccountingRepository;
@@ -312,6 +359,12 @@ export class AccountingService {
     creditNoteManualJournalMutations?: XeroCreditNoteManualJournalService;
     contactItemMutations?: XeroContactItemMutationService;
     mutationFoundation?: XeroMutationService;
+    ledgerStateTransitions?: XeroLedgerStateTransitionService;
+    draftDocumentUpdates?: XeroDraftDocumentUpdateService;
+    trackingCaseMutations?: XeroTrackingCaseMutationService;
+    ledgerAdjustments?: XeroLedgerAdjustmentService;
+    paymentBankCase?: XeroPaymentBankCaseService;
+    unsafeAllowDirectMutationForTests?: boolean;
   }) {
     this.#repository = options.repository;
     this.#provider = options.provider;
@@ -322,6 +375,18 @@ export class AccountingService {
     this.#creditNoteManualJournalMutations = options.creditNoteManualJournalMutations;
     this.#contactItemMutations = options.contactItemMutations;
     this.#mutationFoundation = options.mutationFoundation;
+    this.#ledgerStateTransitions = options.ledgerStateTransitions;
+    this.#draftDocumentUpdates = options.draftDocumentUpdates;
+    this.#trackingCaseMutations = options.trackingCaseMutations;
+    this.#ledgerAdjustments = options.ledgerAdjustments;
+    this.#paymentBankCase = options.paymentBankCase;
+    this.#allowUnsafeDirectMutationForTests = options.unsafeAllowDirectMutationForTests === true;
+    if (this.#allowUnsafeDirectMutationForTests && process.env.NODE_ENV !== "test") {
+      throw new AppError(
+        "CONFIGURATION_ERROR",
+        "Direct provider mutation helpers may only be enabled by an explicit test-only switch.",
+      );
+    }
   }
 
   async connectionStatus(principal: AccountingPrincipal) {
@@ -330,18 +395,20 @@ export class AccountingService {
       return {
         ...status,
         connectionLifecycle: {
-          organisationBinding: "EXACTLY_ONE_ORGANISATION_PER_MCP_CONNECTION" as const,
+          organisationBinding: "ONE_IMMUTABLE_ORGANISATION_PER_TARGET_SESSION" as const,
+          currentTenantMeaning: "COMPATIBILITY_POINTER_NOT_LEDGER_TARGET" as const,
+          targetSessionLifetime: "SHORT_LIVED_SERVER_ENFORCED" as const,
           accessTokenRefresh: "AUTOMATIC_NO_USER_ACTION" as const,
           organisationChange: {
             supported: true as const,
-            requiresFreshXeroOAuth: true as const,
+            requiresFreshXeroOAuth: "ONLY_IF_ORGANISATION_NOT_ALREADY_AUTHORISED" as const,
             silentChatSwitchAllowed: false as const,
             hostSteps: [
-              "REVOKE_CURRENT_MCP_AUTHORISATION",
-              "CONNECT_MCP_AGAIN",
-              "COMPLETE_XERO_LOGIN_OR_CONSENT",
+              "ASK_AGENT_TO_SWITCH_XERO_ORGANISATION",
+              "OPEN_SHORT_LIVED_CONFIRMATION_LINK",
               "SELECT_EXACTLY_ONE_XERO_ORGANISATION",
-              "RETURN_TO_HOST_AND_VERIFY_CONNECTION_STATUS",
+              "PIN_SELECTED_ORGANISATION",
+              "VERIFY_WITH_PINNED_ORGANISATION_READ",
             ] as const,
           },
         },
@@ -387,19 +454,35 @@ export class AccountingService {
   async prepareSupplierBillDraft(
     principal: AccountingPrincipal,
     input: PrepareSupplierBillDraftInput,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
   ): Promise<SupplierBillDraftPreparationResult> {
-    const prepared = await this.#prepareSupplierBillDraftProposal(principal, input);
+    const serverAccountIds = serverCoaConstraints?.lines.map((line) => line.accountId);
+    const prepared = await this.#prepareSupplierBillDraftProposal(principal, input, serverAccountIds);
+    if (prepared.proposal && typeof principal !== "string") {
+      // Case-level preflight must discover every deterministic source,
+      // reference and duplicate blocker before the first Provider mutation.
+      // Execution repeats this check immediately before claiming the one-shot
+      // write permit to close the unavoidable Provider race window.
+      await this.#validateInvoiceProposalForAutonomous(principal, "SUPPLIER_BILL", {
+        ...prepared.proposal,
+        user_confirmation: "CONFIRMED_FOR_DRAFT",
+      }, serverCoaConstraints);
+    }
     const confirmation = await this.#persistInvoiceDraftPreparation(
       principal,
       prepared.proposal,
       "SUPPLIER_BILL",
+      input.source_unit_key,
     );
     return { ...prepared, ...confirmation };
   }
 
   async #prepareSupplierBillDraftProposal(
     principal: AccountingPrincipal,
-    input: PrepareSupplierBillDraftInput,
+    input: Omit<PrepareSupplierBillDraftInput, "authoritative_provider_field"> & {
+      authoritative_provider_field?: "INVOICE_NUMBER" | "REFERENCE" | undefined;
+    },
+    serverAccountIds?: readonly string[],
   ): Promise<SupplierBillDraftPreparationResult> {
     const referenceData = await this.#provider.getSupplierBillDraftReferenceData(principal, input.supplier_name);
     const blockers: SupplierBillDraftPreparationBlocker[] = [];
@@ -410,12 +493,12 @@ export class AccountingService {
       ? {
           code: "SOURCE_HASH_AGENT_ASSERTED",
           path: "source_sha256",
-          message: "The supplied source hash was asserted by the Agent/Host and was not verified against a Host-signed file receipt. Human confirmation is required before creating the Xero draft.",
+          message: "The supplied source hash was asserted by the Agent/Host and was not verified against a Host-signed file receipt. Standing autonomous execution still requires deterministic validation, exact target authority, a Provider receipt and exact readback.",
         }
       : {
           code: "SOURCE_EXTRACTION_FINGERPRINT_ONLY",
           path: "source_sha256",
-          message: "The server generated a deterministic fingerprint of the extracted fields. It is not a hash of a Host-attested original file. Human confirmation is required before creating the Xero draft.",
+          message: "The server generated a deterministic fingerprint of the extracted fields. It is not a hash of a Host-attested original file; execution remains bound to this immutable extraction and all runtime control gates.",
         }];
     const addMissing = (path: string) => blockers.push({
       code: "MISSING_FIELD",
@@ -429,6 +512,7 @@ export class AccountingService {
     if (!input.due_date) addMissing("due_date");
     if (!input.currency) addMissing("currency");
     if (!input.reference) addMissing("reference");
+    if (!input.authoritative_provider_field) addMissing("authoritative_provider_field");
     if (!input.line_amount_type) addMissing("line_amount_type");
     if (!input.lines || input.lines.length === 0) addMissing("lines");
     if (input.invoice_date && input.due_date && input.due_date < input.invoice_date) {
@@ -498,6 +582,22 @@ export class AccountingService {
         account.type !== "BANK" &&
         !["DEBTORS", "CREDITORS"].includes(account.systemAccount ?? ""));
       const selectedAccount = eligibleAccounts.length === 1 ? eligibleAccounts[0] : undefined;
+      const requiredAccountId = serverAccountIds?.[index];
+      if (serverAccountIds && serverAccountIds.length !== (input.lines?.length ?? 0)) {
+        throw new AppError("VALIDATION_FAILED", "The server-resolved Accounting Case account binding count is invalid.", {
+          httpStatus: 422,
+        });
+      }
+      if (requiredAccountId && selectedAccount?.accountId !== requiredAccountId) {
+        throw new AppError("STALE_PREFLIGHT", "The server-resolved Accounting Case AccountID no longer matches the selected Xero account code.", {
+          httpStatus: 409,
+          retryable: false,
+          details: {
+            reasonCodes: ["XERO_TENANT_COA_PROFILE_DRIFT"],
+            providerMutationPossible: false,
+          },
+        });
+      }
       if ((line.account_code || line.account_name) && exactAccounts.length === 0) {
         blockers.push({
           code: "NO_EXACT_MATCH",
@@ -533,28 +633,38 @@ export class AccountingService {
         (requestedTaxType === undefined || normalizedExact(tax.taxType) === requestedTaxType) &&
         (requestedTaxName === undefined || normalizedExact(tax.name) === requestedTaxName) &&
         (requestedTaxType !== undefined || requestedTaxName !== undefined));
-      const activeTaxRates = exactTaxRates.filter((tax) => !tax.status || tax.status === "ACTIVE");
-      const compatibleTaxRates = activeTaxRates.filter((tax) =>
-        canTaxApplyToAccountClass(tax, selectedAccount?.class));
-      const selectedTaxRate = compatibleTaxRates.length === 1 ? compatibleTaxRates[0] : undefined;
+      const stableTaxType = line.tax_type ??
+        (exactTaxRates.length === 1 ? exactTaxRates[0]?.taxType : undefined);
+      const taxResolution = selectedAccount && stableTaxType
+        ? resolveStableXeroTaxRate({
+            taxRates: referenceData.taxRates,
+            taxType: stableTaxType,
+            account: selectedAccount,
+          })
+        : undefined;
+      const taxResolutionFailure = taxResolution && !taxResolution.ok ? taxResolution : undefined;
+      const selectedTaxRate = taxResolution?.ok ? taxResolution.taxRate : undefined;
       if ((line.tax_type || line.tax_name) && exactTaxRates.length === 0) {
         blockers.push({
           code: "NO_EXACT_MATCH",
           path: `lines[${index}].tax_rate`,
           message: "No exact active Xero tax rate matched the supplied type/name; a tax type was not guessed.",
         });
-      } else if (compatibleTaxRates.length > 1) {
+      } else if (exactTaxRates.length > 1 || taxResolutionFailure?.code === "NO_UNIQUE_ACTIVE_TAX_RATE" &&
+        referenceData.taxRates.filter((tax) => tax.taxType === stableTaxType && tax.status === "ACTIVE").length > 1) {
         blockers.push({
           code: "AMBIGUOUS_MATCH",
           path: `lines[${index}].tax_rate`,
           message: "More than one compatible Xero tax rate exactly matched this line.",
-          candidates: compatibleTaxRates.slice(0, 10).map(safeTaxCandidate),
+          candidates: exactTaxRates.slice(0, 10).map(safeTaxCandidate),
         });
-      } else if (exactTaxRates.length > 0 && compatibleTaxRates.length === 0) {
+      } else if (exactTaxRates.length > 0 && !taxResolution?.ok) {
         blockers.push({
           code: "INELIGIBLE_MATCH",
           path: `lines[${index}].tax_rate`,
-          message: "The exact Xero tax match is inactive or incompatible with the matched account.",
+          message: taxResolutionFailure
+            ? `${taxResolutionFailure.message} [${taxResolutionFailure.code}]`
+            : "The exact Xero tax match could not be bound to the exact account.",
           candidates: exactTaxRates.slice(0, 10).map(safeTaxCandidate),
         });
       } else if (selectedTaxRate && !selectedTaxRate.taxType) {
@@ -593,12 +703,15 @@ export class AccountingService {
         invoice_date: input.invoice_date as string,
         due_date: input.due_date as string,
         currency: input.currency as string,
+        ...(input.currency_rate !== undefined ? { currency_rate: input.currency_rate } : {}),
         reference: input.reference as string,
+        authoritative_provider_field: input.authoritative_provider_field as "INVOICE_NUMBER" | "REFERENCE",
         line_amount_type: input.line_amount_type as "Exclusive" | "Inclusive" | "NoTax",
         lines: input.lines.map((line, index) => ({
           description: line.description as string,
           quantity: line.quantity as number,
           unit_amount: line.unit_amount as number,
+          ...(serverAccountIds?.[index] ? { account_id: serverAccountIds[index] } : {}),
           account_code: selectedLineValues[index]?.account.code as string,
           tax_type: selectedLineValues[index]?.taxRate.taxType as string,
         })),
@@ -622,7 +735,9 @@ export class AccountingService {
       invoice_date: input.invoice_date ?? null,
       due_date: input.due_date ?? null,
       currency: input.currency ?? null,
+      currency_rate: input.currency_rate ?? null,
       reference: input.reference ?? null,
+      authoritative_provider_field: input.authoritative_provider_field ?? null,
       line_amount_type: input.line_amount_type ?? null,
       lines: input.lines ?? [],
     });
@@ -630,8 +745,8 @@ export class AccountingService {
 
     return {
       technicallyReady,
-      readyForUserConfirmation: technicallyReady,
-      requiresUserConfirmation: true,
+      readyForAutonomousExecution: technicallyReady,
+      requiresUserConfirmation: false,
       executionAllowed: false,
       proposal,
       evidence: {
@@ -658,27 +773,35 @@ export class AccountingService {
       blockers,
       warnings,
       preparation_id: null,
-      confirmation_phrase: null,
       expires_at: null,
+      execution_mode: "STANDING_AUTONOMOUS_DELEGATION",
+      next_action: technicallyReady ? "CALL_EXECUTE_TOOL" : "RESOLVE_BLOCKERS",
     };
   }
 
   async prepareSalesInvoiceDraft(
     principal: AccountingPrincipal,
     input: PrepareSalesInvoiceDraftInput,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
   ): Promise<SalesInvoiceDraftPreparationResult> {
+    const serverAccountIds = serverCoaConstraints?.lines.map((line) => line.accountId);
     const prepared = await this.#prepareSupplierBillDraftProposal(principal, {
       ...(input.source_ref ? { source_ref: input.source_ref } : {}),
+      ...(input.source_unit_key ? { source_unit_key: input.source_unit_key } : {}),
       ...(input.source_sha256 ? { source_sha256: input.source_sha256 } : {}),
       ...(input.customer_name ? { supplier_name: input.customer_name } : {}),
       ...(input.customer_contact_number ? { supplier_contact_number: input.customer_contact_number } : {}),
       ...(input.invoice_date ? { invoice_date: input.invoice_date } : {}),
       ...(input.due_date ? { due_date: input.due_date } : {}),
       ...(input.currency ? { currency: input.currency } : {}),
+      ...(input.currency_rate !== undefined ? { currency_rate: input.currency_rate } : {}),
       ...(input.reference ? { reference: input.reference } : {}),
+      ...(input.authoritative_provider_field
+        ? { authoritative_provider_field: input.authoritative_provider_field }
+        : {}),
       ...(input.line_amount_type ? { line_amount_type: input.line_amount_type } : {}),
       ...(input.lines ? { lines: input.lines } : {}),
-    });
+    }, serverAccountIds);
 
     let proposal = prepared.proposal as Omit<CreateDraftSalesInvoiceInput, "user_confirmation"> | null;
     if (proposal) {
@@ -723,10 +846,17 @@ export class AccountingService {
         customer: supplier,
       },
     } as SalesInvoiceDraftPreparationResult;
+    if (result.proposal && typeof principal !== "string") {
+      await this.#validateInvoiceProposalForAutonomous(principal, "SALES_INVOICE", {
+        ...result.proposal,
+        user_confirmation: "CONFIRMED_FOR_DRAFT",
+      }, serverCoaConstraints);
+    }
     const confirmation = await this.#persistInvoiceDraftPreparation(
       principal,
       result.proposal,
       "SALES_INVOICE",
+      input.source_unit_key,
     );
     return { ...result, ...confirmation };
   }
@@ -735,31 +865,41 @@ export class AccountingService {
     principal: AccountingPrincipal,
     proposal: Omit<CreateDraftSupplierBillInput, "user_confirmation"> | null,
     objectType: "SUPPLIER_BILL" | "SALES_INVOICE",
+    sourceUnitKey?: string,
   ): Promise<Pick<
     SupplierBillDraftPreparationResult,
-    "preparation_id" | "confirmation_phrase" | "expires_at"
+    "preparation_id" | "expires_at" | "execution_mode" | "next_action"
   >> {
     if (!proposal) {
-      return { preparation_id: null, confirmation_phrase: null, expires_at: null };
+      return {
+        preparation_id: null,
+        expires_at: null,
+        execution_mode: "STANDING_AUTONOMOUS_DELEGATION",
+        next_action: "RESOLVE_BLOCKERS",
+      };
     }
     if (!this.#mutationFoundation) {
       if (typeof principal === "string") {
-        return { preparation_id: null, confirmation_phrase: null, expires_at: null };
+        return {
+          preparation_id: null,
+          expires_at: null,
+          execution_mode: "STANDING_AUTONOMOUS_DELEGATION",
+          next_action: "RESOLVE_BLOCKERS",
+        };
       }
       throw new AppError(
         "CONFIGURATION_ERROR",
-        "The one-time Xero invoice confirmation service is unavailable.",
+        "The standing autonomous Xero mutation service is unavailable.",
         { httpStatus: 503 },
       );
     }
     const context = this.#requestContext(principal);
-    const label = objectType === "SUPPLIER_BILL" ? "Supplier Bill" : "Sales Invoice";
     const persisted = await this.#mutationFoundation.prepare(context, {
       objectType,
       operation: "CREATE_DRAFT",
       canonicalPayload: proposal as unknown as Record<string, unknown>,
       sourceRef: proposal.source_ref,
-      sourceUnitKey: `document:${proposal.source_sha256}`,
+      sourceUnitKey: sourceUnitKey ?? `document:${proposal.source_sha256}`,
       ...(proposal.source_evidence_type === "AGENT_ASSERTED_UNVERIFIED"
         ? { sourceSha256: proposal.source_sha256 }
         : {}),
@@ -767,6 +907,7 @@ export class AccountingService {
       confirmationDetails: {
         contactId: proposal.contact_id,
         reference: proposal.reference,
+        authoritativeProviderField: proposal.authoritative_provider_field,
         invoiceDate: proposal.invoice_date,
         dueDate: proposal.due_date,
         currency: proposal.currency,
@@ -776,28 +917,48 @@ export class AccountingService {
           .toFixed(4),
         status: "DRAFT",
       },
-      confirmationPhrase: `确认创建 ${label} DRAFT｜Reference ${proposal.reference.slice(0, 48)}`,
     });
     return {
       preparation_id: persisted.preparationId,
-      confirmation_phrase: persisted.confirmationPhrase,
       expires_at: persisted.expiresAt.toISOString(),
+      execution_mode: "STANDING_AUTONOMOUS_DELEGATION",
+      next_action: "CALL_EXECUTE_TOOL",
     };
   }
 
   async executePreparedSupplierBillDraft(
     principal: AccountingPrincipal,
     input: ExecutePreparedXeroMutationInput,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
+    beforeProviderWriteClaim?: () => Promise<void>,
+    sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
   ): Promise<DraftSupplierBillResult & { mutationRequestId: string }> {
-    const result = await this.#executePreparedInvoiceDraft(principal, input, "SUPPLIER_BILL");
+    const result = await this.#executePreparedInvoiceDraft(
+      principal,
+      input,
+      "SUPPLIER_BILL",
+      serverCoaConstraints,
+      beforeProviderWriteClaim,
+      sealedFirmGovernanceExpectation,
+    );
     return result as DraftSupplierBillResult & { mutationRequestId: string };
   }
 
   async executePreparedSalesInvoiceDraft(
     principal: AccountingPrincipal,
     input: ExecutePreparedXeroMutationInput,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
+    beforeProviderWriteClaim?: () => Promise<void>,
+    sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
   ): Promise<DraftSalesInvoiceResult & { mutationRequestId: string }> {
-    const result = await this.#executePreparedInvoiceDraft(principal, input, "SALES_INVOICE");
+    const result = await this.#executePreparedInvoiceDraft(
+      principal,
+      input,
+      "SALES_INVOICE",
+      serverCoaConstraints,
+      beforeProviderWriteClaim,
+      sealedFirmGovernanceExpectation,
+    );
     return result as DraftSalesInvoiceResult & { mutationRequestId: string };
   }
 
@@ -805,42 +966,108 @@ export class AccountingService {
     principal: AccountingPrincipal,
     input: ExecutePreparedXeroMutationInput,
     objectType: "SUPPLIER_BILL" | "SALES_INVOICE",
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
+    beforeProviderWriteClaim?: () => Promise<void>,
+    sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
   ): Promise<(DraftSupplierBillResult | DraftSalesInvoiceResult) & { mutationRequestId: string }> {
+    const execution = executePreparedXeroMutationSchema.parse(input);
     const mutations = this.#requireMutationFoundation();
-    const resolved = await this.#provider.resolveContext(principal);
-    this.#assertWriteAllowed(principal, resolved.tenantId);
     const context = this.#requestContext(principal);
-    const confirmed = await mutations.confirm(context, {
-      preparationId: input.preparation_id,
-      requestId: input.request_id,
-      confirmationPhrase: input.confirmation_phrase,
+    const recovery = await mutations.resumeAutonomousRecovery(context, {
+      preparationId: execution.preparation_id,
+      requestId: execution.request_id,
     }, { objectType, operation: "CREATE_DRAFT" });
-    if (["FAILED_VALIDATION", "PROVIDER_REJECTED"].includes(confirmed.state)) {
-      throw new AppError(
-        "APPROVAL_INVALID",
-        "This one-time confirmation was already consumed by a terminal failed attempt; prepare and confirm a new proposal.",
-        { httpStatus: 409 },
-      );
+    const preparation = recovery?.preparation ?? await mutations.loadAutonomousPreparation(context, {
+      preparationId: execution.preparation_id,
+      requestId: execution.request_id,
+    }, { objectType, operation: "CREATE_DRAFT" });
+    if (!recovery) {
+      const resolved = await this.#provider.resolveContext(principal);
+      this.#assertWriteAllowed(principal, resolved.tenantId);
     }
     const parsed = createDraftSupplierBillSchema.safeParse({
-      ...confirmed.canonicalPayload,
+      ...preparation.canonicalPayload,
       user_confirmation: "CONFIRMED_FOR_DRAFT",
     });
     if (!parsed.success) {
-      await mutations.failValidation(context, {
-        mutationRequestId: confirmed.mutationRequestId,
-        validationReceipt: { reasonCode: "PERSISTED_INVOICE_PROPOSAL_INVALID" },
-      });
       throw new AppError("APPROVAL_INVALID", "The persisted Xero invoice proposal is invalid.", {
         httpStatus: 409,
       });
     }
+    if (!recovery) {
+      await this.#validateInvoiceProposalForAutonomous(
+        principal,
+        objectType,
+        parsed.data,
+        serverCoaConstraints,
+      );
+    }
+    const actionId = objectType === "SUPPLIER_BILL"
+      ? "supplier_bill.create_draft"
+      : "customer_invoice.create_draft";
+    const validationReceipt = issueObjectPreparationValidationReceipt({
+      actionId,
+      preparation,
+      policyVersion: "xero-autonomous-policy-v1",
+      compilerVersion: "xero-ap-ar-invoice-v1",
+      checks: [
+        { code: "CANONICAL_SCHEMA_VALID", evidence: { objectType } },
+        {
+          code: "CONTACT_ACCOUNT_TAX_DUPLICATE_AND_SOURCE_REVALIDATED",
+          evidence: {
+            objectType,
+            reference: parsed.data.reference,
+            authoritativeProviderField: parsed.data.authoritative_provider_field,
+            lineCount: parsed.data.lines.length,
+            sourceSha256: parsed.data.source_sha256,
+          },
+        },
+      ],
+    });
+    const started = recovery?.claim ?? await mutations.authoriseAutonomous(
+      context,
+      {
+        preparationId: execution.preparation_id,
+        requestId: execution.request_id,
+      },
+      { objectType, operation: "CREATE_DRAFT" },
+      validationReceipt,
+      async () => {
+        // This is the last Provider reference read before WRITE_IN_FLIGHT is
+        // claimed and its one-shot permit is issued. It repeats contact,
+        // account, tax and server-owned semantic constraints as one complete
+        // gate, so a deterministic failure leaves no mutation request behind.
+        await this.#validateInvoiceProposalForAutonomous(
+          principal,
+          objectType,
+          parsed.data,
+          serverCoaConstraints,
+        );
+        await beforeProviderWriteClaim?.();
+      },
+      sealedFirmGovernanceExpectation,
+    );
+    const confirmed = started.request;
+    if (started.mode === "ALREADY_VERIFIED") {
+      const snapshot = confirmed.readbackSnapshot as unknown as DraftSupplierBillResult["bill"] | undefined;
+      if (!confirmed.xeroObjectId || !confirmed.writeReceipt || !snapshot) {
+        throw new AppError("WRITE_RESULT_UNKNOWN", "Verified mutation evidence is incomplete.", {
+          httpStatus: 503,
+          retryable: false,
+        });
+      }
+    }
+    const nativeRecovery = recovery !== undefined && started.mode === "CALL_PROVIDER";
+    if (started.mode === "RECOVER_ONLY") {
+      await this.#waitForInvoiceRecoveryPrerequisite(
+        principal,
+        objectType,
+        parsed.data,
+        confirmed.mutationRequestId,
+      );
+    }
 
-    let genericStartAttempted = false;
-    let started: Awaited<ReturnType<XeroMutationService["start"]>> | undefined;
-    const claimGenericWrite = async (): Promise<void> => {
-      genericStartAttempted = true;
-      started = await mutations.start(context, { mutationRequestId: confirmed.mutationRequestId });
+    const claimGenericWrite = async (): Promise<LedgerProviderWritePermit> => {
       if (started.mode !== "CALL_PROVIDER") {
         throw new AppError(
           "WRITE_RESULT_UNKNOWN",
@@ -848,21 +1075,33 @@ export class AccountingService {
           { httpStatus: 409, retryable: false },
         );
       }
+      return started.providerWritePermit;
     };
 
     let written: DraftSupplierBillResult | DraftSalesInvoiceResult;
     try {
       written = objectType === "SUPPLIER_BILL"
-        ? await this.#createDraftSupplierBill(principal, parsed.data, claimGenericWrite)
-        : await this.#createDraftSalesInvoice(principal, parsed.data, claimGenericWrite);
+        ? await this.#createDraftSupplierBill(
+            principal,
+            parsed.data,
+            confirmed.mutationRequestId,
+            claimGenericWrite,
+            recovery !== undefined,
+            true,
+            nativeRecovery,
+          )
+        : await this.#createDraftSalesInvoice(
+            principal,
+            parsed.data,
+            confirmed.mutationRequestId,
+            claimGenericWrite,
+            recovery !== undefined,
+            true,
+            nativeRecovery,
+          );
     } catch (error) {
       const safe = toSafeError(error);
-      if (!genericStartAttempted && ["VALIDATION_FAILED", "CONFLICT"].includes(safe.code)) {
-        await mutations.failValidation(context, {
-          mutationRequestId: confirmed.mutationRequestId,
-          validationReceipt: { reasonCode: safe.code, message: safe.message },
-        });
-      } else if (started?.mode === "CALL_PROVIDER" && isDefiniteProviderWriteRejection(safe)) {
+      if (started?.mode === "CALL_PROVIDER" && isDefiniteProviderWriteRejection(safe)) {
         await mutations.rejectProvider(context, {
           mutationRequestId: confirmed.mutationRequestId,
           providerRejectionReceipt: {
@@ -885,9 +1124,7 @@ export class AccountingService {
     }
 
     try {
-      const writeClaim = started ?? await mutations.start(context, {
-        mutationRequestId: confirmed.mutationRequestId,
-      });
+      const writeClaim = started;
       if (writeClaim.mode !== "ALREADY_VERIFIED") {
         const writeReceipt = writeClaim.request.writeReceipt ?? {
           postingRequestId: written.postingRequestId,
@@ -927,9 +1164,15 @@ export class AccountingService {
             xeroObjectId: written.invoiceId,
             status: "DRAFT",
             canonicalPayload: confirmed.canonicalPayload,
+            ...(serverCoaConstraints ? {
+              serverCoaExecutionConstraints: parseXeroDeclaredLedgerExecutionConstraints(serverCoaConstraints),
+            } : {}),
             evidence: {
               postingRequestId: written.postingRequestId,
               readbackVerified: written.readbackVerified,
+              providerDocumentReadback: objectType === "SUPPLIER_BILL"
+                ? (written as DraftSupplierBillResult).bill
+                : (written as DraftSalesInvoiceResult).invoice,
             },
           },
         });
@@ -937,7 +1180,7 @@ export class AccountingService {
     } catch (error) {
       throw new AppError(
         "WRITE_RESULT_UNKNOWN",
-        "The Xero DRAFT was read back, but its one-time confirmation receipt was not durably completed; do not create again.",
+        "The Xero DRAFT was read back, but its autonomous operation receipt was not durably completed; do not create again.",
         {
           httpStatus: 503,
           retryable: false,
@@ -947,6 +1190,161 @@ export class AccountingService {
       );
     }
     return { ...written, mutationRequestId: confirmed.mutationRequestId };
+  }
+
+  async #validateInvoiceProposalForAutonomous(
+    principal: AccountingPrincipal,
+    objectType: "SUPPLIER_BILL" | "SALES_INVOICE",
+    input: CreateDraftSupplierBillInput,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
+  ): Promise<void> {
+    const expectedSourceHash = objectType === "SUPPLIER_BILL"
+      ? hashObject(canonicalDraftExtractionFingerprint(input))
+      : hashObject(canonicalSalesInvoiceDraftExtractionFingerprint(input));
+    if (
+      input.source_evidence_type === "SERVER_FINGERPRINTED_EXTRACTION" &&
+      !safeEqual(input.source_sha256, expectedSourceHash)
+    ) {
+      throw new AppError(
+        "VALIDATION_FAILED",
+        "The persisted source fingerprint does not match the normalized invoice proposal.",
+        { httpStatus: 422 },
+      );
+    }
+    if (
+      (objectType === "SUPPLIER_BILL" && input.authoritative_provider_field !== "INVOICE_NUMBER") ||
+      (objectType === "SALES_INVOICE" &&
+        input.authoritative_provider_field !== "INVOICE_NUMBER" &&
+        input.authoritative_provider_field !== "REFERENCE")
+    ) {
+      throw new AppError("VALIDATION_FAILED", "The authoritative Xero provider field is invalid for this invoice route.", {
+        httpStatus: 422,
+        details: { reasonCodes: ["AUTHORITATIVE_PROVIDER_FIELD_ROUTE_MISMATCH"] },
+      });
+    }
+    const context = await this.#provider.resolveContext(principal);
+    this.#assertWriteAllowed(principal, context.tenantId);
+    const actorId = principalActorId(principal);
+    const identity = xeroSupplierPostingIdentity({
+      ...(objectType === "SALES_INVOICE" ? { invoiceType: "ACCREC" as const } : {}),
+      contactId: input.contact_id,
+      reference: input.reference,
+    });
+    const duplicate = await this.#repository.findActivePostingDuplicate({
+      tenantId: context.tenantId,
+      sourceSha256: input.source_sha256,
+      ...identity,
+    });
+    if (duplicate && (
+      (objectType === "SALES_INVOICE" && duplicate.documentType !== "ACCREC") ||
+      duplicate.actorId !== actorId ||
+      duplicate.requestId !== input.request_id
+    )) {
+      throw new AppError(
+        "CONFLICT",
+        "This source or accounting-document reference already has an active Xero posting request.",
+        {
+          httpStatus: 409,
+          details: {
+            duplicatePostingRequestId: duplicate.postingRequestId,
+            duplicateState: duplicate.state,
+          },
+        },
+      );
+    }
+    await this.#validateDraftContext(principal, input);
+    await this.#assertServerCoaExecutionConstraints(principal, input, serverCoaConstraints);
+  }
+
+  async #assertServerCoaExecutionConstraints(
+    principal: AccountingPrincipal,
+    input: CreateDraftSupplierBillInput | CreateDraftSalesInvoiceInput,
+    rawConstraints: XeroDeclaredLedgerExecutionConstraints | undefined,
+  ): Promise<void> {
+    if (!rawConstraints) return;
+    let constraints: XeroDeclaredLedgerExecutionConstraints;
+    try {
+      constraints = parseXeroDeclaredLedgerExecutionConstraints(rawConstraints);
+    } catch (error) {
+      throw new AppError("PERSISTENCE_FAILURE", "The server-owned COA execution constraints are invalid.", {
+        httpStatus: 503,
+        retryable: false,
+        details: { providerMutationPossible: false },
+        cause: error,
+      });
+    }
+    const [resolved, accounts] = await Promise.all([
+      this.#provider.resolveContext(principal),
+      this.#provider.listAccounts(principal),
+    ]);
+    try {
+      assertXeroDeclaredLedgerExecutionConstraints({
+        constraints,
+        tenantId: resolved.tenantId,
+        accounts,
+        lines: input.lines.map((line) => ({
+          accountId: line.account_id,
+          accountCode: line.account_code,
+          taxType: line.tax_type,
+        })),
+      });
+    } catch (error) {
+      if (!(error instanceof XeroDeclaredLedgerBindingError)) throw error;
+      throw new AppError("STALE_PREFLIGHT", error.message, {
+        httpStatus: 409,
+        retryable: false,
+        details: {
+          failureLayer: "XERO_DECLARED_LEDGER_BINDING",
+          reasonCodes: [error.reasonCode],
+          ...(error.declared ? { declaredCoordinate: error.declared } : {}),
+          recoveryAction: "PREPARE_NEW_ACCOUNTING_CASE_VERSION",
+          providerMutationPossible: false,
+        },
+        cause: error,
+      });
+    }
+  }
+
+  async #waitForInvoiceRecoveryPrerequisite(
+    principal: AccountingPrincipal,
+    objectType: "SUPPLIER_BILL" | "SALES_INVOICE",
+    input: CreateDraftSupplierBillInput,
+    mutationRequestId: string,
+  ): Promise<void> {
+    const context = await this.#provider.resolveContext(principal);
+    const identity = xeroSupplierPostingIdentity({
+      ...(objectType === "SALES_INVOICE" ? { invoiceType: "ACCREC" as const } : {}),
+      contactId: input.contact_id,
+      reference: input.reference,
+    });
+    const deadline = Date.now() + EXISTING_DRAFT_WAIT_MS;
+    let delayMs = EXISTING_DRAFT_INITIAL_POLL_MS;
+    while (Date.now() < deadline) {
+      const [posting, request] = await Promise.all([
+        this.#repository.findActivePostingDuplicate({
+          tenantId: context.tenantId,
+          sourceSha256: input.source_sha256,
+          ...identity,
+        }),
+        this.#repository.getXeroMutationRequest(mutationRequestId),
+      ]);
+      if (posting || request?.state === "READBACK_VERIFIED") return;
+      if (request && ["FAILED_VALIDATION", "PROVIDER_REJECTED"].includes(request.state)) {
+        throw new AppError(
+          "APPROVAL_INVALID",
+          `Autonomous invoice recovery cannot continue from ${request.state}.`,
+          { httpStatus: 409 },
+        );
+      }
+      const remainingMs = deadline - Date.now();
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(delayMs, remainingMs)));
+      delayMs = Math.min(delayMs * 2, EXISTING_DRAFT_MAX_POLL_MS);
+    }
+    throw new AppError(
+      "WRITE_RESULT_UNKNOWN",
+      "The autonomous invoice write boundary was claimed but no recoverable provider identity is available; no create retry was attempted.",
+      { httpStatus: 409, retryable: false, details: { mutationRequestId } },
+    );
   }
 
   async getSupplierBill(principal: AccountingPrincipal, invoiceId: string) {
@@ -961,14 +1359,30 @@ export class AccountingService {
     return this.#provider.listCreditNotes(principal, input);
   }
 
-  prepareCreditNoteDraft(principal: AccountingPrincipal, input: PrepareCreditNoteDraftInput) {
+  prepareCreditNoteDraft(
+    principal: AccountingPrincipal,
+    input: PrepareCreditNoteDraftInput,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
+  ) {
     return this.#requireCreditNoteManualJournalMutations()
-      .prepareCreditNoteDraft(this.#requestContext(principal), input);
+      .prepareCreditNoteDraft(this.#requestContext(principal), input, serverCoaConstraints);
   }
 
-  createCreditNoteDraft(principal: AccountingPrincipal, input: ExecutePreparedXeroMutationInput) {
+  createCreditNoteDraft(
+    principal: AccountingPrincipal,
+    input: ExecutePreparedXeroMutationInput,
+    serverCoaConstraints?: XeroDeclaredLedgerExecutionConstraints,
+    beforeProviderWriteClaim?: () => Promise<void>,
+    sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
+  ) {
     return this.#requireCreditNoteManualJournalMutations()
-      .createCreditNoteDraft(this.#requestContext(principal), input);
+      .createCreditNoteDraft(
+        this.#requestContext(principal),
+        input,
+        serverCoaConstraints,
+        beforeProviderWriteClaim,
+        sealedFirmGovernanceExpectation,
+      );
   }
 
   listPayments(principal: AccountingPrincipal, input: ListPaymentsInput) {
@@ -1011,6 +1425,15 @@ export class AccountingService {
     return this.#provider.listManualJournals(principal, input);
   }
 
+  /**
+   * The only path that reaches a credit note's line items. xero_list_credit_notes
+   * returns summaries, which carry no lines, so without this a caller can see that
+   * a credit note exists and not what it credits.
+   */
+  getCreditNote(principal: AccountingPrincipal, input: GetCreditNoteInput) {
+    return this.#provider.getCreditNote(principal, input.credit_note_id);
+  }
+
   getManualJournal(principal: AccountingPrincipal, input: GetManualJournalInput) {
     return this.#provider.getManualJournal(principal, input.manual_journal_id);
   }
@@ -1025,6 +1448,69 @@ export class AccountingService {
       .createManualJournalDraft(this.#requestContext(principal), input);
   }
 
+  prepareDraftDocumentUpdate(
+    principal: AccountingPrincipal,
+    input: PrepareDraftDocumentUpdateInput,
+  ) {
+    return this.#requireDraftDocumentUpdates().prepare(this.#requestContext(principal), input);
+  }
+
+  executeDraftDocumentUpdate(
+    principal: AccountingPrincipal,
+    input: ExecutePreparedXeroMutationInput & { actionId: DraftDocumentUpdateAction },
+    beforeProviderClaimValidation: (envelope: DraftDocumentUpdateEnvelope) => Promise<void>,
+  ) {
+    return this.#requireDraftDocumentUpdates().execute(
+      this.#requestContext(principal),
+      input,
+      beforeProviderClaimValidation,
+    );
+  }
+
+  prepareLedgerStateTransition(
+    principal: AccountingPrincipal,
+    input: PrepareLedgerStateTransitionInput,
+  ) {
+    return this.#requireLedgerStateTransitions().prepare(this.#requestContext(principal), input);
+  }
+
+  executeLedgerStateTransition(
+    principal: AccountingPrincipal,
+    input: ExecuteLedgerStateTransitionInput,
+  ) {
+    return this.#requireLedgerStateTransitions().execute(this.#requestContext(principal), input);
+  }
+
+  prepareTrackingCaseMutation(
+    principal: AccountingPrincipal,
+    input: PrepareTrackingCaseMutationInput,
+  ) {
+    return this.#requireTrackingCaseMutations().prepare(this.#requestContext(principal), input);
+  }
+
+  executeTrackingCaseMutation(
+    principal: AccountingPrincipal,
+    input: ExecuteTrackingCaseMutationInput,
+  ) {
+    return this.#requireTrackingCaseMutations().execute(this.#requestContext(principal), input);
+  }
+
+  prepareLedgerAdjustment(principal: AccountingPrincipal, input: PrepareLedgerAdjustmentInput) {
+    return this.#requireLedgerAdjustments().prepare(this.#requestContext(principal), input);
+  }
+
+  executeLedgerAdjustment(principal: AccountingPrincipal, input: ExecuteLedgerAdjustmentInput) {
+    return this.#requireLedgerAdjustments().execute(this.#requestContext(principal), input);
+  }
+
+  preparePaymentBankCase(principal: AccountingPrincipal, input: PreparePaymentBankCaseInput) {
+    return this.#requirePaymentBankCase().prepare(this.#requestContext(principal), input);
+  }
+
+  executePaymentBankCase(principal: AccountingPrincipal, input: ExecutePaymentBankCaseInput) {
+    return this.#requirePaymentBankCase().execute(this.#requestContext(principal), input);
+  }
+
   listItems(principal: AccountingPrincipal, input: ListItemsInput) {
     return this.#provider.listItems(principal, input);
   }
@@ -1037,8 +1523,16 @@ export class AccountingService {
     return this.#requireContactItemMutations().prepareContactCreate(this.#requestContext(principal), input);
   }
 
-  createContact(principal: AccountingPrincipal, input: ExecutePreparedXeroMutationInput) {
-    return this.#requireContactItemMutations().createContact(this.#requestContext(principal), input);
+  createContact(
+    principal: AccountingPrincipal,
+    input: ExecutePreparedXeroMutationInput,
+    beforeProviderWriteClaim?: () => Promise<void>,
+  ) {
+    return this.#requireContactItemMutations().createContact(
+      this.#requestContext(principal),
+      input,
+      beforeProviderWriteClaim,
+    );
   }
 
   prepareContactUpdate(principal: AccountingPrincipal, input: PrepareContactUpdateMutationInput) {
@@ -1081,17 +1575,54 @@ export class AccountingService {
     return boundXeroTrialBalanceForAgent(await this.#provider.getTrialBalance(principal, input.date));
   }
 
+  listJournals(principal: AccountingPrincipal, input: ListJournalsInput) {
+    return this.#provider.listJournals(principal, input);
+  }
+
+  getProfitAndLoss(principal: AccountingPrincipal, input: ProfitAndLossInput) {
+    return this.#provider.getProfitAndLoss(principal, input);
+  }
+
+  getBalanceSheet(principal: AccountingPrincipal, input: BalanceSheetInput) {
+    return this.#provider.getBalanceSheet(principal, input);
+  }
+
+  getAgedReceivables(principal: AccountingPrincipal, input: AgedReceivablesInput) {
+    return this.#provider.getAgedReceivables(principal, input);
+  }
+
+  getAgedPayables(principal: AccountingPrincipal, input: AgedPayablesInput) {
+    return this.#provider.getAgedPayables(principal, input);
+  }
+
+  getPayment(principal: AccountingPrincipal, input: GetPaymentInput) {
+    return this.#provider.getPayment(principal, input.payment_id);
+  }
+
+  listTrackingCategories(principal: AccountingPrincipal, input: ListTrackingCategoriesInput) {
+    return this.#provider.listTrackingCategories(principal, input);
+  }
+
+  listContactGroups(principal: AccountingPrincipal, input: ListContactGroupsInput) {
+    return this.#provider.listContactGroups(principal, input);
+  }
+
   async createDraftSupplierBill(
     principal: AccountingPrincipal,
     input: CreateDraftSupplierBillInput,
   ): Promise<DraftSupplierBillResult> {
+    this.#assertUnsafeDirectMutationForTests("createDraftSupplierBill");
     return this.#createDraftSupplierBill(principal, input);
   }
 
   async #createDraftSupplierBill(
     principal: AccountingPrincipal,
     input: CreateDraftSupplierBillInput,
-    beforeProviderCreate?: () => Promise<void>,
+    mutationRequestId?: string,
+    beforeProviderCreate?: () => Promise<LedgerProviderWritePermit>,
+    recoveryOnly = false,
+    providerReferencesAlreadyValidated = false,
+    nativeRecovery = false,
   ): Promise<DraftSupplierBillResult> {
     if (
       input.source_evidence_type === "SERVER_FINGERPRINTED_EXTRACTION" &&
@@ -1104,7 +1635,7 @@ export class AccountingService {
       );
     }
     const context = await this.#provider.resolveContext(principal);
-    this.#assertWriteAllowed(principal, context.tenantId);
+    if (!recoveryOnly) this.#assertWriteAllowed(principal, context.tenantId);
     const actorId = principalActorId(principal);
     const supplierIdentity = xeroSupplierPostingIdentity({
       contactId: input.contact_id,
@@ -1128,11 +1659,33 @@ export class AccountingService {
         },
       );
     }
-    await this.#validateDraftContext(principal, input);
-
     const canonicalRequest = canonicalDraftRequest(context.tenantId, input);
     const requestPayloadHash = hashObject(canonicalRequest);
-    const createIdempotencyKey = `zc:create:${sha256(`${actorId}:${context.tenantId}:${input.request_id}:${requestPayloadHash}`)}`;
+    const derivedCreateIdempotencyKey = `zc:create:${sha256(`${actorId}:${context.tenantId}:${input.request_id}:${requestPayloadHash}`)}`;
+    const createIdempotencyKey = mutationRequestId ?? derivedCreateIdempotencyKey;
+    if (duplicate) {
+      if (duplicate.requestPayloadHash !== requestPayloadHash) {
+        throw new AppError("CONFLICT", "request_id was already used with a different supplier bill payload.", {
+          httpStatus: 409,
+        });
+      }
+      // An exact durable replay must not depend on the current chart of
+      // accounts, tax catalogue, or another live Provider validation. Those
+      // reads can drift or be unavailable after the original verified write;
+      // replay only returns/reconciles the already-reserved Provider identity.
+      if (!nativeRecovery) return this.#resolveExistingDraftRequest(principal, input, duplicate);
+    }
+    if (recoveryOnly && !nativeRecovery) {
+      throw new AppError(
+        "PERSISTENCE_FAILURE",
+        "Read-only supplier-bill recovery has no exact durable posting request; no create was attempted.",
+        { httpStatus: 503, details: { providerMutationPossible: false } },
+      );
+    }
+    if (!providerReferencesAlreadyValidated) {
+      await this.#validateDraftContext(principal, input);
+    }
+
     const created = await this.#repository.createOrGetPosting({
       postingRequestId: `pr_${randomUUID()}`,
       actorId,
@@ -1166,13 +1719,15 @@ export class AccountingService {
           httpStatus: 409,
         });
       }
-      return this.#resolveExistingDraftRequest(principal, input, created.posting);
+      if (!nativeRecovery) return this.#resolveExistingDraftRequest(principal, input, created.posting);
     }
 
     let written: ProviderWriteResult | undefined;
     let writeEvidencePersisted = false;
+    let providerBoundaryAttempted = false;
     try {
-      await beforeProviderCreate?.();
+      const providerWritePermit = await beforeProviderCreate?.();
+      providerBoundaryAttempted = true;
       written = await this.#provider.createDraftSupplierBill(
         principal,
         input,
@@ -1185,6 +1740,8 @@ export class AccountingService {
           );
           writeEvidencePersisted = true;
         },
+        providerWritePermit,
+        mutationRequestId,
       );
       this.#verifyDraftReadback(context.tenantId, input, written.bill);
       const canonicalReadback = canonicalBillForApproval(written.bill);
@@ -1208,7 +1765,7 @@ export class AccountingService {
         readbackVerified: true,
         reviewUrl: `${this.#config.publicBaseUrl}/review/${posting.postingRequestId}`,
         bill: written.bill,
-        idempotentReplay: false,
+        idempotentReplay: nativeRecovery,
       };
     } catch (error) {
       const safe = toSafeError(error);
@@ -1246,6 +1803,9 @@ export class AccountingService {
         } else {
           await this.#tryMarkDraftFailure(created.posting.postingRequestId, "READBACK_MISMATCH");
         }
+      } else if (!providerBoundaryAttempted &&
+          ["VALIDATION_FAILED", "CONFLICT", "STALE_PREFLIGHT", "PERSISTENCE_FAILURE"].includes(safe.code)) {
+        await this.#tryMarkDraftFailure(created.posting.postingRequestId, "BLOCKED_VALIDATION");
       } else if (written) {
         // The Provider returned an exact, verified DRAFT before durable local
         // completion failed. This is never a validation-only failure: releasing
@@ -1289,13 +1849,18 @@ export class AccountingService {
     principal: AccountingPrincipal,
     input: CreateDraftSalesInvoiceInput,
   ): Promise<DraftSalesInvoiceResult> {
+    this.#assertUnsafeDirectMutationForTests("createDraftSalesInvoice");
     return this.#createDraftSalesInvoice(principal, input);
   }
 
   async #createDraftSalesInvoice(
     principal: AccountingPrincipal,
     input: CreateDraftSalesInvoiceInput,
-    beforeProviderCreate?: () => Promise<void>,
+    mutationRequestId?: string,
+    beforeProviderCreate?: () => Promise<LedgerProviderWritePermit>,
+    recoveryOnly = false,
+    providerReferencesAlreadyValidated = false,
+    nativeRecovery = false,
   ): Promise<DraftSalesInvoiceResult> {
     if (
       input.source_evidence_type === "SERVER_FINGERPRINTED_EXTRACTION" &&
@@ -1308,7 +1873,7 @@ export class AccountingService {
       );
     }
     const context = await this.#provider.resolveContext(principal);
-    this.#assertWriteAllowed(principal, context.tenantId);
+    if (!recoveryOnly) this.#assertWriteAllowed(principal, context.tenantId);
     const actorId = principalActorId(principal);
     const identity = xeroSupplierPostingIdentity({
       invoiceType: "ACCREC",
@@ -1337,11 +1902,29 @@ export class AccountingService {
         },
       );
     }
-    await this.#validateDraftContext(principal, input);
-
     const canonicalRequest = canonicalSalesInvoiceDraftRequest(context.tenantId, input);
     const requestPayloadHash = hashObject(canonicalRequest);
-    const createIdempotencyKey = `zc:create:ACCREC:${sha256(`${actorId}:${context.tenantId}:${input.request_id}:${requestPayloadHash}`)}`;
+    const derivedCreateIdempotencyKey = `zc:create:ACCREC:${sha256(`${actorId}:${context.tenantId}:${input.request_id}:${requestPayloadHash}`)}`;
+    const createIdempotencyKey = mutationRequestId ?? derivedCreateIdempotencyKey;
+    if (duplicate) {
+      if (duplicate.requestPayloadHash !== requestPayloadHash) {
+        throw new AppError("CONFLICT", "request_id was already used with a different sales invoice payload.", {
+          httpStatus: 409,
+        });
+      }
+      if (!nativeRecovery) return this.#resolveExistingSalesInvoiceDraftRequest(principal, input, duplicate);
+    }
+    if (recoveryOnly && !nativeRecovery) {
+      throw new AppError(
+        "PERSISTENCE_FAILURE",
+        "Read-only sales-invoice recovery has no exact durable posting request; no create was attempted.",
+        { httpStatus: 503, details: { providerMutationPossible: false } },
+      );
+    }
+    if (!providerReferencesAlreadyValidated) {
+      await this.#validateDraftContext(principal, input);
+    }
+
     const created = await this.#repository.createOrGetPosting({
       postingRequestId: `pr_${randomUUID()}`,
       actorId,
@@ -1380,13 +1963,15 @@ export class AccountingService {
           httpStatus: 409,
         });
       }
-      return this.#resolveExistingSalesInvoiceDraftRequest(principal, input, created.posting);
+      if (!nativeRecovery) return this.#resolveExistingSalesInvoiceDraftRequest(principal, input, created.posting);
     }
 
     let written: ProviderSalesInvoiceWriteResult | undefined;
     let writeEvidencePersisted = false;
+    let providerBoundaryAttempted = false;
     try {
-      await beforeProviderCreate?.();
+      const providerWritePermit = await beforeProviderCreate?.();
+      providerBoundaryAttempted = true;
       written = await this.#provider.createDraftSalesInvoice(
         principal,
         input,
@@ -1399,6 +1984,8 @@ export class AccountingService {
           );
           writeEvidencePersisted = true;
         },
+        providerWritePermit,
+        mutationRequestId,
       );
       this.#verifySalesInvoiceDraftReadback(context.tenantId, input, written.invoice);
       const approvedPayloadHash = hashObject(canonicalInvoiceForApproval(written.invoice));
@@ -1420,7 +2007,7 @@ export class AccountingService {
         providerReceipt: written.receipt,
         readbackVerified: true,
         invoice: written.invoice,
-        idempotentReplay: false,
+        idempotentReplay: nativeRecovery,
       };
     } catch (error) {
       const safe = toSafeError(error);
@@ -1458,6 +2045,9 @@ export class AccountingService {
         } else {
           await this.#tryMarkDraftFailure(created.posting.postingRequestId, "READBACK_MISMATCH");
         }
+      } else if (!providerBoundaryAttempted &&
+          ["VALIDATION_FAILED", "CONFLICT", "STALE_PREFLIGHT", "PERSISTENCE_FAILURE"].includes(safe.code)) {
+        await this.#tryMarkDraftFailure(created.posting.postingRequestId, "BLOCKED_VALIDATION");
       } else if (written) {
         await this.#tryMarkDraftWriteUnknown(created.posting.postingRequestId, written.invoice.invoiceId);
         throw new AppError(
@@ -1496,6 +2086,7 @@ export class AccountingService {
     principal: AccountingPrincipal,
     input: AuthoriseSupplierBillInput,
   ): Promise<AuthoriseSupplierBillResult> {
+    this.#assertUnsafeDirectMutationForTests("authoriseSupplierBill");
     if (isOAuthPrincipal(principal)) {
       throw new AppError("FORBIDDEN", "OAuth accounting agents may create drafts but cannot authorise bills.", {
         httpStatus: 403,
@@ -1514,6 +2105,7 @@ export class AccountingService {
     actorId: string,
     input: { postingRequestId: string; sessionHash: string; csrfToken: string },
   ): Promise<AuthoriseSupplierBillResult> {
+    this.#assertUnsafeDirectMutationForTests("authoriseReviewedSupplierBill");
     const posting = await this.#repository.getPosting(input.postingRequestId);
     if (!posting) throw new AppError("NOT_FOUND", "Posting request was not found.", { httpStatus: 404 });
     if (posting.documentType !== "ACCPAY") {
@@ -1668,7 +2260,11 @@ export class AccountingService {
 
     let written: ProviderWriteResult;
     try {
-      written = await this.#provider.authoriseSupplierBill(principal, invoiceId, authoriseIdempotencyKey);
+      written = await this.#unsafeLegacyAuthoriseProvider().authoriseSupplierBill(
+        principal,
+        invoiceId,
+        authoriseIdempotencyKey,
+      );
     } catch (error) {
       const safe = toSafeError(error);
       await this.#tryMarkAuthoriseFailure(
@@ -1812,15 +2408,41 @@ export class AccountingService {
     input: unknown;
     action: () => Promise<T>;
     recordId?: (result: T) => string | undefined;
+    /**
+     * Optional Agent-visible projection used only for the governance output hash.
+     * The action result itself and all write receipts remain unchanged.
+     */
+    auditOutput?: (result: T) => unknown;
+    governanceDisposition?: GovernanceDisposition;
+    /** Connection status alone may report a disconnected state without a bound tenant. */
+    allowUnresolvedTenant?: boolean;
+    /** A rejected opaque target is audited at installation level without following the mutable compatibility pointer. */
+    skipTenantResolution?: boolean;
+    /** Receives the already-resolved server-side tenant context without causing a second Provider lookup. */
+    onResolvedContext?: (context: ActorTenantContext | undefined) => void;
+    /**
+     * Re-resolves the server-owned binding after the Provider action and
+     * withholds the result if the active organisation changed mid-call.
+     * Ordinary MCP reads enable this to close the organisation-switch TOCTOU
+     * window; connection-status checks deliberately remain control-plane only.
+     */
+    revalidateContextAfterAction?: boolean;
   }): Promise<T> {
     const callId = options.callId ?? `call_${randomUUID()}`;
     const startedAt = new Date();
     const requestHash = hashObject(options.input);
     let tenantId: string | undefined;
-    try {
-      tenantId = (await this.#provider.resolveContext(options.principal ?? options.actorId)).tenantId;
-    } catch {
-      // Connection status and failed connection calls are still audited without a tenant.
+    if (options.skipTenantResolution) {
+      options.onResolvedContext?.(undefined);
+    } else {
+      try {
+        const resolvedContext = await this.#provider.resolveContext(options.principal ?? options.actorId);
+        tenantId = resolvedContext.tenantId;
+        options.onResolvedContext?.(resolvedContext);
+      } catch {
+        // Connection status and failed connection calls are still audited without a tenant.
+        options.onResolvedContext?.(undefined);
+      }
     }
 
     const intent: AuditIntent = {
@@ -1834,9 +2456,110 @@ export class AccountingService {
     if (tenantId) intent.tenantId = tenantId;
     await this.#beginAudit(intent);
 
-    let result: T;
+    const principal = typeof options.principal === "object" ? options.principal : undefined;
+    const streamId = principal?.oauthInstallationId
+      ? `installation:${principal.oauthInstallationId}`
+      : `actor:${options.actorId}`;
+    const governanceBase = {
+      streamId,
+      schemaVersion: "zcloak.governance-event.v1" as const,
+      source: principal ? "MCP" as const : "USER_UI" as const,
+      action: options.toolName,
+      actorId: options.actorId,
+      ...(principal?.workspaceId ? { workspaceId: principal.workspaceId } : {}),
+      ...(principal?.agentId ? { agentId: principal.agentId } : {}),
+      ...(principal?.oauthInstallationId ? { installationId: principal.oauthInstallationId } : {}),
+      ...(principal?.bindingId ? { bindingId: principal.bindingId } : {}),
+      ...(principal?.connectionId ? { connectionId: principal.connectionId } : {}),
+      ...(tenantId ? { tenantId } : {}),
+      correlationId: callId,
+      inputHash: requestHash,
+    };
+    const ledgerTargetEvidence = principal?.targetSessionId
+      ? { targetSessionRefSafe: safeLedgerTargetReference(principal.targetSessionId) }
+      : {};
     try {
+      await this.#repository.appendGovernanceAuditEvent({
+        ...governanceBase,
+        eventId: `${callId}:proposed`,
+        eventType: principal ? "mcp.tool.proposed" : "user.action.proposed",
+        disposition: options.governanceDisposition ?? "NOT_EVALUATED",
+        outcome: "PROPOSED",
+        evidence: {
+          toolName: options.toolName,
+          legacyDemo: principal?.legacyDemo ?? false,
+          credentialMode: principal?.legacyDemo ? "LEGACY_DEMO" : principal ? "MCP_OAUTH" : "USER_SESSION",
+          ...ledgerTargetEvidence,
+        },
+        occurredAt: startedAt,
+      });
+    } catch (error) {
+      await this.#completeAudit(callId, options.toolName, {
+        resultStatus: "FAILED",
+        errorClass: "GOVERNANCE_AUDIT_UNAVAILABLE",
+        finishedAt: new Date(),
+      });
+      this.#logger.error("Governance audit proposal persistence failed.", {
+        callId,
+        toolName: options.toolName,
+        errorClass: error instanceof Error ? error.name : "UnknownError",
+      });
+      throw new AppError("CONFIGURATION_ERROR", "Governance audit evidence could not be persisted; the tool was not run.", {
+        httpStatus: 503,
+        cause: error,
+      });
+    }
+
+    let result: T;
+    let auditOutput: unknown;
+    try {
+      if (!tenantId && !options.allowUnresolvedTenant) {
+        throw new AppError(
+          "CONFIGURATION_ERROR",
+          "The Xero action could not be bound to a verified server-side organisation.",
+          { httpStatus: 503 },
+        );
+      }
       result = await options.action();
+      if (options.revalidateContextAfterAction) {
+        let revalidatedContext: ActorTenantContext;
+        try {
+          revalidatedContext = await this.#provider.resolveContext(options.principal ?? options.actorId);
+        } catch (error) {
+          throw new AppError(
+            "CONFIGURATION_ERROR",
+            "The Xero organisation binding could not be revalidated after the read.",
+            { httpStatus: 503, cause: error },
+          );
+        }
+        if (!tenantId || revalidatedContext.tenantId !== tenantId) {
+          throw new AppError(
+            "CONFIGURATION_ERROR",
+            "The Xero organisation binding changed while the read was running; the result was withheld.",
+            { httpStatus: 503 },
+          );
+        }
+      }
+      if (principal?.legacyDemo && !options.allowUnresolvedTenant) {
+        let revalidatedContext: ActorTenantContext;
+        try {
+          revalidatedContext = await this.#provider.resolveContext(principal);
+        } catch (error) {
+          throw new AppError(
+            "CONFIGURATION_ERROR",
+            "The legacy Xero tenant binding could not be revalidated after the action.",
+            { httpStatus: 503, cause: error },
+          );
+        }
+        if (!tenantId || revalidatedContext.tenantId !== tenantId) {
+          throw new AppError(
+            "CONFIGURATION_ERROR",
+            "The legacy Xero tenant binding changed while the action was running.",
+            { httpStatus: 503 },
+          );
+        }
+      }
+      auditOutput = options.auditOutput ? options.auditOutput(result) : result;
     } catch (error) {
       const safe = toSafeError(error);
       const completion: AuditCompletion = {
@@ -1845,6 +2568,30 @@ export class AccountingService {
         finishedAt: new Date(),
       };
       await this.#completeAudit(callId, options.toolName, completion, safe);
+      try {
+        await this.#repository.appendGovernanceAuditEvent({
+          ...governanceBase,
+          eventId: `${callId}:completed`,
+          eventType: principal ? "mcp.tool.completed" : "user.action.completed",
+          disposition: "DENY",
+          outcome: completion.resultStatus === "REJECTED" ? "REJECTED" : "FAILED",
+          outputHash: hashObject({ code: safe.code, httpStatus: safe.httpStatus }),
+          evidence: {
+            toolName: options.toolName,
+            errorClass: safe.code,
+            providerMutationCompletion: safe.code === "WRITE_RESULT_UNKNOWN" ? "UNKNOWN" : "NOT_REPORTED",
+            ...ledgerTargetEvidence,
+          },
+          occurredAt: completion.finishedAt,
+        });
+      } catch (governanceError) {
+        this.#logger.error("Governance audit rejection persistence failed.", {
+          callId,
+          toolName: options.toolName,
+          originalErrorCode: safe.code,
+          errorClass: governanceError instanceof Error ? governanceError.name : "UnknownError",
+        });
+      }
       throw safe;
     }
 
@@ -1855,6 +2602,34 @@ export class AccountingService {
     const recordId = options.recordId?.(result);
     if (recordId) completion.recordId = recordId;
     await this.#completeAudit(callId, options.toolName, completion);
+    try {
+      await this.#repository.appendGovernanceAuditEvent({
+        ...governanceBase,
+        eventId: `${callId}:completed`,
+        eventType: principal ? "mcp.tool.completed" : "user.action.completed",
+        disposition: options.governanceDisposition ?? "NOT_EVALUATED",
+        outcome: "SUCCEEDED",
+        outputHash: hashObject(auditOutput),
+        evidence: {
+          toolName: options.toolName,
+          policyEvaluation: "RECORDED_BY_EXISTING_CAPABILITY_AND_WRITE_GATES",
+          providerMutationCompletion: "SEE_TOOL_RECEIPT_AND_READBACK_EVIDENCE",
+          ...ledgerTargetEvidence,
+        },
+        occurredAt: completion.finishedAt,
+      });
+    } catch (error) {
+      this.#logger.error("Governance audit completion persistence failed.", {
+        callId,
+        toolName: options.toolName,
+        errorClass: error instanceof Error ? error.name : "UnknownError",
+      });
+      throw new AppError("CONFIGURATION_ERROR", "Governance audit completion failed; the tool result was withheld.", {
+        httpStatus: 503,
+        details: { auditCallId: callId, governanceAuditCompletionStatus: "UNKNOWN" },
+        cause: error,
+      });
+    }
     return result;
   }
 
@@ -1990,26 +2765,25 @@ export class AccountingService {
     }
 
     for (const line of input.lines) {
-      const account = accounts.find((candidate) => candidate.code === line.account_code);
-      if (
-        !account ||
-        (account.status && account.status !== "ACTIVE") ||
-        account.type === "BANK" ||
-        ["DEBTORS", "CREDITORS"].includes(account.systemAccount ?? "")
-      ) {
+      const accountMatches = accounts.filter((candidate) =>
+        candidate.code === line.account_code &&
+        (line.account_id === undefined || candidate.accountId === line.account_id) &&
+        candidate.status === "ACTIVE" &&
+        candidate.type !== "BANK" &&
+        !["DEBTORS", "CREDITORS"].includes(candidate.systemAccount ?? ""));
+      const account = accountMatches.length === 1 ? accountMatches[0] : undefined;
+      if (!account) {
         throw new AppError("VALIDATION_FAILED", `Account ${line.account_code} is not eligible for this draft invoice.`, {
           httpStatus: 422,
         });
       }
-      const tax = taxRates.find((candidate) => candidate.taxType === line.tax_type);
-      if (!tax || (tax.status && tax.status !== "ACTIVE")) {
-        throw new AppError("VALIDATION_FAILED", `Tax type ${line.tax_type} is not active in Xero.`, {
-          httpStatus: 422,
-        });
-      }
-      if (!canTaxApplyToAccountClass(tax, account.class)) {
-        const accountClass = account.class?.toLowerCase() ?? "selected";
-        throw new AppError("VALIDATION_FAILED", `Tax type ${line.tax_type} cannot be used with ${accountClass} accounts.`, {
+      const taxResolution = resolveStableXeroTaxRate({
+        taxRates,
+        taxType: line.tax_type,
+        account,
+      });
+      if (!taxResolution.ok) {
+        throw new AppError("VALIDATION_FAILED", `${taxResolution.message} [${taxResolution.code}]`, {
           httpStatus: 422,
         });
       }
@@ -2028,6 +2802,7 @@ export class AccountingService {
         line.description === requested.description &&
         line.quantity === requested.quantity.toFixed(4) &&
         line.unitAmount === requested.unit_amount.toFixed(4) &&
+        (requested.account_id === undefined || line.accountId === requested.account_id) &&
         line.accountCode === requested.account_code &&
         line.taxType === requested.tax_type;
     });
@@ -2040,7 +2815,8 @@ export class AccountingService {
       bill.contact.contactId !== input.contact_id ||
       !datesMatch ||
       bill.currency !== input.currency ||
-      bill.reference !== input.reference ||
+      (input.currency_rate !== undefined && bill.currencyRate !== input.currency_rate.toFixed(4)) ||
+      bill.invoiceNumber !== input.reference ||
       bill.lineAmountType !== input.line_amount_type ||
       !linesMatch ||
       !totalsMatch
@@ -2064,6 +2840,7 @@ export class AccountingService {
         line.description === requested.description &&
         line.quantity === requested.quantity.toFixed(4) &&
         line.unitAmount === requested.unit_amount.toFixed(4) &&
+        (requested.account_id === undefined || line.accountId === requested.account_id) &&
         line.accountCode === requested.account_code &&
         line.taxType === requested.tax_type;
     });
@@ -2074,7 +2851,10 @@ export class AccountingService {
       invoice.contact.contactId !== input.contact_id ||
       !datesMatch ||
       invoice.currency !== input.currency ||
-      invoice.reference !== input.reference ||
+      (input.currency_rate !== undefined && invoice.currencyRate !== input.currency_rate.toFixed(4)) ||
+      (input.authoritative_provider_field === "INVOICE_NUMBER"
+        ? invoice.invoiceNumber !== input.reference
+        : invoice.reference !== input.reference) ||
       invoice.lineAmountType !== input.line_amount_type ||
       !linesMatch ||
       !this.#totalsAreInternallyConsistent(invoice)
@@ -2362,6 +3142,15 @@ export class AccountingService {
     return this.#creditNoteManualJournalMutations;
   }
 
+  #requireDraftDocumentUpdates(): XeroDraftDocumentUpdateService {
+    if (!this.#draftDocumentUpdates) {
+      throw new AppError("CONFIGURATION_ERROR", "The controlled Xero DRAFT update service is unavailable.", {
+        httpStatus: 503,
+      });
+    }
+    return this.#draftDocumentUpdates;
+  }
+
   #requireContactItemMutations(): XeroContactItemMutationService {
     if (!this.#contactItemMutations) {
       throw new AppError("CONFIGURATION_ERROR", "The controlled Xero Contact/Item service is unavailable.", {
@@ -2380,6 +3169,38 @@ export class AccountingService {
     return this.#mutationFoundation;
   }
 
+  #requireLedgerStateTransitions(): XeroLedgerStateTransitionService {
+    if (!this.#ledgerStateTransitions) {
+      throw new AppError("CONFIGURATION_ERROR", "Ledger-state transition service is unavailable.", {
+        httpStatus: 503,
+      });
+    }
+    return this.#ledgerStateTransitions;
+  }
+
+  #requireTrackingCaseMutations(): XeroTrackingCaseMutationService {
+    if (!this.#trackingCaseMutations) {
+      throw new AppError("CONFIGURATION_ERROR", "Tracking Case mutation service is unavailable.", {
+        httpStatus: 503,
+      });
+    }
+    return this.#trackingCaseMutations;
+  }
+
+  #requireLedgerAdjustments(): XeroLedgerAdjustmentService {
+    if (!this.#ledgerAdjustments) {
+      throw new AppError("CONFIGURATION_ERROR", "Ledger-adjustment service is unavailable.", {
+        httpStatus: 503,
+      });
+    }
+    return this.#ledgerAdjustments;
+  }
+
+  #requirePaymentBankCase(): XeroPaymentBankCaseService {
+    if (!this.#paymentBankCase) throw new AppError("CONFIGURATION_ERROR", "Payment/Bank Case service is unavailable.", { httpStatus: 503 });
+    return this.#paymentBankCase;
+  }
+
   #requestContext(principal: AccountingPrincipal): RequestContext {
     if (typeof principal === "string") {
       throw new AppError("FORBIDDEN", "Controlled Xero mutations require a bound MCP request context.", {
@@ -2389,25 +3210,63 @@ export class AccountingService {
     return principal;
   }
 
+  #assertUnsafeDirectMutationForTests(operation: string): void {
+    if (!this.#allowUnsafeDirectMutationForTests) {
+      throw new AppError(
+        "ACTION_UNSUPPORTED",
+        `${operation} is an internal test adapter; production writes must enter through the ledger control kernel.`,
+        { httpStatus: 403, details: { providerMutationPossible: false } },
+      );
+    }
+  }
+
+  #unsafeLegacyAuthoriseProvider(): {
+    authoriseSupplierBill(
+      principal: AccountingPrincipal,
+      invoiceId: string,
+      idempotencyKey: string,
+    ): Promise<ProviderWriteResult>;
+  } {
+    this.#assertUnsafeDirectMutationForTests("authoriseSupplierBill");
+    const candidate = this.#provider as AccountingProvider & {
+      authoriseSupplierBill?: (
+        principal: AccountingPrincipal,
+        invoiceId: string,
+        idempotencyKey: string,
+      ) => Promise<ProviderWriteResult>;
+    };
+    if (typeof candidate.authoriseSupplierBill !== "function") {
+      throw new AppError(
+        "ACTION_UNSUPPORTED",
+        "The production Xero provider does not expose the legacy AUTHORISE writer.",
+        { httpStatus: 403, details: { providerMutationPossible: false } },
+      );
+    }
+    return { authoriseSupplierBill: candidate.authoriseSupplierBill.bind(candidate) };
+  }
+
   #assertWriteAllowed(principal: AccountingPrincipal, tenantId: string): void {
     if (!this.#config.xeroWriteEnabled) {
-      throw new AppError("FORBIDDEN", "Xero write operations are disabled for this deployment.", {
-        httpStatus: 403,
-      });
+      throw xeroCapabilityDenied(
+        "Xero write operations are disabled for this deployment.",
+        ["WRITE_GATE_CLOSED"],
+      );
     }
     if (isOAuthPrincipal(principal)) {
       const context = requireOAuthBoundRequestContext(principal as Exclude<AccountingPrincipal, string>);
       if (!context.scopes.includes("xero.draft.write")) {
-        throw new AppError("FORBIDDEN", "This OAuth connection does not grant draft write access.", {
-          httpStatus: 403,
-        });
+        throw xeroCapabilityDenied(
+          "This MCP installation does not grant draft write access.",
+          ["MISSING_MCP_SCOPE"],
+        );
       }
       return;
     }
     if (!this.#config.xeroAllowedTenantId || tenantId !== this.#config.xeroAllowedTenantId) {
-      throw new AppError("FORBIDDEN", "The connected Xero organisation is not allowlisted for writes.", {
-        httpStatus: 403,
-      });
+      throw xeroCapabilityDenied(
+        "Legacy shared-bearer connections cannot use autonomous Xero writes.",
+        ["STANDING_DELEGATION_MISSING"],
+      );
     }
   }
 }

@@ -13,6 +13,7 @@ import {
   verifyCreditNoteDraftReadback,
   verifyManualJournalDraftReadback,
 } from "../src/providers/xeroCreditNoteManualJournalDraft.js";
+import { loadXeroResponse } from "./fixtures/xero-provider-responses/index.js";
 
 const contactId = "11111111-1111-4111-8111-111111111111";
 const revenueAccountId = "22222222-2222-4222-8222-222222222222";
@@ -31,6 +32,7 @@ const creditNoteInput = {
   credit_note_date: "2026-08-07",
   currency: "SGD",
   reference: "RETURN-20260807-001",
+  authoritative_provider_field: "REFERENCE" as const,
   line_amount_type: "Exclusive" as const,
   lines: [{
     description: "Unused advisory package",
@@ -459,7 +461,10 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
     const credit = buildCreditNoteDraftPrimitive(creditNoteInput);
     const journal = buildManualJournalDraftPrimitive(manualJournalInput);
 
-    expect(mapCreditNoteDraftReadback(creditNoteReadback())).toMatchObject({
+    expect(mapCreditNoteDraftReadback(
+      creditNoteReadback(),
+      credit.canonicalPayload.authoritativeProviderField,
+    )).toMatchObject({
       ok: true,
       snapshot: {
         objectType: "CREDIT_NOTE",
@@ -472,9 +477,6 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
           totalTax: "25.1000",
           total: "276.1000",
           noDiscountsVerified: true,
-          arithmeticVerified: true,
-          lineBasisVerified: true,
-          taxTotalVerified: true,
         },
       },
     });
@@ -502,6 +504,43 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
       .toMatchObject({ ok: true, readbackCanonicalPayloadHash: journal.canonicalPayloadHash });
   });
 
+  it("accepts a native Date object for date fields exactly like the equivalent plain string (live Xero returns Date, not string, for CreditNote.date and ManualJournal.date)", () => {
+    const credit = buildCreditNoteDraftPrimitive(creditNoteInput);
+    const journal = buildManualJournalDraftPrimitive(manualJournalInput);
+    const creditNoteWithDateObject = {
+      ...creditNoteReadback(),
+      date: new Date("2026-08-07T00:00:00.000Z"),
+    };
+    const journalWithDateObject = {
+      ...manualJournalReadback(),
+      date: new Date("2026-07-31T00:00:00.000Z"),
+    };
+
+    expect(mapCreditNoteDraftReadback(
+      creditNoteWithDateObject,
+      credit.canonicalPayload.authoritativeProviderField,
+    )).toMatchObject({
+      ok: true,
+      snapshot: {
+        objectType: "CREDIT_NOTE",
+        creditNoteId,
+        canonicalPayload: { creditNoteDate: "2026-08-07" },
+      },
+    });
+    expect(mapManualJournalDraftReadback(journalWithDateObject)).toMatchObject({
+      ok: true,
+      snapshot: {
+        objectType: "MANUAL_JOURNAL",
+        manualJournalId,
+        canonicalPayload: { journalDate: "2026-07-31" },
+      },
+    });
+    expect(verifyCreditNoteDraftReadback(creditNoteId, credit.canonicalPayload, creditNoteWithDateObject))
+      .toMatchObject({ ok: true, readbackCanonicalPayloadHash: credit.canonicalPayloadHash });
+    expect(verifyManualJournalDraftReadback(manualJournalId, journal.canonicalPayload, journalWithDateObject))
+      .toMatchObject({ ok: true, readbackCanonicalPayloadHash: journal.canonicalPayloadHash });
+  });
+
   it("fails exact verification for object IDs, statuses, types, contacts, dates, currencies, references, and every line field", () => {
     const credit = buildCreditNoteDraftPrimitive(creditNoteInput);
     const journal = buildManualJournalDraftPrimitive(manualJournalInput);
@@ -519,8 +558,12 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
     expect(verifyCreditNoteDraftReadback(creditNoteId, credit.canonicalPayload, { ...rawCredit, status: "AUTHORISED" }))
       .toEqual({ ok: false, reasons: ["MALFORMED_PROVIDER_READBACK"] });
 
-    const headerMismatches = [
+    expect(verifyCreditNoteDraftReadback(
+      creditNoteId,
+      credit.canonicalPayload,
       { ...rawCredit, type: "ACCPAYCREDIT" },
+    )).toEqual({ ok: false, reasons: ["MALFORMED_PROVIDER_READBACK"] });
+    const headerMismatches = [
       { ...rawCredit, contact: { contactID: anotherId } },
       { ...rawCredit, date: "2026-08-08" },
       { ...rawCredit, currencyCode: "USD" },
@@ -618,7 +661,79 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
     )).toMatchObject({ ok: true });
   });
 
+  it("names the exact canonical-payload field that disagreed, and never the disagreeing value, on CANONICAL_PAYLOAD_MISMATCH", () => {
+    // proves: CANONICAL_PAYLOAD_MISMATCH used to be the entire report - no
+    // field name, just the bucket. A single header-field change is now named
+    // exactly ("reference" / "narration"), a single line-field change carries
+    // the array-index path shape the implementation plan specifies
+    // ("lines[0].accountCode"), and a provider-controlled value injected into
+    // that same field never appears inside mismatchFields - the only piece of
+    // this result the MCP failure envelope actually projects to the agent
+    // (xeroFailureEnvelope.ts reads safe.details?.mismatchFields only; it
+    // never echoes snapshot/readbackCanonicalPayload, which legitimately do
+    // carry real values here for operator recovery evidence).
+    const credit = buildCreditNoteDraftPrimitive(creditNoteInput);
+    const journal = buildManualJournalDraftPrimitive(manualJournalInput);
+    const rawCredit = creditNoteReadback();
+    const rawJournal = manualJournalReadback();
+
+    const creditHeaderResult = verifyCreditNoteDraftReadback(
+      creditNoteId,
+      credit.canonicalPayload,
+      { ...rawCredit, reference: "SECRET-LEAK-FROM-PROVIDER" },
+    );
+    expect(creditHeaderResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["reference"],
+    });
+    if (creditHeaderResult.ok) throw new Error("expected a mismatch");
+    expect(JSON.stringify(creditHeaderResult.mismatchFields)).not.toContain("SECRET-LEAK");
+
+    const creditLineResult = verifyCreditNoteDraftReadback(
+      creditNoteId,
+      credit.canonicalPayload,
+      { ...rawCredit, lineItems: [{ ...rawCredit.lineItems[0], accountCode: "201" }] },
+    );
+    expect(creditLineResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["lines[0].accountCode"],
+    });
+
+    const journalHeaderResult = verifyManualJournalDraftReadback(
+      manualJournalId,
+      journal.canonicalPayload,
+      { ...rawJournal, narration: "SECRET-LEAK-FROM-PROVIDER" },
+    );
+    expect(journalHeaderResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["narration"],
+    });
+    if (journalHeaderResult.ok) throw new Error("expected a mismatch");
+    expect(JSON.stringify(journalHeaderResult.mismatchFields)).not.toContain("SECRET-LEAK");
+
+    const journalLineResult = verifyManualJournalDraftReadback(
+      manualJournalId,
+      journal.canonicalPayload,
+      {
+        ...rawJournal,
+        journalLines: [
+          { ...rawJournal.journalLines[0], accountCode: "454" },
+          rawJournal.journalLines[1],
+        ],
+      },
+    );
+    expect(journalLineResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["lines[0].accountCode"],
+    });
+  });
+
   it("fails closed on final-state evidence, discounts, allocations, malformed values, tax mismatches, and unbalanced journals", () => {
+    const sealedCredit = buildCreditNoteDraftPrimitive(creditNoteInput);
     const rawCredit = creditNoteReadback();
     const baseCreditLine = rawCredit.lineItems[0];
     const malformedCredits: unknown[] = [
@@ -667,7 +782,10 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
       { ...rawCredit, total: 999 },
     ];
     for (const candidate of malformedCredits) {
-      expect(mapCreditNoteDraftReadback(candidate)).toEqual({
+      expect(mapCreditNoteDraftReadback(
+        candidate,
+        sealedCredit.canonicalPayload.authoritativeProviderField,
+      )).toEqual({
         ok: false,
         reason: "MALFORMED_PROVIDER_READBACK",
       });
@@ -716,7 +834,7 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
     }
   });
 
-  it("supports both credit-note types, verifies NoTax supplier credits, and bounds provider currency rounding", () => {
+  it("supports both credit-note types, provider currency rounding, and exact observed economics", () => {
     const supplierInput = {
       ...creditNoteInput,
       source_sha256: undefined,
@@ -724,6 +842,7 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
       reason: "Supplier issued a credit for returned equipment",
       credit_note_type: "ACCPAYCREDIT" as const,
       reference: "SUPPLIER-CREDIT-001",
+      authoritative_provider_field: "CREDIT_NOTE_NUMBER" as const,
       line_amount_type: "NoTax" as const,
       lines: [{ ...creditNoteInput.lines[0], tax_type: "NONE" }],
     };
@@ -731,7 +850,8 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
     const supplierReadback = {
       ...creditNoteReadback(),
       type: "ACCPAYCREDIT",
-      reference: "SUPPLIER-CREDIT-001",
+      reference: undefined,
+      creditNoteNumber: "SUPPLIER-CREDIT-001",
       lineAmountTypes: "NoTax",
       lineItems: [{ ...creditNoteReadback().lineItems[0], taxType: "NONE", taxAmount: 0 }],
       totalTax: 0,
@@ -739,11 +859,14 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
       remainingCredit: 251,
     };
     expect(supplier.confirmationPhrase).toMatch(/^确认创建 Supplier Credit Note 草稿/);
-    expect(toXeroCreditNoteCreatePayload(supplier.canonicalPayload).creditNotes?.[0]).toMatchObject({
+    const supplierCreate = toXeroCreditNoteCreatePayload(supplier.canonicalPayload).creditNotes?.[0];
+    expect(supplierCreate).toMatchObject({
       type: "ACCPAYCREDIT",
       status: "DRAFT",
+      creditNoteNumber: "SUPPLIER-CREDIT-001",
       lineAmountTypes: "NoTax",
     });
+    expect(supplierCreate).not.toHaveProperty("reference");
     expect(verifyCreditNoteDraftReadback(creditNoteId, supplier.canonicalPayload, supplierReadback))
       .toMatchObject({ ok: true, readbackCanonicalPayloadHash: supplier.canonicalPayloadHash });
 
@@ -762,13 +885,43 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
     expect(rounded.canonicalPayload.enteredLineSubtotal).toBe("251.0050");
     expect(verifyCreditNoteDraftReadback(creditNoteId, rounded.canonicalPayload, roundedReadback))
       .toMatchObject({ ok: true, readbackCanonicalPayloadHash: rounded.canonicalPayloadHash });
-    expect(mapCreditNoteDraftReadback({
-      ...roundedReadback,
-      lineItems: [{ ...roundedReadback.lineItems[0], lineAmount: 251.0101 }],
-      subTotal: 251.0101,
-      total: 276.1101,
-      remainingCredit: 276.1101,
-    })).toEqual({ ok: false, reason: "MALFORMED_PROVIDER_READBACK" });
+    expect(mapCreditNoteDraftReadback(
+      {
+        ...roundedReadback,
+        lineItems: [{ ...roundedReadback.lineItems[0], lineAmount: 251.0101 }],
+        subTotal: 251.0101,
+        total: 276.1101,
+        remainingCredit: 276.1101,
+      },
+      rounded.canonicalPayload.authoritativeProviderField,
+    )).toEqual({ ok: false, reason: "MALFORMED_PROVIDER_READBACK" });
+  });
+
+  it("fails closed when a runtime caller omits the sealed credit-note provider field", () => {
+    expect(mapCreditNoteDraftReadback(creditNoteReadback(), undefined as never)).toEqual({
+      ok: false,
+      reason: "MALFORMED_PROVIDER_READBACK",
+    });
+  });
+
+  it("never verifies a real, already-settled Xero credit note as a fresh unallocated DRAFT", () => {
+    // proves: every hand-built readback above sets status/allocations by
+    // hand, so the DRAFT-only, no-allocations gate was only ever tested
+    // against fields the test author remembered to include. This is a real,
+    // fully-populated PAID credit note with a genuine allocation and dozens
+    // of other real fields (contact, currency, dates) - if a future change
+    // loosened the status or allocations check, or stopped reading one of the
+    // several independent fields that reject it, this is the test that would
+    // catch a real committed note being mistaken for a draft awaiting write
+    // verification.
+    const [boomFm] = loadXeroResponse("credit_notes").creditNotes as Array<Record<string, unknown>>;
+    expect(boomFm.status).toBe("PAID");
+    expect(Array.isArray(boomFm.allocations) && (boomFm.allocations as unknown[]).length > 0).toBe(true);
+
+    expect(mapCreditNoteDraftReadback(boomFm, "REFERENCE")).toEqual({
+      ok: false,
+      reason: "MALFORMED_PROVIDER_READBACK",
+    });
   });
 });
 

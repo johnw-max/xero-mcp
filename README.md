@@ -1,63 +1,86 @@
-# Xero Accounting MCP
+# zCloak Xero Accounting MCP
 
-本仓库包含 Work 平台接入 Xero 的远程 MCP 服务。项目以 Xero 作为正式会计账本，使会计用户能够在 Work 中授权自己的 Xero Organisation，由 Agent 读取历史账务、结合用户材料进行分析，并在人工确认后执行受控会计操作。
+一个面向 Accounting Agent 的 Xero Ledger Gateway。Google Drive 保存和同步用户材料，Accounting Skills/Agent 理解业务并编排，Xero MCP 负责组织绑定、有界读取、typed Accounting Case 写入、receipt、精确回读和恢复；Xero 始终是唯一正式账本。
 
-当前版本是已完成核心可行性验证的代码基线，运行在个人测试基础设施，不应直接作为公司生产部署。开发团队接手后需要迁移到公司控制的域名、云资源、数据库和密钥体系，并完成多用户、多 Organisation 隔离及生产环境验收。
+## 当前状态
 
-## Architecture
+- 线上仍是历史 `0.3.1`，不能代表当前候选已经上线。
+- 当前本地候选是 `0.4.0-rc.1`。
+- 公共工具由 [`config/xero-capability-manifest.json`](./config/xero-capability-manifest.json) 与 allowlist 动态核对；当前工作树为 38 个，不再手填固定工具数量。
+- 核心读取和 36 个 typed Case 写动作（草稿、主数据、账本状态及纠错路径）已在代码中可达，但所有 `SHIP` 项仍缺冻结 candidate 的完整真实 Xero UAT，因此 release gate 当前为 `NO_GO`。
+- 写入默认仍受运行时 write gate 保护；本地测试通过不会自动打开线上写入。
+
+当前能力与缺口见 [通俗能力页](./docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md)。
+
+## 产品边界
+
+本期架构固定为 [Xero MCP 目标产品架构](./docs/XERO-MCP-TARGET-ARCHITECTURE-2026-08-20.md)，开发约束固定在 [`AGENTS.md`](./AGENTS.md)。
 
 ```text
-Accountant
-   ↓
-Work Agent
-   ↓
-Remote Xero MCP
-   ↓
-Xero OAuth 2.0 and Accounting API
-   ↓
-User-authorized Xero Organisation
+Google Drive 材料
+  → Accounting Skills / Agent
+  → Xero MCP typed reads + Accounting Case
+  → Xero Accounting API
+  → Xero formal ledger
 ```
 
-| Component | Responsibility |
-|---|---|
-| Work and Agent | User conversation, source materials, business analysis and tool orchestration |
-| Xero MCP | OAuth broker, Organisation binding, accounting tools, confirmation, idempotency, read-back and audit |
-| Xero | Official ledger, accounting data, OAuth 2.0, Accounting API and SDK |
-| PostgreSQL | Authorization, connection, idempotency and audit control state; it is not a second ledger |
+不建设第二套 Ledger、通用 workflow/approval 平台、generic CRUD、任意 API 代理或多会计 Provider 抽象。
 
-Xero provides the official OAuth and Accounting API. This project adds the remote MCP interface, per-user connections, explicit Organisation selection, bounded accounting tools, and the controlled write flow: prepare → user confirmation → execute → provider receipt → exact record read-back.
+## Organisation 选择
 
-## Repository structure
+Tenant 只能来自服务端 OAuth installation/binding，不能从聊天文字或工具参数自报。
 
-| Path | Purpose |
-|---|---|
-| `src/mcp/` | MCP server and tool registration |
-| `src/oauth/` | Work OAuth, Xero OAuth, refresh and revoke |
-| `src/providers/` | Xero API/SDK adapter and data mapping |
-| `src/services/` | Read, prepare, execute, read-back and audit orchestration |
-| `src/policy/` | Capability and risk boundaries |
-| `src/db/`, `migrations/` | PostgreSQL control state and migrations |
-| `deploy/` | Deployment configuration and runbooks |
-| `tests/`, `harness/` | Automated tests and business acceptance tools |
+- `xero_pin_current_organisation`：锁定当前对话使用的 Xero Organisation。
+- `xero_start_organisation_switch`：返回短效 URL；用户在网页里选择一个已经授权的 Organisation，然后 Agent 重新 pin 并读取 Organisation。
 
-## Developer takeover
+这是 R1 唯一的用户确认流程。其他会计动作不新增签名、确认短语、审批 token 或确认状态机。
 
-1. Deploy the repository in a company-controlled environment with Node.js 22+, PostgreSQL, HTTPS, Secret Manager, logging, monitoring, backups and rollback.
-2. Bring the Xero Developer App under company management, configure the company callback and adopt Xero's current granular OAuth scopes.
-3. Configure the MCP in the company Work environment and ensure every user connects and selects their own Xero Organisation.
-4. Keep accounting writes disabled while validating OAuth, Organisation selection, reads, token refresh, revoke and multi-user isolation.
-5. Validate controlled writes in an isolated test Organisation, requiring user confirmation, Xero record ID, provider receipt and exact record read-back.
-6. Remove personal infrastructure dependencies only after the company deployment is stable.
+## 读取与写入
 
-Configuration templates are available in [`config/.env.example`](./config/.env.example) and [`deploy/env.vps.example`](./deploy/env.vps.example). Secrets, OAuth tokens, database backups and `.env` files must never be committed to Git.
+读取面包括 Organisation、Accounts、Tax Rates、Tracking、Contacts、Items、Contact Groups、主要业务单据、Payments、Bank Transactions、Journals、Trial Balance、P&L、Balance Sheet 和 Aged AR/AP。
 
-```sh
+所有公开写入只从三个 typed Case 工具进入：
+
+- `xero_prepare_accounting_case`；
+- `xero_execute_accounting_case`；
+- `xero_get_accounting_case_status`。
+
+当前代码可达：Contact/Item basic maintenance；六类单据的 DRAFT create/update；Invoice/Bill/Credit Note authorise、Manual Journal post；Payment create/reverse；Bank Transaction create/update/reverse；Credit Note allocate/refund/unallocate/void；Invoice/Bill/Manual Journal void；以及 Tracking Category/Option safe create/update。每项使用独立 typed action、合法状态校验、幂等、provider receipt、exact read-back 和 unknown-write recovery；不使用 generic update。
+
+这些动作的冻结候选仍需真实 PostgreSQL 与 live Xero UAT 证据；在证据完成前不把代码可达性表述为已上线能力。
+
+## 成功判据
+
+Provider/schema/policy 单独存在不算支持。写入只有同时得到以下证据才算成功：
+
+1. Agent-facing public Case 能表达并执行该 action；
+2. Xero 返回 object ID 和 provider receipt；
+3. 对同一个 object ID 精确回读且关键字段/状态一致；
+4. 超时或未知结果没有盲目创建第二个对象。
+
+Google Drive 文件、Agent 回答或本地 mock 都不是 Xero 已记账的证据。
+
+## 本地验证
+
+```bash
 npm install
 npm run typecheck
-npm test
 npm run build
+npm run validate:capabilities
+npm test
+npm run test:http:required
 ```
 
-Tests that require isolated PostgreSQL or HTTP environments must be run separately as release gates; a conditional skip is not a passing release result.
+开发阶段先跑受影响测试；冻结候选后只跑一次完整 release lane。`npm run validate:capabilities` 可以结构通过但仍输出 `release_gate|NO_GO`，表示代码/清单结构一致，但真实 Xero 证据尚未完成。
 
-The current handover scope is Xero only. A small number of shared QuickBooks modules remain to preserve existing runtime continuity and may be separated by the development team later.
+## 上线验收顺序
+
+1. 冻结 source/image，核对 capability hash 与 migration head；
+2. typecheck、build、受影响测试及一次完整 release suite；
+3. immutable candidate 部署到生产等价隔离端口；
+4. 真实浏览器完成 OAuth 和 organisation-selection URL 验证；
+5. 通过线上 Google Drive MCP + Accounting Skills/Agent + candidate Xero MCP 跑自然语言用户链路；
+6. 对每项写入保存 provider ID、receipt、exact read-back，适用时用 Journals 验证；
+7. production admission → blue/green switch → 公网 readiness/read-only smoke → rollback 演练。
+
+详细执行计划见 [高质量快速上线计划](./docs/XERO-MCP-HIGH-QUALITY-LAUNCH-PLAN-2026-08-20.md)。历史架构、traceability/review 和旧 UAT 文件只保留为历史证据，不能替代当前 manifest 与真实线上验收。

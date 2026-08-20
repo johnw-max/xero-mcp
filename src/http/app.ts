@@ -5,14 +5,29 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { MCP_OAUTH_SCOPES, type AppConfig } from "../config.js";
-import type { AccountingRepository } from "../db/repository.js";
+import type { AccountingRepository, RepositoryReadinessEvidence } from "../db/repository.js";
+import {
+  isActiveAccountingCaseRecoveryProjectionEvidence,
+  unknownActiveAccountingCaseRecoveryProjectionEvidence,
+} from "../db/accountingCaseRecoveryProjectionReadiness.js";
 import { AppError, toSafeError } from "../errors.js";
 import type { Logger } from "../logging.js";
 import { createAccountingMcpServer } from "../mcp/createServer.js";
 import { TOOL_ALLOWLIST } from "../mcp/toolNames.js";
 import type { XeroOAuthService } from "../oauth/xeroOAuthService.js";
 import { createMcpOAuthRouter } from "../oauth/mcpOAuthRouter.js";
-import type { McpOAuthBrokerProvider } from "../oauth/mcpOAuthBrokerProvider.js";
+import {
+  classifyBrokerBrowserOrigin,
+  classifyBrokerFetchMetadata,
+  setSelectionPageHeaders,
+  type McpOAuthBrokerProvider,
+} from "../oauth/mcpOAuthBrokerProvider.js";
+import {
+  brokerErrorPageReason,
+  renderBrokerErrorPage,
+  renderOrganisationSwitchPage,
+  renderOrganisationSwitchResultPage,
+} from "../oauth/brokerPages.js";
 import { hashObject, safeEqual } from "../security/hash.js";
 import {
   createLegacySharedBearerRequestContext,
@@ -21,13 +36,81 @@ import {
 } from "../security/requestContext.js";
 import type { AccountingService } from "../services/accountingService.js";
 import type { ConnectionTicketService } from "../services/connectionTicketService.js";
+import type { OrganisationSwitchService } from "../services/organisationSwitchService.js";
+import type { LedgerTargetSessionService } from "../services/ledgerTargetSessionService.js";
+import type { XeroAccountingCaseService } from "../services/xeroAccountingCaseService.js";
 import type { ReviewAction, ReviewService } from "../services/reviewService.js";
 import type { SupplierBillSnapshot } from "../providers/types.js";
-import { xeroBillDeepLink } from "../providers/xeroDeepLinks.js";
-import { XERO_RELEASE_VERSION } from "../xeroRelease.js";
+import {
+  ledgerFirmGovernanceReadinessEvidence,
+} from "../domain/ledgerAuthority.js";
+import {
+  createXeroRuntimeAttestation,
+  XERO_RELEASE_ATTESTATION,
+  XERO_RELEASE_VERSION,
+  xeroBuildIdentityHash,
+  type XeroRuntimeWriteMode,
+} from "../xeroRelease.js";
 
 const OAUTH_COOKIE = "zc_xero_oauth_session";
-const REVIEW_COOKIE = "zc_review_session";
+
+function runtimeWriteMode(enabled: boolean): XeroRuntimeWriteMode {
+  return enabled ? "WRITE_ENABLED" : "READ_ONLY";
+}
+
+/** Internal snapshot availability for the atomic write claim; it is not a
+ * release-admission hash or a second authority source. */
+export function expectedAuthorityIdentityProven(
+  _config: AppConfig,
+  evidence: RepositoryReadinessEvidence,
+): boolean {
+  return evidence.authoritySnapshotRevision !== null && evidence.authoritySnapshotHash !== null;
+}
+
+function unknownReadinessEvidence(requiredMigration: string): RepositoryReadinessEvidence {
+  return {
+    ready: false,
+    storageMode: "UNKNOWN",
+    requiredMigration,
+    requiredMigrationStatus: "UNKNOWN",
+    migrationHead: null,
+    activeAccountingCaseRecoveryProjection:
+      unknownActiveAccountingCaseRecoveryProjectionEvidence(),
+    authoritySnapshotRevision: null,
+    authoritySnapshotHash: null,
+    authorityContentHash: null,
+    authorityWriteKillSwitchEnabled: null,
+    firmGovernance: ledgerFirmGovernanceReadinessEvidence(undefined, new Date(Number.NaN)),
+  };
+}
+
+async function repositoryReadinessEvidence(
+  repository: AccountingRepository,
+  requiredMigration: string,
+): Promise<RepositoryReadinessEvidence> {
+  if (!repository.readinessEvidence) return unknownReadinessEvidence(requiredMigration);
+  try {
+    const evidence = await repository.readinessEvidence(requiredMigration);
+    if (
+      evidence.requiredMigration !== requiredMigration ||
+      !isActiveAccountingCaseRecoveryProjectionEvidence(
+        evidence.activeAccountingCaseRecoveryProjection,
+      ) ||
+      !evidence.firmGovernance ||
+      !["CURRENT", "NOT_REQUIRED", "MISSING_OR_INVALID", "EXPIRED", "UNKNOWN"]
+        .includes(evidence.firmGovernance.status) ||
+      ((evidence.authoritySnapshotRevision === null) !== (evidence.authoritySnapshotHash === null)) ||
+      (evidence.authoritySnapshotRevision !== null &&
+        (!Number.isSafeInteger(evidence.authoritySnapshotRevision) || evidence.authoritySnapshotRevision < 1 ||
+          typeof evidence.authoritySnapshotHash !== "string" ||
+          !/^[a-f0-9]{64}$/u.test(evidence.authoritySnapshotHash) ||
+          typeof evidence.authorityWriteKillSwitchEnabled !== "boolean"))
+    ) return unknownReadinessEvidence(requiredMigration);
+    return evidence;
+  } catch {
+    return unknownReadinessEvidence(requiredMigration);
+  }
+}
 
 export function reviewCookieOptions(config: Pick<AppConfig, "nodeEnv">, expires: Date) {
   return {
@@ -244,13 +327,45 @@ export function requireLegacySharedBearer(config: AppConfig) {
 }
 
 export function isReviewOriginAllowed(config: Pick<AppConfig, "publicBaseUrl">, origin: string | undefined): boolean {
-  return origin === config.publicBaseUrl;
+  const status = classifyBrokerBrowserOrigin(origin, config.publicBaseUrl);
+  return status === "EXACT" || status === "CANONICAL_EQUIVALENT";
 }
 
-function requireReviewOrigin(config: AppConfig) {
+export function isOrganisationSwitchOriginAllowed(
+  config: { publicBaseUrl: string; personalPocOnly: boolean },
+  origin: string | undefined,
+  fetchMetadata: {
+    site?: string | string[] | undefined;
+    mode?: string | string[] | undefined;
+    destination?: string | string[] | undefined;
+    user?: string | string[] | undefined;
+  },
+): boolean {
+  const originStatus = classifyBrokerBrowserOrigin(origin, config.publicBaseUrl);
+  if (originStatus === "EXACT" || originStatus === "CANONICAL_EQUIVALENT") return true;
+  if (originStatus !== "NULL" || !config.personalPocOnly) return false;
+  return classifyBrokerFetchMetadata(fetchMetadata) !== "MISMATCH";
+}
+
+function requireOrganisationSwitchOrigin(config: AppConfig) {
   return (request: Request, response: Response, next: NextFunction) => {
-    if (!isReviewOriginAllowed(config, request.headers.origin)) {
-      response.status(403).json({ error: { code: "FORBIDDEN", message: "Review POST must be same-origin." } });
+    const allowed = isOrganisationSwitchOriginAllowed(
+      {
+        publicBaseUrl: config.publicBaseUrl,
+        personalPocOnly: config.mcpOAuthBroker?.enabled === true && config.mcpOAuthBroker.personalPocOnly,
+      },
+      request.headers.origin,
+      {
+        site: request.headers["sec-fetch-site"],
+        mode: request.headers["sec-fetch-mode"],
+        destination: request.headers["sec-fetch-dest"],
+        user: request.headers["sec-fetch-user"],
+      },
+    );
+    if (!allowed) {
+      response.status(403).json({
+        error: { code: "FORBIDDEN", message: "Organisation switch POST must be same-origin." },
+      });
       return;
     }
     next();
@@ -295,13 +410,13 @@ function guidanceForReview(action: ReviewAction, workflowState: string): string 
     return "This bill is already AUTHORISED and exact readback was verified. Continue to the stored result without another Xero call.";
   }
   if (action === "RECOVER_AUTHORISE") {
-    return "A prior authorisation attempt may have reached Xero. Continue to check the same InvoiceID; the service will not submit another write.";
+    return "A prior legacy authorisation attempt may have reached Xero. Browser authorisation is disabled; inspect the same InvoiceID directly in Xero.";
   }
   if (action === "RESUME_AUTHORISE") {
-    return "A valid human approval is already stored. Continue to post this same bill to Xero.";
+    return "A legacy approval is stored, but browser authorisation is disabled. Continue through the governed Accounting Case flow or Xero itself.";
   }
   if (action === "APPROVE_OR_REJECT") {
-    return "Approval posts this same bill to the Xero ledger as AUTHORISED. Rejecting leaves it unposted.";
+    return "Legacy browser approval is disabled. You may reject this pending request; any new ledger write must use the governed Accounting Case flow.";
   }
   if (workflowState === "REJECTED") return "This request was rejected. No further posting action is available.";
   if (workflowState === "WRITE_RESULT_UNKNOWN") {
@@ -344,22 +459,10 @@ export function renderReviewPage(options: {
     ? options.review.sourceEvidenceType
     : "LEGACY_UNVERIFIED";
   const guidance = guidanceForReview(action, workflowState);
-  const actionLabel = action === "VIEW_VERIFIED_RESULT"
-    ? "Open verified result"
-    : action === "RECOVER_AUTHORISE"
-      ? "Check Xero status safely"
-      : action === "RESUME_AUTHORISE"
-        ? "Resume and post to Xero"
-        : "Approve and post to Xero";
-  const approveForm = action !== "NONE" && csrf
-    ? `<form method="post" action="${actionBase}/approve"><input type="hidden" name="csrf_token" value="${csrf}"><button type="submit">${actionLabel}</button></form>`
-    : "";
   const rejectForm = action === "APPROVE_OR_REJECT" && csrf
     ? `<form method="post" action="${actionBase}/reject"><input type="hidden" name="csrf_token" value="${csrf}"><button type="submit">Reject</button></form>`
     : "";
-  const actionArea = approveForm || rejectForm
-    ? `${approveForm}${rejectForm}`
-    : `<p data-review-action="none"><strong>No Review action is available.</strong></p>`;
+  const actionArea = rejectForm || `<p data-review-action="none"><strong>No browser write action is available.</strong></p>`;
   const billDetails = bill ? (() => {
     const supplier = bill.contact.name ?? bill.contact.contactId;
     const rows = bill.lines.map((line) => `<tr>
@@ -430,7 +533,35 @@ function renderConnectionPage(tenantName: string): string {
 
 function setPrivateHtmlHeaders(response: Response): void {
   response.setHeader("Cache-Control", "no-store");
-  response.setHeader("Content-Security-Policy", "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+  response.setHeader("Content-Security-Policy", "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+}
+
+/**
+ * Every error reachable from the Broker's browser-facing Xero callback and
+ * organisation chooser lands here instead of the generic JSON handler at the
+ * bottom of this file. A `{"error":...}` body is right for the MCP/OAuth API
+ * surface; it is wrong for the first screen a person sees while connecting
+ * Xero to their Host, where it reads as "the integration is broken" even
+ * when the underlying condition — already connected, a previous attempt
+ * still settling — is normal and recoverable.
+ */
+function respondWithBrokerErrorPage(
+  response: Response,
+  request: Request,
+  error: unknown,
+  logger: Logger,
+): void {
+  const safe = toSafeError(error);
+  const resultStatus = typeof safe.details?.resultStatus === "string" ? safe.details.resultStatus : undefined;
+  logger.warn("HTTP request rejected.", {
+    method: request.method,
+    path: safeLogPath(request),
+    errorCode: safe.code,
+    ...(resultStatus ? { resultStatus } : {}),
+  });
+  if (response.headersSent) return;
+  setSelectionPageHeaders(response);
+  response.status(safe.httpStatus).type("html").send(renderBrokerErrorPage(brokerErrorPageReason(resultStatus)));
 }
 
 export async function beginTicketBoundXeroOAuth(options: {
@@ -465,20 +596,26 @@ export function createHttpApp(options: {
   repository: AccountingRepository;
   accountingService: AccountingService;
   oauthService: XeroOAuthService;
-  reviewService: ReviewService;
+  /** Historical test seam only. The current application publishes no review UI. */
+  reviewService?: ReviewService;
   connectionTickets: ConnectionTicketService;
   logger: Logger;
   mcpOAuthProvider?: McpOAuthBrokerProvider;
+  organisationSwitchService?: OrganisationSwitchService;
+  ledgerTargetSessionService?: LedgerTargetSessionService;
+  accountingCaseService?: XeroAccountingCaseService;
 }) {
   const {
     config,
     repository,
     accountingService,
     oauthService,
-    reviewService,
     connectionTickets,
     logger,
     mcpOAuthProvider,
+    organisationSwitchService,
+    ledgerTargetSessionService,
+    accountingCaseService,
   } = options;
   const brokerConfig = config.mcpOAuthBroker;
   if (brokerConfig?.enabled && !mcpOAuthProvider) {
@@ -502,24 +639,87 @@ export function createHttpApp(options: {
     app.use(createMcpOAuthRouter({ config: brokerConfig, provider: mcpOAuthProvider }));
   }
 
-  app.get("/healthz", (_, response) => {
+  app.get("/healthz", async (_, response) => {
+    const evidence = await repositoryReadinessEvidence(
+      repository,
+      XERO_RELEASE_ATTESTATION.requiredMigration,
+    );
+    const buildIdentity = config.xeroBuildIdentity;
+    const writeMode = runtimeWriteMode(config.xeroWriteEnabled);
     response.json({
       status: "ok",
       version: XERO_RELEASE_VERSION,
+      writeMode,
+      processWriteGateEnabled: config.xeroWriteEnabled,
+      authoritySnapshotRevision: evidence.authoritySnapshotRevision,
+      authoritySnapshotHash: evidence.authoritySnapshotHash,
+      authorityContentHash: evidence.authorityContentHash,
+      authorityWriteKillSwitchEnabled: evidence.authorityWriteKillSwitchEnabled,
+      buildIdentityHash: buildIdentity ? xeroBuildIdentityHash(buildIdentity) : null,
+      acceptanceSourceSha256: buildIdentity?.acceptanceSourceSha256 ?? null,
+      sourceArchiveSha256: buildIdentity?.sourceArchiveSha256 ?? null,
       toolCount: TOOL_ALLOWLIST.length,
       toolsetHash: hashObject(TOOL_ALLOWLIST),
+      attestation: XERO_RELEASE_ATTESTATION,
+      attestationHash: hashObject(XERO_RELEASE_ATTESTATION),
     });
   });
 
   app.get("/readyz", async (_, response) => {
-    const ready = await repository.readiness();
+    const requiredMigration = XERO_RELEASE_ATTESTATION.requiredMigration;
+    const buildIdentity = config.xeroBuildIdentity;
+    const buildIdentityHash = buildIdentity ? xeroBuildIdentityHash(buildIdentity) : null;
+    const evidence = await repositoryReadinessEvidence(repository, requiredMigration);
+    const writeMode = runtimeWriteMode(config.xeroWriteEnabled);
+    const runtimeAttestation = createXeroRuntimeAttestation({
+      buildIdentityHash,
+      acceptanceSourceSha256: buildIdentity?.acceptanceSourceSha256 ?? null,
+      sourceArchiveSha256: buildIdentity?.sourceArchiveSha256 ?? null,
+      writeMode,
+      processWriteGateEnabled: config.xeroWriteEnabled,
+      authoritySnapshotRevision: evidence.authoritySnapshotRevision,
+      authoritySnapshotHash: evidence.authoritySnapshotHash,
+      authorityWriteKillSwitchEnabled: evidence.authorityWriteKillSwitchEnabled,
+      storageMode: evidence.storageMode,
+      repositoryReady: evidence.ready,
+      requiredMigration,
+      requiredMigrationStatus: evidence.requiredMigrationStatus,
+      migrationHead: evidence.migrationHead,
+      activeAccountingCaseRecoveryProjection:
+        evidence.activeAccountingCaseRecoveryProjection,
+    });
+    const migrationProven =
+      (evidence.storageMode === "POSTGRES" && evidence.requiredMigrationStatus === "APPLIED" &&
+        typeof evidence.migrationHead === "string" && evidence.migrationHead.length > 0) ||
+      (evidence.storageMode === "IN_MEMORY" && evidence.requiredMigrationStatus === "NOT_APPLICABLE");
+    const buildIdentityProven = config.nodeEnv !== "production" || buildIdentity !== undefined;
+    const ready = evidence.ready && migrationProven && buildIdentityProven;
     response.status(ready ? 200 : 503).json({
       status: ready ? "ready" : "not_ready",
       version: XERO_RELEASE_VERSION,
+      writeMode,
+      processWriteGateEnabled: config.xeroWriteEnabled,
+      authoritySnapshotRevision: evidence.authoritySnapshotRevision,
+      authoritySnapshotHash: evidence.authoritySnapshotHash,
+      authorityContentHash: evidence.authorityContentHash,
+      authorityWriteKillSwitchEnabled: evidence.authorityWriteKillSwitchEnabled,
+      buildIdentityHash,
+      acceptanceSourceSha256: buildIdentity?.acceptanceSourceSha256 ?? null,
+      sourceArchiveSha256: buildIdentity?.sourceArchiveSha256 ?? null,
+      storageMode: evidence.storageMode,
+      requiredMigration,
+      requiredMigrationStatus: evidence.requiredMigrationStatus,
+      migrationHead: evidence.migrationHead,
+      activeAccountingCaseRecoveryProjection:
+        evidence.activeAccountingCaseRecoveryProjection,
+      toolsetHash: hashObject(TOOL_ALLOWLIST),
+      attestationHash: hashObject(XERO_RELEASE_ATTESTATION),
+      runtimeAttestation,
+      runtimeAttestationHash: hashObject(runtimeAttestation),
     });
   });
 
-  const reviewOrigin = requireReviewOrigin(config);
+  const organisationSwitchOrigin = requireOrganisationSwitchOrigin(config);
 
   if (brokerConfig?.enabled && mcpOAuthProvider) {
     app.all(
@@ -558,6 +758,9 @@ export function createHttpApp(options: {
     const server = createAccountingMcpServer(
       accountingService,
       response.locals.requestContext as RequestContext,
+      organisationSwitchService,
+      ledgerTargetSessionService,
+      accountingCaseService,
     );
     const transport = new StreamableHTTPServerTransport();
     try {
@@ -581,10 +784,31 @@ export function createHttpApp(options: {
 
   if (brokerConfig?.enabled && mcpOAuthProvider) {
     app.get("/oauth/xero/callback", async (request, response) => {
-      await mcpOAuthProvider.handleXeroCallback(request, response);
+      try {
+        await mcpOAuthProvider.handleXeroCallback(request, response);
+      } catch (error) {
+        respondWithBrokerErrorPage(response, request, error, logger);
+      }
     });
+    // Use the same neutral callback path for the first-party organisation
+    // confirmation POST. Some Host browser profiles block top-level requests
+    // whose path ends in `/select`, even after the request reaches the server,
+    // and therefore discard the authorization-code redirect response.
+    app.post("/oauth/xero/callback", async (request, response) => {
+      try {
+        await mcpOAuthProvider.handleOrganisationSelection(request, response);
+      } catch (error) {
+        respondWithBrokerErrorPage(response, request, error, logger);
+      }
+    });
+    // Compatibility for an already-rendered, short-lived selection page from
+    // the previous release. New pages never emit this action.
     app.post("/oauth/xero/select", async (request, response) => {
-      await mcpOAuthProvider.handleOrganisationSelection(request, response);
+      try {
+        await mcpOAuthProvider.handleOrganisationSelection(request, response);
+      } catch (error) {
+        respondWithBrokerErrorPage(response, request, error, logger);
+      }
     });
   } else {
     app.get("/connect/xero", async (request, response) => {
@@ -618,15 +842,8 @@ export function createHttpApp(options: {
       throw new AppError("FORBIDDEN", "OAuth callback is missing its state or browser session.", { httpStatus: 403 });
     }
     const queryString = request.originalUrl.includes("?") ? request.originalUrl.slice(request.originalUrl.indexOf("?") + 1) : "";
-    const { connected, reviewSession } = await completeTicketBoundXeroOAuth({
-      state,
-      browserSession,
-      queryString,
-      oauthService,
-      reviewService,
-    });
+    const connected = await oauthService.callback({ state, browserSession, queryString });
     response.clearCookie(OAUTH_COOKIE, { path: "/oauth/xero" });
-    response.cookie(REVIEW_COOKIE, reviewSession.session, reviewCookieOptions(config, reviewSession.expiresAt));
     setPrivateHtmlHeaders(response);
     const payload = { status: "connected", tenant: { id: connected.tenantId, name: connected.tenantName }, scopes: connected.scopes };
     if (request.accepts(["html", "json"]) === "html") {
@@ -637,131 +854,42 @@ export function createHttpApp(options: {
     });
   }
 
-  app.get("/review/:postingRequestId", async (request, response) => {
-    const postingRequestId = request.params.postingRequestId;
-    if (typeof postingRequestId !== "string") {
-      throw new AppError("VALIDATION_FAILED", "Posting request identifier is invalid.", { httpStatus: 400 });
-    }
-    const rawSession = parseCookie(request, REVIEW_COOKIE);
-    if (!rawSession) throw new AppError("AUTH_REQUIRED", "Operator review session is required.", { httpStatus: 401 });
-    const session = await reviewService.authenticate(rawSession);
-    const review = await reviewService.getReview(postingRequestId, session.actorId, session.sessionHash);
-    const view = {
-      postingRequestId: review.posting.postingRequestId,
-      state: review.posting.state,
-      action: review.action,
-      tenantId: review.posting.tenantId,
-      ...(review.tenantName ? { tenantName: review.tenantName } : {}),
-      ...(review.xeroBillUrl ? { xeroBillUrl: review.xeroBillUrl } : {}),
-      sourceRef: review.posting.sourceRef,
-      sourceSha256: review.posting.sourceSha256,
-      sourceEvidenceType: review.posting.sourceEvidenceType,
-      invoiceId: review.posting.xeroInvoiceId,
-      approvedPayloadHash: review.posting.providerPayloadHash,
-      bill: review.posting.readbackSnapshot,
-      transition: "DRAFT -> AUTHORISED",
-    };
-    setPrivateHtmlHeaders(response);
-    if (request.accepts(["html", "json"]) === "json") {
-      response.json({ review: view, ...(review.csrfToken ? { csrfToken: review.csrfToken } : {}) });
-      return;
-    }
-    response.type("html").send(renderReviewPage({
-      postingRequestId: review.posting.postingRequestId,
-      ...(review.csrfToken ? { csrfToken: review.csrfToken } : {}),
-      review: view,
-    }));
-  });
-
-  app.post("/review/:postingRequestId/approve", reviewOrigin, async (request, response) => {
-    const postingRequestId = request.params.postingRequestId;
-    if (typeof postingRequestId !== "string") {
-      throw new AppError("VALIDATION_FAILED", "Posting request identifier is invalid.", { httpStatus: 400 });
-    }
-    const rawSession = parseCookie(request, REVIEW_COOKIE);
-    if (!rawSession) throw new AppError("AUTH_REQUIRED", "Operator review session is required.", { httpStatus: 401 });
-    const session = await reviewService.authenticate(rawSession);
-    const csrfToken = typeof request.body?.csrf_token === "string" ? request.body.csrf_token : undefined;
-    if (!csrfToken) throw new AppError("FORBIDDEN", "Review CSRF token is required.", { httpStatus: 403 });
-    const result = await accountingService.withAudit({
-      actorId: session.actorId,
-      toolName: "review_authorise_supplier_bill",
-      input: { postingRequestId },
-      action: () => reviewService.approveAndAuthorise({
-        postingRequestId,
-        actorId: session.actorId,
-        sessionHash: session.sessionHash,
-        csrfToken,
-        accountingService,
-      }),
-      recordId: (value) => value.invoiceId,
+  if (organisationSwitchService) {
+    app.get("/xero/organisation-switch", async (request, response) => {
+      const ticket = typeof request.query.ticket === "string" ? request.query.ticket : undefined;
+      if (!ticket) {
+        throw new AppError("VALIDATION_FAILED", "Organisation switch ticket is required.", { httpStatus: 400 });
+      }
+      const page = await organisationSwitchService.getPage(ticket);
+      setPrivateHtmlHeaders(response);
+      response.type("html").send(renderOrganisationSwitchPage({
+        ticket,
+        csrfToken: page.csrfToken,
+        currentOrganisation: page.currentOrganisation,
+        organisations: page.organisations,
+        expiresAt: page.expiresAt,
+      }));
     });
-    const connection = await repository.getConnectionByActorTenant(session.actorId, result.bill.tenantId);
-    const xeroBillUrl = xeroBillDeepLink(connection?.tenantShortCode, result.invoiceId);
-    setPrivateHtmlHeaders(response);
-    const payload = {
-      status: result.status,
-      verified: result.verified,
-      postingRequestId: result.postingRequestId,
-      invoiceId: result.invoiceId,
-      tenant: {
-        id: result.bill.tenantId,
-        ...(connection?.tenantName ? { name: connection.tenantName } : {}),
-      },
-      ...(result.bill.reference ? { reference: result.bill.reference } : {}),
-      ...(result.bill.currency ? { currency: result.bill.currency } : {}),
-      ...(result.bill.total ? { total: result.bill.total } : {}),
-      ...(xeroBillUrl ? { xeroBillUrl } : {}),
-    };
-    if (request.accepts(["html", "json"]) === "html") {
-      response.type("html").send(renderResultPage({
-        title: "Posted to Xero",
-        message: "The approved supplier bill is AUTHORISED and exact readback was verified.",
-        postingRequestId: result.postingRequestId,
-        invoiceId: result.invoiceId,
+
+    app.post("/xero/organisation-switch", organisationSwitchOrigin, async (request, response) => {
+      const ticket = typeof request.body?.ticket === "string" ? request.body.ticket : undefined;
+      const csrfToken = typeof request.body?.csrf_token === "string" ? request.body.csrf_token : undefined;
+      const selectedConnectionId = typeof request.body?.connection_id === "string"
+        ? request.body.connection_id
+        : undefined;
+      if (!ticket || !csrfToken || !selectedConnectionId) {
+        throw new AppError("VALIDATION_FAILED", "Organisation switch confirmation is incomplete.", {
+          httpStatus: 400,
+        });
+      }
+      const result = await organisationSwitchService.confirm({ ticket, csrfToken, selectedConnectionId });
+      setPrivateHtmlHeaders(response);
+      response.type("html").send(renderOrganisationSwitchResultPage({
         status: result.status,
-        ...(connection?.tenantName ? { tenantName: connection.tenantName } : {}),
-        tenantId: result.bill.tenantId,
-        ...(result.bill.reference ? { reference: result.bill.reference } : {}),
-        ...(result.bill.currency ? { currency: result.bill.currency } : {}),
-        ...(result.bill.total ? { total: result.bill.total } : {}),
-        ...(xeroBillUrl ? { xeroBillUrl } : {}),
+        tenantName: result.currentOrganisation.tenantName,
       }));
-      return;
-    }
-    response.json(payload);
-  });
-
-  app.post("/review/:postingRequestId/reject", reviewOrigin, async (request, response) => {
-    const postingRequestId = request.params.postingRequestId;
-    if (typeof postingRequestId !== "string") {
-      throw new AppError("VALIDATION_FAILED", "Posting request identifier is invalid.", { httpStatus: 400 });
-    }
-    const rawSession = parseCookie(request, REVIEW_COOKIE);
-    if (!rawSession) throw new AppError("AUTH_REQUIRED", "Operator review session is required.", { httpStatus: 401 });
-    const session = await reviewService.authenticate(rawSession);
-    const csrfToken = typeof request.body?.csrf_token === "string" ? request.body.csrf_token : undefined;
-    if (!csrfToken) throw new AppError("FORBIDDEN", "Review CSRF token is required.", { httpStatus: 403 });
-    const result = await rejectReviewWithAudit({
-      accountingService,
-      reviewService,
-      actorId: session.actorId,
-      sessionHash: session.sessionHash,
-      csrfToken,
-      postingRequestId,
     });
-    setPrivateHtmlHeaders(response);
-    if (request.accepts(["html", "json"]) === "html") {
-      response.type("html").send(renderResultPage({
-        title: "Bill rejected",
-        message: "Nothing was posted to the Xero ledger.",
-        postingRequestId: result.postingRequestId,
-        status: result.state,
-      }));
-      return;
-    }
-    response.json(result);
-  });
+  }
 
   app.use((error: unknown, request: Request, response: Response, _next: NextFunction) => {
     const httpError = error && typeof error === "object"
@@ -775,6 +903,19 @@ export function createHttpApp(options: {
         errorCode: "REQUEST_TOO_LARGE",
       });
       response.status(413).json({ error: { code: "REQUEST_TOO_LARGE", message: "Request body is too large." } });
+      return;
+    }
+    const invalidJson = (httpError?.status === 400 || httpError?.statusCode === 400) &&
+      httpError?.type === "entity.parse.failed";
+    if (invalidJson) {
+      logger.warn("HTTP request body rejected as invalid JSON.", {
+        method: request.method,
+        path: safeLogPath(request),
+        errorCode: "VALIDATION_FAILED",
+      });
+      response.status(400).json({
+        error: { code: "VALIDATION_FAILED", message: "Request body is not valid JSON." },
+      });
       return;
     }
     const safe = toSafeError(error);

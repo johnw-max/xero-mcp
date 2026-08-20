@@ -1,0 +1,51 @@
+{
+  "organisations": [
+    {
+      "_class": "DEMO",
+      "addresses": [
+        {
+          "addressLine1": "23 Main Street",
+          "addressLine2": "Central City",
+          "addressType": "POBOX",
+          "attentionTo": "",
+          "city": "Marineville",
+          "country": "",
+          "postalCode": "12345",
+          "region": ""
+        }
+      ],
+      "baseCurrency": "USD",
+      "countryCode": "CA",
+      "createdDateUTC": "2026-08-07T01:34:57.847Z",
+      "defaultPurchasesTax": "Remember previous",
+      "defaultSalesTax": "Remember previous",
+      "edition": "BUSINESS",
+      "externalLinks": [],
+      "financialYearEndDay": 31,
+      "financialYearEndMonth": 12,
+      "isDemoCompany": true,
+      "legalName": "Demo Company (Global)",
+      "name": "Demo Company (Global)",
+      "organisationEntityType": "COMPANY",
+      "organisationID": "0f4c99fe-212f-436d-aa3b-bdad11b6197f",
+      "organisationStatus": "ACTIVE",
+      "organisationType": "COMPANY",
+      "paymentTerms": {},
+      "paysTax": true,
+      "periodLockDate": "2008-09-30T00:00:00.000Z",
+      "phones": [
+        {
+          "phoneAreaCode": "800",
+          "phoneNumber": "1234 5678",
+          "phoneType": "OFFICE"
+        }
+      ],
+      "salesTaxBasis": "ACCRUALS",
+      "salesTaxPeriod": "3MONTHLY",
+      "shortCode": "!7-xgs",
+      "taxNumber": "101-2-303",
+      "timezone": "EASTERNSTANDARDTIME",
+      "version": "GLOBAL"
+    }
+  ]
+}

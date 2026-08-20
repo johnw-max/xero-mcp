@@ -3,6 +3,11 @@ import type { AccountingRepository } from "../src/db/repository.js";
 import { AppError } from "../src/errors.js";
 import { XeroClientManager } from "../src/providers/xeroClientManager.js";
 import { XeroAccountingProvider } from "../src/providers/xeroProvider.js";
+import {
+  issueProviderWriteTestPermit,
+  providerWriteTestContext,
+} from "./helpers/xeroProviderPermit.js";
+import { loadXeroResponse } from "./fixtures/xero-provider-responses/index.js";
 
 const invoiceId = "11111111-1111-4111-8111-111111111111";
 const connection = {
@@ -31,6 +36,7 @@ const input = {
   due_date: "2026-08-17",
   currency: "SGD",
   reference: "ZC-XERO-DEMO-QA",
+  authoritative_provider_field: "INVOICE_NUMBER" as const,
   line_amount_type: "Inclusive" as const,
   lines: [
     {
@@ -42,18 +48,82 @@ const input = {
     },
   ],
 };
+const { user_confirmation: _confirmation, ...canonicalInput } = input;
+const principal = providerWriteTestContext(connection.connectionId);
+const noOpWriteEvidence = async () => undefined;
 
-function providerWithClient(client: unknown): XeroAccountingProvider {
+function providerWithClient(client: unknown, onWriteClient?: () => void): XeroAccountingProvider {
   const manager = {
     withClient: async <T>(
       _actorId: string,
       action: (clientValue: unknown, connectionValue: typeof connection) => Promise<T>,
     ): Promise<T> => action(client, connection),
+    withWriteClient: async <T>(
+      _principal: unknown,
+      _authorization: unknown,
+      action: (clientValue: unknown, connectionValue: typeof connection) => Promise<T>,
+    ): Promise<T> => {
+      onWriteClient?.();
+      return action(client, connection);
+    },
   } as unknown as XeroClientManager;
   return new XeroAccountingProvider({} as AccountingRepository, manager);
 }
 
+function invoicePermit(side: "AP" | "AR") {
+  return issueProviderWriteTestPermit({
+    adapterOperation: side === "AP"
+      ? "XeroAccountingProvider.createDraftSupplierBill"
+      : "XeroAccountingProvider.createDraftSalesInvoice",
+    mutationRequestId: `xmr-provider-test-${side}`,
+    canonicalPayload: canonicalInput,
+    tenantId: connection.tenantId,
+    connectionId: connection.connectionId,
+  });
+}
+
+function mutationRequestId(side: "AP" | "AR"): string {
+  return `xmr-provider-test-${side}`;
+}
+
 describe("provider write recovery contract", () => {
+  it.each(["AP", "AR"] as const)("rejects %s writes without a durable evidence recorder before entering the write boundary", async (side) => {
+    const createInvoices = vi.fn();
+    const getInvoices = vi.fn();
+    const withWriteClient = vi.fn();
+    const provider = providerWithClient({ accountingApi: { createInvoices, getInvoices } }, withWriteClient);
+
+    const operation = side === "AP"
+      ? provider.createDraftSupplierBill(
+        principal,
+        input,
+        `idempotency-missing-evidence-${side}`,
+        undefined,
+        invoicePermit(side),
+        mutationRequestId(side),
+      )
+      : provider.createDraftSalesInvoice(
+        principal,
+        input,
+        `idempotency-missing-evidence-${side}`,
+        undefined,
+        invoicePermit(side),
+        mutationRequestId(side),
+      );
+
+    await expect(operation).rejects.toMatchObject({
+      code: "CONFIGURATION_ERROR",
+      retryable: false,
+      details: {
+        providerMutationPossible: false,
+        reasonCodes: ["WRITE_EVIDENCE_CALLBACK_REQUIRED"],
+      },
+    });
+    expect(withWriteClient).not.toHaveBeenCalled();
+    expect(createInvoices).not.toHaveBeenCalled();
+    expect(getInvoices).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["AP", { response: { status: 408, body: {} } }],
     ["AP", { response: { status: 409, body: {} } }],
@@ -75,8 +145,8 @@ describe("provider write recovery contract", () => {
     const provider = providerWithClient({ accountingApi: { createInvoices, getInvoices } });
 
     const operation = side === "AP"
-      ? provider.createDraftSupplierBill("actor-a", input, `idempotency-ambiguous-${side}`)
-      : provider.createDraftSalesInvoice("actor-a", input, `idempotency-ambiguous-${side}`);
+      ? provider.createDraftSupplierBill(principal, input, `idempotency-ambiguous-${side}`, noOpWriteEvidence, invoicePermit(side), mutationRequestId(side))
+      : provider.createDraftSalesInvoice(principal, input, `idempotency-ambiguous-${side}`, noOpWriteEvidence, invoicePermit(side), mutationRequestId(side));
     await expect(operation).rejects.toMatchObject({ code: "WRITE_RESULT_UNKNOWN", retryable: false });
     expect(getInvoices).not.toHaveBeenCalled();
   });
@@ -90,8 +160,8 @@ describe("provider write recovery contract", () => {
     });
     const provider = providerWithClient({ accountingApi: { createInvoices } });
     const operation = side === "AP"
-      ? provider.createDraftSupplierBill("actor-a", input, `idempotency-rejected-${side}`)
-      : provider.createDraftSalesInvoice("actor-a", input, `idempotency-rejected-${side}`);
+      ? provider.createDraftSupplierBill(principal, input, `idempotency-rejected-${side}`, noOpWriteEvidence, invoicePermit(side), mutationRequestId(side))
+      : provider.createDraftSalesInvoice(principal, input, `idempotency-rejected-${side}`, noOpWriteEvidence, invoicePermit(side), mutationRequestId(side));
     await expect(operation).rejects.toMatchObject({
       code: "PROVIDER_ERROR",
       details: { writeOutcome: "DEFINITELY_REJECTED" },
@@ -107,7 +177,7 @@ describe("provider write recovery contract", () => {
     const provider = providerWithClient({ accountingApi: { createInvoices, getInvoices } });
 
     await expect(
-      provider.createDraftSupplierBill("actor-a", input, "idempotency-create-empty-ap"),
+      provider.createDraftSupplierBill(principal, input, "idempotency-create-empty-ap", noOpWriteEvidence, invoicePermit("AP"), mutationRequestId("AP")),
     ).rejects.toMatchObject({
       code: "WRITE_RESULT_UNKNOWN",
       retryable: false,
@@ -129,7 +199,7 @@ describe("provider write recovery contract", () => {
     const provider = providerWithClient({ accountingApi: { createInvoices } });
 
     await expect(
-      provider.createDraftSupplierBill("actor-a", input, "idempotency-create-invalid-ap"),
+      provider.createDraftSupplierBill(principal, input, "idempotency-create-invalid-ap", noOpWriteEvidence, invoicePermit("AP"), mutationRequestId("AP")),
     ).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
   });
 
@@ -142,7 +212,7 @@ describe("provider write recovery contract", () => {
     const provider = providerWithClient({ accountingApi: { createInvoices, getInvoices } });
 
     await expect(
-      provider.createDraftSalesInvoice("actor-a", input, "idempotency-create-missing-id-ar"),
+      provider.createDraftSalesInvoice(principal, input, "idempotency-create-missing-id-ar", noOpWriteEvidence, invoicePermit("AR"), mutationRequestId("AR")),
     ).rejects.toMatchObject({
       code: "WRITE_RESULT_UNKNOWN",
       retryable: false,
@@ -163,7 +233,7 @@ describe("provider write recovery contract", () => {
     const provider = providerWithClient({ accountingApi: { createInvoices } });
 
     await expect(
-      provider.createDraftSalesInvoice("actor-a", input, "idempotency-create-invalid-ar"),
+      provider.createDraftSalesInvoice(principal, input, "idempotency-create-invalid-ar", noOpWriteEvidence, invoicePermit("AR"), mutationRequestId("AR")),
     ).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
   });
 
@@ -177,7 +247,7 @@ describe("provider write recovery contract", () => {
 
     let caught: unknown;
     try {
-      await provider.createDraftSupplierBill("actor-a", input, "idempotency-create-a");
+      await provider.createDraftSupplierBill(principal, input, "idempotency-create-a", noOpWriteEvidence, invoicePermit("AP"), mutationRequestId("AP"));
     } catch (error) {
       caught = error;
     }
@@ -189,6 +259,11 @@ describe("provider write recovery contract", () => {
       details: { invoiceId },
     });
     expect(createInvoices).toHaveBeenCalledTimes(1);
+    const supplierCreate = createInvoices.mock.calls[0]?.[1] as {
+      invoices?: Array<Record<string, unknown>>;
+    };
+    expect(supplierCreate.invoices?.[0]).toMatchObject({ invoiceNumber: input.reference });
+    expect(supplierCreate.invoices?.[0]).not.toHaveProperty("reference");
     expect(getInvoices).toHaveBeenCalledTimes(1);
   });
 
@@ -209,8 +284,8 @@ describe("provider write recovery contract", () => {
     const provider = providerWithClient({ accountingApi: { createInvoices, getInvoices } });
 
     const operation = side === "AP"
-      ? provider.createDraftSupplierBill("actor-a", input, `idempotency-evidence-${side}`, recordWriteEvidence)
-      : provider.createDraftSalesInvoice("actor-a", input, `idempotency-evidence-${side}`, recordWriteEvidence);
+      ? provider.createDraftSupplierBill(principal, input, `idempotency-evidence-${side}`, recordWriteEvidence, invoicePermit(side), mutationRequestId(side))
+      : provider.createDraftSalesInvoice(principal, input, `idempotency-evidence-${side}`, recordWriteEvidence, invoicePermit(side), mutationRequestId(side));
     await expect(operation).rejects.toMatchObject({
       code: "WRITE_RESULT_UNKNOWN",
       details: { invoiceId },
@@ -227,7 +302,7 @@ describe("provider write recovery contract", () => {
     const provider = providerWithClient({ accountingApi: { createInvoices, getInvoices } });
 
     await expect(
-      provider.createDraftSalesInvoice("actor-a", input, "idempotency-create-ar"),
+      provider.createDraftSalesInvoice(principal, input, "idempotency-create-ar", noOpWriteEvidence, invoicePermit("AR"), mutationRequestId("AR")),
     ).rejects.toMatchObject({
       code: "WRITE_RESULT_UNKNOWN",
       retryable: false,
@@ -246,7 +321,7 @@ describe("provider write recovery contract", () => {
     const provider = providerWithClient({ accountingApi: { createInvoices, getInvoices } });
 
     await expect(
-      provider.createDraftSupplierBill("actor-a", input, "idempotency-create-a"),
+      provider.createDraftSupplierBill(principal, input, "idempotency-create-a", noOpWriteEvidence, invoicePermit("AP"), mutationRequestId("AP")),
     ).rejects.toMatchObject({
       code: "WRITE_RESULT_UNKNOWN",
       retryable: false,
@@ -255,31 +330,81 @@ describe("provider write recovery contract", () => {
     expect(createInvoices).toHaveBeenCalledTimes(1);
   });
 
-  it("does not hide an uncertain authorise response behind a retryable provider error", async () => {
-    const updateInvoice = vi.fn().mockRejectedValue({ code: "ECONNRESET" });
+  it("does not expose the legacy supplier-bill AUTHORISE writer from the production provider", () => {
+    const updateInvoice = vi.fn();
     const provider = providerWithClient({ accountingApi: { updateInvoice } });
-
-    await expect(
-      provider.authoriseSupplierBill("actor-a", invoiceId, "idempotency-authorise-a"),
-    ).rejects.toMatchObject({ code: "WRITE_RESULT_UNKNOWN", retryable: false });
-    expect(updateInvoice).toHaveBeenCalledTimes(1);
+    expect((provider as unknown as { authoriseSupplierBill?: unknown }).authoriseSupplierBill).toBeUndefined();
+    expect(updateInvoice).not.toHaveBeenCalled();
   });
 
-  it("recognises the stringified transport error shape emitted by xero-node", async () => {
-    const updateInvoice = vi.fn().mockRejectedValue(JSON.stringify({
-      response: {
-        statusCode: 0,
-        body: "timeout of 30000ms exceeded",
-        headers: {},
-        request: { method: "POST" },
-      },
-      body: "timeout of 30000ms exceeded",
-    }));
-    const provider = providerWithClient({ accountingApi: { updateInvoice } });
+  it("commits an AP write and returns the exact mapped snapshot from a real Xero invoice readback", async () => {
+    // proves: every other test in this file mocks getInvoices with an empty or
+    // failing readback, so the success path - createInvoices succeeds, then
+    // #getSupplierBill's own getInvoices call maps the exact readback into the
+    // returned ProviderWriteResult - was never run against a realistic Xero
+    // invoice body (Date-typed date/dueDate/updatedDateUTC, an empty
+    // "reference", an embedded contact with its own empty phone/address
+    // arrays). A regression in mapInvoiceSnapshot's handling of any of that
+    // would not fail here as an empty/timeout case; it would fail here.
+    const [realInvoice] = loadXeroResponse("invoice_accpay").invoices as Array<Record<string, unknown>>;
+    const realInvoiceId = realInvoice.invoiceID as string;
+    const createInvoices = vi.fn().mockResolvedValue({
+      body: { invoices: [{ invoiceID: realInvoiceId, hasErrors: false }] },
+      response: { headers: {} },
+    });
+    const getInvoices = vi.fn().mockResolvedValue({ body: { invoices: [realInvoice] }, response: { headers: {} } });
+    const provider = providerWithClient({ accountingApi: { createInvoices, getInvoices } });
 
-    await expect(
-      provider.authoriseSupplierBill("actor-a", invoiceId, "idempotency-authorise-sdk-string"),
-    ).rejects.toMatchObject({ code: "WRITE_RESULT_UNKNOWN", retryable: false });
-    expect(updateInvoice).toHaveBeenCalledTimes(1);
+    const result = await provider.createDraftSupplierBill(
+      principal,
+      input,
+      "idempotency-real-readback",
+      noOpWriteEvidence,
+      invoicePermit("AP"),
+      mutationRequestId("AP"),
+    );
+
+    expect(result).toEqual({
+      bill: {
+        invoiceId: realInvoiceId,
+        type: "ACCPAY",
+        status: "DRAFT",
+        contact: { contactId: "23cb74b0-6e82-4d6a-af84-1e635a4fb59b", name: "Northwind Logistics LLC" },
+        invoiceNumber: "NW-8842",
+        invoiceDate: "2026-08-14",
+        dueDate: "2026-09-13",
+        currency: "USD",
+        currencyRate: "1.0000",
+        subTotal: "2400.0000",
+        totalTax: "0.0000",
+        total: "2400.0000",
+        amountDue: "2400.0000",
+        amountPaid: "0.0000",
+        amountCredited: "0.0000",
+        attachmentsKnown: true,
+        hasAttachments: false,
+        updatedAt: "2026-08-19T09:11:54.120Z",
+        tenantId: "tenant-a",
+        lineAmountType: "Exclusive",
+        lineItemCount: 1,
+        linesTruncated: false,
+        lines: [{
+          lineItemId: "77ec3279-8bb0-441d-9728-eef4326d0185",
+          description: "Freight forwarding — August",
+          quantity: "1.0000",
+          unitAmount: "2400.0000",
+          lineAmount: "2400.0000",
+          taxAmount: "0.0000",
+          accountId: "c4b1c463-9913-4672-a8b8-01a3b546126f",
+          accountCode: "425",
+          taxType: "NONE",
+        }],
+      },
+      receipt: {
+        operation: "CREATE_DRAFT",
+        invoiceId: realInvoiceId,
+        status: "DRAFT",
+      },
+    });
   });
 });

@@ -41,7 +41,7 @@ describe("Xero public tool capability release contract", () => {
     expect(fileAllowlist.tools.sort()).toEqual(codeTools);
     expect(Object.keys(XERO_TOOL_CAPABILITY_ACTION_IDS).sort()).toEqual(codeTools);
     expect(Object.keys(XERO_TOOL_POLICY_BINDINGS).sort()).toEqual(codeTools);
-    expect(codeTools).toHaveLength(43);
+    expect(codeTools).toHaveLength(38);
 
     for (const toolName of TOOL_ALLOWLIST) {
       const binding = XERO_TOOL_POLICY_BINDINGS[toolName];
@@ -59,26 +59,18 @@ describe("Xero public tool capability release contract", () => {
     }
   });
 
-  it("allows mutation only for the ten confirmed, idempotent controlled-write tools", () => {
+  it("allows mutation only through the governed idempotent Accounting Case execute tool", () => {
     const mutatingBindings = Object.values(XERO_TOOL_POLICY_BINDINGS)
       .filter((binding) => binding.mutating);
 
-    expect(mutatingBindings.map((binding) => binding.toolName).sort()).toEqual([
-      "xero_create_contact",
-      "xero_create_credit_note_draft",
-      "xero_create_draft_sales_invoice",
-      "xero_create_draft_supplier_bill",
-      "xero_create_item",
-      "xero_create_manual_journal_draft",
-      "xero_create_purchase_order_draft",
-      "xero_create_quote_draft",
-      "xero_update_contact",
-      "xero_update_item",
+    expect(mutatingBindings.map((binding) => binding.toolName)).toEqual([
+      "xero_execute_accounting_case",
     ]);
 
     for (const binding of mutatingBindings) {
       expect(binding).toMatchObject({
-        riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+        riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+        entryMcpScopesAnyOf: ["xero.read", "xero.draft.write"],
         requiredMcpScope: "xero.draft.write",
         requiredPermission: "XERO_DRAFT_WRITE",
         annotations: {
@@ -90,8 +82,8 @@ describe("Xero public tool capability release contract", () => {
       for (const actionId of binding.actionIds) {
         expect(lookupAgentFacingXeroCapabilityDecision(actionId)).toMatchObject({
           releaseDecision: "AVAILABLE_NOW",
-          riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
-          controlRequirement: "EXPLICIT_CONFIRMATION",
+          riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+          controlRequirement: "TYPED_CASE_WRITE_GATE",
           policyAllowsMutation: true,
         });
       }
@@ -99,21 +91,13 @@ describe("Xero public tool capability release contract", () => {
   });
 
   it("marks all persisted preparation tools as stateful and non-idempotent while retaining xero.read", () => {
-    const statefulPreparationTools = [
-      "xero_prepare_quote_draft",
-      "xero_prepare_purchase_order_draft",
-      "xero_prepare_credit_note_draft",
-      "xero_prepare_manual_journal_draft",
-      "xero_prepare_contact_create",
-      "xero_prepare_contact_update",
-      "xero_prepare_item_create",
-      "xero_prepare_item_update",
-    ] as const;
+    const statefulPreparationTools = ["xero_prepare_accounting_case"] as const;
 
     for (const toolName of statefulPreparationTools) {
       expect(XERO_TOOL_POLICY_BINDINGS[toolName], toolName).toMatchObject({
         riskClass: "READ_PREPARE",
         mutating: false,
+        entryMcpScopesAnyOf: ["xero.read"],
         requiredMcpScope: "xero.read",
         requiredPermission: "XERO_ACCOUNTING_READ",
         annotations: {
@@ -126,17 +110,14 @@ describe("Xero public tool capability release contract", () => {
     }
   });
 
-  it("does not register planned, dual-approval, disabled, payment, bank-write, or reconciliation-finalisation actions", () => {
+  it("does not register planned, disabled, payment, bank-write, or reconciliation-finalisation actions", () => {
     for (const binding of Object.values(XERO_TOOL_POLICY_BINDINGS)) {
       for (const actionId of binding.actionIds) {
         const decision = lookupAgentFacingXeroCapabilityDecision(actionId);
         expect(decision.releaseDecision, `${binding.toolName} -> ${actionId}`).toBe(
           "AVAILABLE_NOW",
         );
-        expect(
-          ["DUAL_APPROVAL", "DISABLED"],
-          `${binding.toolName} -> ${actionId}`,
-        ).not.toContain(decision.riskClass);
+        expect(decision.riskClass, `${binding.toolName} -> ${actionId}`).not.toBe("DISABLED");
       }
     }
 
@@ -159,7 +140,7 @@ describe("Xero public tool capability release contract", () => {
     expect(TOOL_ALLOWLIST.filter((toolName) => forbiddenToolNames.includes(toolName))).toEqual([]);
   });
 
-  it("keeps registered MCP annotations and audited scope aligned with policy", async () => {
+  it("keeps registered MCP annotations and entry scopes aligned with policy", async () => {
     const service = {} as AccountingService;
     const context = createLegacySharedBearerRequestContext({
       actorId: "tool-policy-contract",
@@ -187,10 +168,12 @@ describe("Xero public tool capability release contract", () => {
       );
 
       const block = registrationBlock(createServerSource, toolName);
-      const implementedScopes = [...block.matchAll(
-        /requiredScope:\s*"(xero\.read|xero\.draft\.write)"/g,
+      const implementedRequirement = /requiredScope:\s*(\[[^\]]+\]|"(?:xero\.read|xero\.draft\.write)")/u
+        .exec(block)?.[1] ?? "";
+      const implementedScopes = [...implementedRequirement.matchAll(
+        /"(xero\.read|xero\.draft\.write)"/g,
       )].map((match) => match[1]);
-      expect(implementedScopes, toolName).toEqual([binding.requiredMcpScope]);
+      expect(implementedScopes, toolName).toEqual(binding.entryMcpScopesAnyOf);
     }
   });
 });

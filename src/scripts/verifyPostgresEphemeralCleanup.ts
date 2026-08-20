@@ -25,6 +25,8 @@ const { Pool } = pg;
 function emptyCounts(): EphemeralCleanupCounts {
   return {
     mcpRefreshRetryResponses: 0,
+    organisationSwitchSessions: 0,
+    ledgerTargetSessions: 0,
     oauthBrokerFlows: 0,
     oauthStates: 0,
     connectTickets: 0,
@@ -35,6 +37,8 @@ function emptyCounts(): EphemeralCleanupCounts {
 
 function addCounts(target: EphemeralCleanupCounts, source: EphemeralCleanupCounts): void {
   target.mcpRefreshRetryResponses += source.mcpRefreshRetryResponses;
+  target.organisationSwitchSessions += source.organisationSwitchSessions;
+  target.ledgerTargetSessions += source.ledgerTargetSessions;
   target.oauthBrokerFlows += source.oauthBrokerFlows;
   target.oauthStates += source.oauthStates;
   target.connectTickets += source.connectTickets;

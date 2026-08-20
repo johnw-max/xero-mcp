@@ -1,0 +1,254 @@
+{
+  "creditNotes": [
+    {
+      "allocations": [
+        {
+          "allocationID": "a5be6139-7e3a-4d48-b664-50a89f0bb632",
+          "amount": 541.25,
+          "date": "2026-06-25T00:00:00.000Z",
+          "invoice": {
+            "creditNotes": [],
+            "hasErrors": false,
+            "invoiceAddresses": [],
+            "invoiceID": "4c4db294-3633-45cd-8706-f0b3b0079609",
+            "invoiceNumber": "INV-0010",
+            "isDiscounted": false,
+            "lineItems": [],
+            "overpayments": [],
+            "payments": [],
+            "prepayments": []
+          }
+        }
+      ],
+      "contact": {
+        "addresses": [],
+        "contactGroups": [],
+        "contactID": "37918a06-92f6-4edb-bfe0-1fc041c90f8b",
+        "contactPersons": [],
+        "hasValidationErrors": false,
+        "name": "Boom FM",
+        "phones": []
+      },
+      "creditNoteID": "602f5486-664e-492f-b4d1-e12df1d4b8ba",
+      "creditNoteNumber": "CN-0014",
+      "currencyCode": "USD",
+      "date": "2026-06-25T00:00:00.000Z",
+      "fullyPaidOnDate": "2026-06-25T00:00:00.000Z",
+      "hasAttachments": false,
+      "hasErrors": false,
+      "invoiceAddresses": [],
+      "lineAmountTypes": "Exclusive",
+      "lineItems": [],
+      "payments": [],
+      "reference": "Training",
+      "remainingCredit": 0,
+      "status": "PAID",
+      "subTotal": 500,
+      "total": 541.25,
+      "totalTax": 41.25,
+      "type": "ACCRECCREDIT",
+      "updatedDateUTC": "2008-12-20T17:38:32.660Z",
+      "updatedDateUTCString": "2008-12-20T17:38:32Z"
+    },
+    {
+      "allocations": [
+        {
+          "allocationID": "73196742-61bd-4ad0-92a0-0baaffd46fd8",
+          "amount": 541.25,
+          "date": "2026-07-17T00:00:00.000Z",
+          "invoice": {
+            "creditNotes": [],
+            "hasErrors": false,
+            "invoiceAddresses": [],
+            "invoiceID": "b7e0c5f4-9f52-4126-b102-45fd12eaa3ca",
+            "invoiceNumber": "INV-0005",
+            "isDiscounted": false,
+            "lineItems": [],
+            "overpayments": [],
+            "payments": [],
+            "prepayments": []
+          }
+        }
+      ],
+      "contact": {
+        "addresses": [],
+        "contactGroups": [],
+        "contactID": "fd89489e-699c-4d77-a881-10c127bfbeb3",
+        "contactPersons": [],
+        "hasValidationErrors": false,
+        "name": "Hamilton Smith Ltd",
+        "phones": []
+      },
+      "creditNoteID": "694c1f99-8085-416c-9ace-40f911303229",
+      "creditNoteNumber": "CN-0015",
+      "currencyCode": "USD",
+      "date": "2026-07-17T00:00:00.000Z",
+      "fullyPaidOnDate": "2026-07-17T00:00:00.000Z",
+      "hasAttachments": false,
+      "hasErrors": false,
+      "invoiceAddresses": [],
+      "lineAmountTypes": "Exclusive",
+      "lineItems": [],
+      "payments": [],
+      "reference": "Monthly Support",
+      "remainingCredit": 0,
+      "status": "PAID",
+      "subTotal": 500,
+      "total": 541.25,
+      "totalTax": 41.25,
+      "type": "ACCRECCREDIT",
+      "updatedDateUTC": "2008-12-20T17:39:54.077Z",
+      "updatedDateUTCString": "2008-12-20T17:39:54Z"
+    },
+    {
+      "allocations": [
+        {
+          "allocationID": "62104ee6-ea79-43e2-b95b-2dd8fbdb7d96",
+          "amount": 21.7,
+          "date": "2026-07-12T00:00:00.000Z",
+          "invoice": {
+            "creditNotes": [],
+            "hasErrors": false,
+            "invoiceAddresses": [],
+            "invoiceID": "2c916a34-14fe-4b38-af86-6b0fcc371a89",
+            "invoiceNumber": "INV-0022",
+            "isDiscounted": false,
+            "lineItems": [],
+            "overpayments": [],
+            "payments": [],
+            "prepayments": []
+          }
+        }
+      ],
+      "contact": {
+        "addresses": [],
+        "contactGroups": [],
+        "contactID": "a3cf95c5-9d26-42e1-80c0-69e5f24886d3",
+        "contactPersons": [],
+        "hasValidationErrors": false,
+        "name": "DIISR - Small Business Services",
+        "phones": []
+      },
+      "creditNoteID": "4965b2fe-0a1b-471e-ade2-80e0e1f61c91",
+      "creditNoteNumber": "CN-0023",
+      "currencyCode": "USD",
+      "date": "2026-07-12T00:00:00.000Z",
+      "fullyPaidOnDate": "2026-07-12T00:00:00.000Z",
+      "hasAttachments": false,
+      "hasErrors": false,
+      "invoiceAddresses": [],
+      "lineAmountTypes": "Exclusive",
+      "lineItems": [],
+      "payments": [],
+      "reference": "Yr Ref W08-143",
+      "remainingCredit": 0,
+      "status": "PAID",
+      "subTotal": 19.95,
+      "total": 21.7,
+      "totalTax": 1.75,
+      "type": "ACCRECCREDIT",
+      "updatedDateUTC": "2008-12-20T18:17:30.397Z",
+      "updatedDateUTCString": "2008-12-20T18:17:30Z"
+    },
+    {
+      "allocations": [
+        {
+          "allocationID": "1f37ee5a-ddc7-40df-b083-590ac7ebfb00",
+          "amount": 25.44,
+          "date": "2026-06-22T00:00:00.000Z",
+          "invoice": {
+            "creditNotes": [],
+            "hasErrors": false,
+            "invoiceAddresses": [],
+            "invoiceID": "ffbb9f34-f7d7-4f55-91cb-af89552ecdd7",
+            "invoiceNumber": "AP",
+            "isDiscounted": false,
+            "lineItems": [],
+            "overpayments": [],
+            "payments": [],
+            "prepayments": []
+          }
+        }
+      ],
+      "contact": {
+        "addresses": [],
+        "contactGroups": [],
+        "contactID": "78b7299c-4f1f-46d2-acc3-44a46bd361b1",
+        "contactPersons": [],
+        "hasValidationErrors": false,
+        "name": "Swanston Security",
+        "phones": []
+      },
+      "creditNoteID": "38b0ede6-a89d-4384-8d24-a3b3e8eaabb0",
+      "creditNoteNumber": "Refund",
+      "currencyCode": "USD",
+      "date": "2026-06-22T00:00:00.000Z",
+      "fullyPaidOnDate": "2026-06-22T00:00:00.000Z",
+      "hasAttachments": false,
+      "hasErrors": false,
+      "invoiceAddresses": [],
+      "lineAmountTypes": "Exclusive",
+      "lineItems": [],
+      "payments": [],
+      "reference": "",
+      "remainingCredit": 0,
+      "status": "PAID",
+      "subTotal": 23.5,
+      "total": 25.44,
+      "totalTax": 1.94,
+      "type": "ACCPAYCREDIT",
+      "updatedDateUTC": "2008-12-20T18:24:59.993Z",
+      "updatedDateUTCString": "2008-12-20T18:24:59Z"
+    },
+    {
+      "allocations": [
+        {
+          "allocationID": "38992701-386d-4c33-a364-b8dd4c876e5c",
+          "amount": 270.63,
+          "date": "2026-06-22T00:00:00.000Z",
+          "invoice": {
+            "creditNotes": [],
+            "hasErrors": false,
+            "invoiceAddresses": [],
+            "invoiceID": "824c6c13-b7a5-49a2-99bd-4a6d77f7866e",
+            "invoiceNumber": "",
+            "isDiscounted": false,
+            "lineItems": [],
+            "overpayments": [],
+            "payments": [],
+            "prepayments": []
+          }
+        }
+      ],
+      "contact": {
+        "addresses": [],
+        "contactGroups": [],
+        "contactID": "aacecb74-ef1e-44e0-ba52-0bc521639697",
+        "contactPersons": [],
+        "hasValidationErrors": false,
+        "name": "PC Complete",
+        "phones": []
+      },
+      "creditNoteID": "eb75c5d2-925e-4201-8944-e7f4c69a3518",
+      "creditNoteNumber": "OG laptop",
+      "currencyCode": "USD",
+      "date": "2026-06-22T00:00:00.000Z",
+      "fullyPaidOnDate": "2026-06-22T00:00:00.000Z",
+      "hasAttachments": false,
+      "hasErrors": false,
+      "invoiceAddresses": [],
+      "lineAmountTypes": "Exclusive",
+      "lineItems": [],
+      "payments": [],
+      "reference": "",
+      "remainingCredit": 0,
+      "status": "PAID",
+      "subTotal": 250,
+      "total": 270.63,
+      "totalTax": 20.63,
+      "type": "ACCPAYCREDIT",
+      "updatedDateUTC": "2008-12-20T18:33:55.507Z",
+      "updatedDateUTCString": "2008-12-20T18:33:55Z"
+    }
+  ]
+}

@@ -1,11 +1,54 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig, MCP_OAUTH_SCOPES } from "../src/config.js";
+import { createXeroBuildIdentity } from "../src/xeroRelease.js";
+import { sha256 } from "../src/security/hash.js";
+/**
+ * ADR-002 retains `XERO_TENANT_COA_PROFILES_JSON` and its legacy schema
+ * (`src/policy/xeroTenantCoaProfile.ts`) purely for deployment compatibility
+ * -- config.ts still parses it, but it no longer gates any write. This
+ * fixture only needs to satisfy that legacy schema's own shape; it carries
+ * no live behaviour any more.
+ */
+function testXeroTenantCoaProfile(tenantId: string, revision = 1) {
+  return {
+    profile_id: `test-sg-coa-${tenantId}`,
+    revision,
+    tenant_id: tenantId,
+    jurisdiction: "SG" as const,
+    categories: {
+      CONSULTING_REVENUE: {
+        account_id: "33333333-3333-4333-8333-333333333333",
+        account_code: "200",
+        expected_type: "REVENUE",
+        expected_class: "REVENUE",
+      },
+      OFFICE_SUPPLIES: {
+        account_id: "33333333-3333-4333-8333-333333333353",
+        account_code: "453",
+        expected_type: "EXPENSE",
+        expected_class: "EXPENSE",
+      },
+      CLOUD_SUBSCRIPTIONS: {
+        account_id: "33333333-3333-4333-8333-333333333385",
+        account_code: "485",
+        expected_type: "EXPENSE",
+        expected_class: "EXPENSE",
+      },
+    },
+  };
+}
 
 const AGENT2_CALLBACK = "https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callback";
 const TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 1).toString("base64");
 const TOKEN_HASH_KEY = Buffer.alloc(32, 2).toString("base64");
 const COOKIE_STATE_KEY = Buffer.alloc(32, 3).toString("base64");
 const MUTATION_CONFIRMATION_KEY = Buffer.alloc(32, 4).toString("base64");
+const BUILD_IDENTITY = createXeroBuildIdentity({
+  acceptanceSourceSha256: "a".repeat(64),
+  releaseSourceManifestSha256: "b".repeat(64),
+  sourceArchiveSha256: "c".repeat(64),
+  sourceBundleManifestSha256: "d".repeat(64),
+});
 
 function validEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -20,11 +63,12 @@ function validEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     REQUEST_BODY_LIMIT_BYTES: "1048576",
     XERO_CLIENT_ID: "xero-client",
     XERO_CLIENT_SECRET: "xero-secret",
-    XERO_SCOPES: "openid profile email offline_access accounting.settings.read accounting.settings accounting.contacts.read accounting.contacts accounting.invoices.read accounting.invoices accounting.payments.read accounting.manualjournals.read accounting.manualjournals accounting.banktransactions.read accounting.reports.trialbalance.read",
+    XERO_SCOPES: "openid profile email offline_access accounting.settings.read accounting.settings accounting.contacts.read accounting.contacts accounting.invoices.read accounting.invoices accounting.payments.read accounting.payments accounting.manualjournals.read accounting.manualjournals accounting.banktransactions.read accounting.banktransactions accounting.reports.trialbalance.read accounting.reports.profitandloss.read accounting.reports.balancesheet.read accounting.reports.aged.read",
     TOKEN_ENCRYPTION_KEY_B64: TOKEN_ENCRYPTION_KEY,
     XERO_MUTATION_CONFIRMATION_KEY_B64: MUTATION_CONFIRMATION_KEY,
     DEMO_ACTOR_ID: "qa-actor",
     LOG_LEVEL: "error",
+    XERO_BUILD_IDENTITY_JSON: JSON.stringify(BUILD_IDENTITY),
     ...overrides,
   };
 }
@@ -53,10 +97,30 @@ function enabledEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     PERSONAL_POC_ONLY: "true",
     HOST_OAUTH_CLIENTS_JSON: hostClients(),
     OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS: "agent2-accounting-mcp",
+    OAUTH_MANUAL_RETURN_CLIENT_IDS: "agent2-accounting-mcp",
     OAUTH_TOKEN_HASH_KEY_B64: TOKEN_HASH_KEY,
     OAUTH_COOKIE_STATE_KEY_B64: COOKIE_STATE_KEY,
+    XERO_TENANT_COA_PROFILES_JSON: JSON.stringify([testXeroTenantCoaProfile(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    )]),
+    XERO_GOVERNANCE_TRUST_BUNDLE_SHA256: "1".repeat(64),
+    XERO_GOVERNANCE_RECEIPTS_SHA256: "2".repeat(64),
+    XERO_GOVERNANCE_STATUS_SHA256: "3".repeat(64),
     ...overrides,
   });
+}
+
+function standingDelegations(): string {
+  return JSON.stringify([{
+    delegation_id: "agent2-xero-standing-v1",
+    revision: 1,
+    status: "ACTIVE",
+    workspace_id: "workspace-test",
+    agent_id: "agent-test",
+    installation_id: "installation-test",
+    tenant_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    action_ids: ["supplier_bill.create_draft"],
+  }]);
 }
 
 describe("MCP OAuth Broker configuration", () => {
@@ -76,6 +140,7 @@ describe("MCP OAuth Broker configuration", () => {
       revocationEndpoint: "https://xero-mcp.example.test/revoke",
       scopes: MCP_OAUTH_SCOPES,
       personalPocOnly: false,
+      sharedTestUsers: false,
     });
   });
 
@@ -97,7 +162,9 @@ describe("MCP OAuth Broker configuration", () => {
       revocationEndpoint: "https://xero-mcp.example.test/revoke",
       scopes: ["xero.read", "xero.draft.write"],
       personalPocOnly: true,
+      sharedTestUsers: false,
       missingResourceCompatClientIds: ["agent2-accounting-mcp"],
+      manualReturnClientIds: ["agent2-accounting-mcp"],
       accessTokenTtlSeconds: 900,
       refreshTokenTtlSeconds: 2_592_000,
       authorizationCodeTtlSeconds: 300,
@@ -113,12 +180,38 @@ describe("MCP OAuth Broker configuration", () => {
       clientId: "another-host",
     });
     expect(config.xero.redirectUri).toBe("https://xero-mcp.example.test/oauth/xero/callback");
+    expect(config.xeroTargetSessionRequired).toBe(false);
+    expect(config.xeroTargetSessionTtlSeconds).toBe(1_800);
+  });
+
+  it("supports a bounded strict per-conversation ledger target policy", () => {
+    const config = loadConfig(enabledEnv({
+      XERO_TARGET_SESSION_REQUIRED: "true",
+      XERO_TARGET_SESSION_TTL_SECONDS: "120",
+    }));
+    expect(config.xeroTargetSessionRequired).toBe(true);
+    expect(config.xeroTargetSessionTtlSeconds).toBe(120);
+    expect(() => loadConfig(enabledEnv({ XERO_TARGET_SESSION_TTL_SECONDS: "59" })))
+      .toThrow(/XERO_TARGET_SESSION_TTL_SECONDS/i);
+    expect(() => loadConfig(enabledEnv({ XERO_TARGET_SESSION_TTL_SECONDS: "14401" })))
+      .toThrow(/XERO_TARGET_SESSION_TTL_SECONDS/i);
   });
 
   it("uses the selected server-side binding for Broker writes without a legacy global tenant allowlist", () => {
+    const delegations = standingDelegations();
     const config = loadConfig(enabledEnv({
       XERO_WRITE_ENABLED: "true",
+      XERO_AUTHORITY_REVISION: "1",
       XERO_ALLOWED_TENANT_ID: "",
+      XERO_TARGET_SESSION_REQUIRED: "true",
+      XERO_STANDING_DELEGATIONS_JSON: delegations,
+      XERO_STANDING_DELEGATIONS_CONFIG_SHA256: sha256(delegations),
+      XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256: "6".repeat(64),
+      // Firm-governance exclusive-writer authority is no longer a deployment
+      // precondition for any write action, including the supplier_bill
+      // delegation configured here, so the expected governance hash is
+      // always the fixed "NOT_REQUIRED" sentinel (src/config.ts).
+      XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256: "NOT_REQUIRED",
     }));
 
     expect(config.xeroWriteEnabled).toBe(true);
@@ -126,11 +219,38 @@ describe("MCP OAuth Broker configuration", () => {
     expect(config.mcpOAuthBroker?.enabled).toBe(true);
   });
 
-  it("still requires the global tenant allowlist for legacy shared-bearer writes", () => {
+  it("does not require or parse removed Standing Delegation configuration", () => {
+    const config = loadConfig(enabledEnv({
+      XERO_WRITE_ENABLED: "true",
+      XERO_TARGET_SESSION_REQUIRED: "true",
+      // These legacy variables are intentionally malformed. The current
+      // OAuth-target write gate must ignore them rather than revive the old
+      // Standing Delegation configuration or make it a boot prerequisite.
+      XERO_STANDING_DELEGATIONS_JSON: "not-json",
+      XERO_STANDING_DELEGATIONS_CONFIG_SHA256: "not-a-hash",
+    }));
+
+    expect(config.xeroWriteEnabled).toBe(true);
+    expect(config).not.toHaveProperty("xeroStandingDelegations");
+  });
+
+  it("enables isolated multi-user early UAT behind an explicit test-only flag", () => {
+    const broker = loadConfig(enabledEnv({ SHARED_TEST_USERS: "true" })).mcpOAuthBroker;
+
+    expect(broker?.enabled && broker.sharedTestUsers).toBe(true);
+    expect(() => loadConfig(enabledEnv({
+      PERSONAL_POC_ONLY: "false",
+      SHARED_TEST_USERS: "true",
+      OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS: "",
+      OAUTH_MANUAL_RETURN_CLIENT_IDS: "",
+    }))).toThrow(/SHARED_TEST_USERS.*PERSONAL_POC_ONLY/i);
+  });
+
+  it("does not allow legacy shared-bearer writes after autonomous mode is enabled", () => {
     expect(() => loadConfig(validEnv({
       XERO_WRITE_ENABLED: "true",
       XERO_ALLOWED_TENANT_ID: "",
-    }))).toThrow(/XERO_ALLOWED_TENANT_ID.*required/i);
+    }))).toThrow(/MCP_OAUTH_BROKER_ENABLED=true.*required/i);
   });
 
   it.each([
@@ -177,6 +297,23 @@ describe("MCP OAuth Broker configuration", () => {
     }))).toThrow(/callback URLs without query parameters/i);
   });
 
+  it("keeps missing-resource compatibility independent from the manual browser return allowlist", () => {
+    const broker = loadConfig(enabledEnv({
+      OAUTH_MISSING_RESOURCE_COMPAT_CLIENT_IDS: "agent2-accounting-mcp,another-host",
+      OAUTH_MANUAL_RETURN_CLIENT_IDS: "agent2-accounting-mcp",
+    })).mcpOAuthBroker;
+    expect(broker?.enabled && broker).toMatchObject({
+      missingResourceCompatClientIds: ["agent2-accounting-mcp", "another-host"],
+      manualReturnClientIds: ["agent2-accounting-mcp"],
+    });
+    expect(() => loadConfig(enabledEnv({
+      OAUTH_MANUAL_RETURN_CLIENT_IDS: "not-a-registered-client",
+    }))).toThrow(/OAUTH_MANUAL_RETURN_CLIENT_IDS.*pre-registered confidential Host client IDs/i);
+    expect(() => loadConfig(enabledEnv({
+      OAUTH_MANUAL_RETURN_CLIENT_IDS: "agent2-accounting-mcp,agent2-accounting-mcp",
+    }))).toThrow(/OAUTH_MANUAL_RETURN_CLIENT_IDS.*unique exact client IDs/i);
+  });
+
   it.each([
     ["OAUTH_ACCESS_TOKEN_TTL_SECONDS", "901"],
     ["OAUTH_REFRESH_TOKEN_TTL_SECONDS", "2592001"],
@@ -213,8 +350,12 @@ describe("MCP OAuth Broker configuration", () => {
 
   it("accepts only explicit boolean flag values", () => {
     expect(() => loadConfig(validEnv({ PERSONAL_POC_ONLY: "yes" }))).toThrow(/PERSONAL_POC_ONLY/i);
+    expect(() => loadConfig(validEnv({ SHARED_TEST_USERS: "yes" }))).toThrow(/SHARED_TEST_USERS/i);
     expect(() => loadConfig(validEnv({ MCP_OAUTH_BROKER_ENABLED: "1" }))).toThrow(
       /MCP_OAUTH_BROKER_ENABLED/i,
+    );
+    expect(() => loadConfig(validEnv({ XERO_TARGET_SESSION_REQUIRED: "yes" }))).toThrow(
+      /XERO_TARGET_SESSION_REQUIRED/i,
     );
   });
 

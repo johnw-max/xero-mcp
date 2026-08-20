@@ -1,6 +1,6 @@
 # Xero Accounting MCP Demo — Hetzner 部署与安全回滚
 
-> **当前 VPS 不使用本文件中的容器 Nginx 拓扑。** 现有宿主机 Nginx 已占用 80/443，stock-mcp 已使用 `127.0.0.1:18001`。0.3.0 发布必须遵循 [HETZNER-HOST-NGINX-RUNBOOK.md](./HETZNER-HOST-NGINX-RUNBOOK.md)：保留现有 blue `127.0.0.1:18002`，用 `compose.host-nginx.green.vps.yaml` 把候选 Xero 单独绑定到 `127.0.0.1:18004`，验收后再原子切换 upstream。本文件只保留为全新独立 VPS 的备选方案，不能与当前模式同时启动。
+> **当前 VPS 不使用本文件中的容器 Nginx 拓扑。** 现有宿主机 Nginx 已占用 80/443，stock-mcp 已使用 `127.0.0.1:18001`。候选发布必须遵循 [HETZNER-HOST-NGINX-RUNBOOK.md](./HETZNER-HOST-NGINX-RUNBOOK.md)：保留现有 blue `127.0.0.1:18002`，用 `compose.host-nginx.green.vps.yaml` 把候选 Xero 单独绑定到 `127.0.0.1:18004`，验收后再原子切换 upstream。本文件只保留为全新独立 VPS 的备选方案，不能与当前模式同时启动。
 
 ## 1. 状态与边界
 
@@ -24,7 +24,7 @@ Accounting MCP (3000, not published)
         +---- PostgreSQL (5432, not published)
 ```
 
-这是受控 Demo 部署，不是多租户生产身份系统。共享 MCP Bearer 只适用于封闭测试且只在 `/mcp` 被接受；它不能启动浏览器 OAuth 或换取 reviewer session。Xero OAuth Token 与 Agent 入站 Bearer 必须保持完全独立。
+这是受控 Demo 部署，不是多租户生产身份系统。共享 MCP Bearer 只适用于封闭测试且只在 `/mcp` 被接受；它不能启动浏览器 OAuth 或取得浏览器写入授权。Xero OAuth Token 与 Agent 入站 Bearer 必须保持完全独立。唯一的用户浏览器交互是 Organisation selection URL：用户只能在该页面选择已授权的 Xero Organisation，聊天文本不能切换账套或充当额外确认。
 
 ## 2. 部署资产
 
@@ -74,6 +74,8 @@ sudo install -d -o 70 -g 70 -m 0700 /srv/xero-accounting-mcp/postgres
 sudo install -d -o root -g 101 -m 0750 /srv/xero-accounting-mcp/tls
 sudo install -d -o root -g 101 -m 0755 /srv/xero-accounting-mcp/certbot
 sudo install -d -o root -g root -m 0700 /srv/xero-accounting-mcp/backups
+sudo install -d -o root -g root -m 0750 /srv/xero-accounting-mcp/release
+sudo install -d -o root -g root -m 0750 /etc/xero-accounting-mcp
 ```
 
 `70:70` 是 Alpine PostgreSQL 容器用户；`101:101` 是选定 Nginx unprivileged Alpine 镜像的运行用户。若更换镜像，必须先重新确认其 UID/GID，不能直接沿用。
@@ -106,6 +108,8 @@ openssl rand -hex 32
 - `PUBLIC_BASE_URL` 必须是 HTTPS 且不能带额外路径。
 - 初始和默认必须保持 `XERO_WRITE_ENABLED=false`；此时先完成 OAuth 和只读 Tenant 核对。
 - `XERO_WRITE_ENABLED=true` 时必须同时配置 OAuth 后只读取得并人工核对的精确 `XERO_ALLOWED_TENANT_ID`；不得为空、使用通配值、名称或预估 ID。
+- `XERO_WRITE_ENABLED` 是唯一部署级写闸。初始保持 `false`；开启或关闭后重建 App，并通过 `/readyz`、Capability Manifest 与 live UAT 确认实际运行态。它不替代当前 OAuth binding、已 pin 的 Organisation、typed Accounting Case、幂等、Provider 回执或 exact read-back。
+- 紧急停止写入时设置 `XERO_WRITE_ENABLED=false` 并重建 App/切回只读版本；已 claim 的单次在途 Provider 调用是边界。未知结果只能以 exact read-back 恢复，不能自动补写。
 - 环境文件仍会被 Docker 管理权限持有者看到；这只满足封闭 Demo。生产版应迁移到受控 Secret Manager 和逐用户身份。
 
 部署前确认模板占位符已经全部移除：
@@ -161,53 +165,67 @@ docker compose \
   -f deploy/docker-compose/compose.vps.yaml \
   config --quiet
 
-docker compose \
-  --project-directory . \
-  --env-file deploy/.env.vps \
-  -f deploy/docker-compose/compose.vps.yaml \
-  build --pull accounting-mcp
+# APP_IMAGE 必须来自本地 PASS acceptance Gate 的同一 OCI artifact，并由
+# registry 返回完全相同的 manifest digest。VPS 禁止 docker/compose build。
+# 先用 scripts/verify-accepted-oci-release.mjs 验证，再填写 repo@sha256 APP_IMAGE。
+GATE_DIR=artifacts/local-acceptance/REPLACE_WITH_GATE_RUN
+node scripts/verify-accepted-oci-release.mjs \
+  --gate-result "$GATE_DIR/gate-result.json" \
+  --gate-receipt "$GATE_DIR/accepted-build-context-receipt.json" \
+  --oci-receipt "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json" \
+  --oci-artifact "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar"
 
-docker compose \
-  --project-directory . \
-  --env-file deploy/.env.vps \
-  -f deploy/docker-compose/compose.vps.yaml \
-  up -d postgres
+# registry copy 完成并把 APP_IMAGE 填成 receipt 对应的 repo@sha256 后，将四份
+# Gate 证据密封进固定 root trust root。deploy/.env.vps 中的四个证据路径必须
+# 分别填写下面固定目标。
+sudo install -o root -g root -m 0400 "$GATE_DIR/gate-result.json" \
+  /srv/xero-accounting-mcp/release/gate-result.json
+sudo install -o root -g root -m 0400 "$GATE_DIR/accepted-build-context-receipt.json" \
+  /srv/xero-accounting-mcp/release/accepted-build-context-receipt.json
+sudo install -o root -g root -m 0400 \
+  "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json" \
+  /srv/xero-accounting-mcp/release/xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json
+sudo install -o root -g root -m 0400 \
+  "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar" \
+  /srv/xero-accounting-mcp/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar
+
+# 当前发布不使用 Firm Governance、签名 trust bundle、Standing Delegation、
+# authority revision 或其 hash 作为账本写入前提。部署准入只绑定不可变镜像、
+# migration、accepted Gate/OCI identity、Capability Manifest 与 `XERO_WRITE_ENABLED`。
+# 正常账本写入由运行时的当前 OAuth binding、已 pin Organisation、typed Accounting
+# Case、确定性校验、幂等、Provider 回执和 exact read-back 共同约束；不要把聊天文本、
+# 浏览器 Review 或外部签名文件当作第二授权层。
+
+sudo install -o root -g root -m 0600 deploy/.env.vps \
+  /etc/xero-accounting-mcp/release.env
+
+# admission 会一次打开并捕获 root-only env 与四份证据，比较 APP_IMAGE、
+# Gate receipt 和 OCI identity，pull+inspect 精确镜像；
+# 只有全部通过才允许创建第一个生产容器。
+sudo deploy/scripts/admit-and-compose.sh full-postgres-up
 
 # 必须先通过只读 Xero 历史防重检查。退出码 3 表示发现冲突组；
 # 此时立即停止，禁止自动删除、合并或继续迁移。
 docker compose \
   --project-directory . \
-  --env-file deploy/.env.vps \
+  --env-file /etc/xero-accounting-mcp/release.env \
   -f deploy/docker-compose/compose.vps.yaml \
   exec -T postgres sh -eu -c \
   'psql -v ON_ERROR_STOP=1 -X -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
   < scripts/preflight_xero_duplicate_guards.sql
 
-docker compose \
-  --project-directory . \
-  --env-file deploy/.env.vps \
-  -f deploy/docker-compose/compose.vps.yaml \
-  run --rm accounting-mcp npm run migrate
+sudo deploy/scripts/admit-and-compose.sh full-migrate
 
 # 该命令实际以镜像内 non-root Nginx 用户检查私钥读取、项目自带
 # proxy_params、模板渲染结果和完整 Nginx 语法；失败时不要启动公网边缘。
-docker compose \
-  --project-directory . \
-  --env-file deploy/.env.vps \
-  -f deploy/docker-compose/compose.vps.yaml \
-  run --rm --no-deps nginx sh -ec \
-  'test -r /etc/nginx/tls/privkey.pem && test -r /opt/xero-nginx/proxy_params && nginx -t -c /opt/xero-nginx/nginx.conf'
+sudo deploy/scripts/admit-and-compose.sh full-nginx-check
 
-docker compose \
-  --project-directory . \
-  --env-file deploy/.env.vps \
-  -f deploy/docker-compose/compose.vps.yaml \
-  up -d accounting-mcp nginx
+sudo deploy/scripts/admit-and-compose.sh full-up
 ```
 
 迁移是显式步骤：App 启动不会偷偷建表。升级时同样先审查迁移兼容性，再执行 `npm run migrate`。
 
-本发布的 `020_xero_runtime_readiness_compatibility.sql` 在保留五项 0.3 `v030` 强索引的同时，恢复旧 Xero 0.2.13 与 QuickBooks 0.2.12 shared repository 精确要求的五个原名索引。只读 preflight 必须确认 `actor + tenant + request_id + create_operation`、旧 active states 下的 `tenant + source`、旧 active states 下的 `tenant + contact + reference` 三类冲突均为 `0`，包括跨 `document_type` 与 ACCREC；后两类 tenant 检查也覆盖 actor-scoped 旧索引，否则停止发布。旧 supplier-reference 定义没有 `document_type`，因此这是会临时收紧 ACCREC reference 复用的**临时兼容约束**。若不能接受，只能先升级旧 Xero readiness 或停止并行旧 Xero，不能靠数据库伪影绕过 exact unique/valid/ready 检查；QuickBooks runtime 不需要修改。
+本发布的 `020_xero_runtime_readiness_compatibility.sql` 在保留五项 0.3 `v030` 强索引的同时，恢复旧 Xero 0.2.13 精确要求的五个原名索引。只读 preflight 必须确认 `actor + tenant + request_id + create_operation`、旧 active states 下的 `tenant + source`、旧 active states 下的 `tenant + contact + reference` 三类冲突均为 `0`，包括跨 `document_type` 与 ACCREC；否则停止发布。旧 supplier-reference 定义没有 `document_type`，因此这是会临时收紧 ACCREC reference 复用的**临时兼容约束**。若不能接受，只能先升级旧 Xero readiness 或停止并行旧 Xero，不能靠数据库伪影绕过 exact unique/valid/ready 检查。
 
 确认 Nginx 已通过引导证书启动后，签发并安装正式证书：
 
@@ -227,7 +245,7 @@ sudo env \
 
 将相同环境参数配置进该证书的 Certbot deploy hook。然后执行第7.2节的 `renew --dry-run`；只有公网证书主题、SAN、签发者和有效期均正确后，引导证书才算退出使用。
 
-首次构建后记录实际基础镜像 digest，并将 `NGINX_IMAGE`、`POSTGRES_IMAGE` 和发布的 `APP_IMAGE` 固定为 digest/tag 组合；不要把可漂移的 tag 当成可审计发布记录。
+生产 Compose 已把 PostgreSQL 与 Nginx 固定为 digest，并强制 `APP_IMAGE` 使用 Gate-approved `repo@sha256`。任何基础镜像升级都必须作为源代码变更重新跑完整 Gate；VPS 不得现场重建。
 
 ## 9. 部署验收
 
@@ -259,7 +277,7 @@ curl -sk -o /dev/null -w '%{http_code}\n' \
   https://invalid.example/healthz
 ```
 
-预期：health/readiness为200且无敏感字段；无Bearer的MCP请求为401；错误Host在边缘被拒绝。随后还要验证错误Origin为403、超过1 MiB的请求为413，以及OAuth callback的访问日志不含 `code`、`state` 或查询字符串。合法 MCP Bearer 也不得在 `/connect/xero`、OAuth callback、Review 路径或旧 `/operator/session`、`/oauth/xero/start` 路径建立身份或能力。
+预期：health/readiness为200且无敏感字段；无Bearer的MCP请求为401；错误Host在边缘被拒绝。随后还要验证错误Origin为403、超过1 MiB的请求为413，以及OAuth callback的访问日志不含 `code`、`state` 或查询字符串。合法 MCP Bearer 也不得在 `/connect/xero`、OAuth callback、Organisation selection 以外的浏览器路径或旧 `/operator/session`、`/oauth/xero/start` 路径建立身份或写入能力。
 
 ### 9.3 MCP 与 Xero
 
@@ -267,14 +285,14 @@ curl -sk -o /dev/null -w '%{http_code}\n' \
 
 1. 保持 `XERO_WRITE_ENABLED=false`，确认 `xero_connection_status` 显示尚未连接。
 2. 使用 `/mcp` 返回的一次性 connect ticket；浏览器消费 ticket 后应直接进入 Xero OAuth，并选择唯一测试 Tenant，不经过 Bearer session/start 路由。
-3. 只有成功 callback 的同一浏览器取得 reviewer session；取消、失败、错误 state、Token/Tenant 失败均不得取得。
+3. callback 成功后，若需要切换 Organisation，只能消费 `xero_start_organisation_switch` 返回的一次性 URL 并在页面选择已授权组织；取消、失败、错误 state、Token/Tenant 失败均不得改变当前 target。
 4. `xero_connection_status` 和组织读取成功，但响应不包含 Token；只读记录并人工核对精确 Tenant ID。
 5. 把该 ID 配置为唯一 `XERO_ALLOWED_TENANT_ID`，再显式设置 `XERO_WRITE_ENABLED=true` 并只重建 App；不符合这两个条件时写工具必须在 Provider 前拒绝。
-6. 读取科目、税码和联系人。
-7. 使用合成供应商发票创建 DRAFT Bill，按 Xero ID 精确回读。
-8. 人工审批后才允许 DRAFT → AUTHORISED；精确回读后内部进入不可回退的 `AUTHORISED_READBACK_VERIFIED`。
-9. 再次精确回读并验证 Xero UI/报表变化。
-10. 对相同请求做顺序及并发复验，Provider 写入计数最多一次且不得创建第二张 Bill。
+6. 读取科目、税码和联系人；通过 `xero_prepare_accounting_case` 检查合成资料的 coverage、异常和 eligible-write 状态。
+7. 用 `xero_execute_accounting_case` 对 Case 当前版本执行已开放并完成 live UAT 的 typed action；必须取得 provider ID、mutation receipt 和同 ID exact read-back。执行不接受会计 payload，也没有逐笔确认、签名或 Review 路径。
+8. 每个状态动作按其当前 release/manifest route 验收预期 Xero status：DRAFT create 为 `DRAFT`，已开放的 authorise/post 必须精确读回 `AUTHORISED`/`POSTED`。付款、分配、对账、作废、删除等资金或高风险动作仍不得执行。
+9. 通过 `xero_get_accounting_case_status` 和 Xero UI 再次核对同一 provider ID、金额、币种、行项目和预期状态；不得把未完成 read-back 的结果描述成成功。
+10. 对相同 `case_id`、`case_version` 和 `request_id` 做顺序及并发复验，Provider 写入计数最多一次且不得创建第二个对象；unknown 结果只能恢复或安全阻断，不能自动补写。
 
 连接状态不是服务就绪状态；Xero临时不可用不应令健康端点泄露内部错误或凭证。
 
@@ -290,7 +308,7 @@ curl -sk -o /dev/null -w '%{http_code}\n' \
 
 ### 11.1 发布前
 
-1. 记录当前 `APP_IMAGE` tag/digest、Compose配置摘要和数据库schema版本。
+1. 记录当前 `APP_IMAGE` repo@sha256、Compose配置摘要和数据库schema版本。
 2. 使用 `pg_dump -Fc` 创建仅root可读的预发布备份并计算SHA-256。
 3. 单独确认当前 `TOKEN_ENCRYPTION_KEY_B64` 可恢复；不要把明文密钥放进数据库备份。
 4. 检查迁移是否向后兼容。不能确认时，安排维护窗口，不做滚动发布。
@@ -302,7 +320,7 @@ curl -sk -o /dev/null -w '%{http_code}\n' \
 
 1. 将 `.env.vps` 中 `APP_IMAGE` 恢复到上一版不可变digest。
 2. 重新执行 `config --quiet`。
-3. 只重建 `accounting-mcp`，等待 `/readyz` 成功后再reload Nginx。
+3. 使用上一版不可变镜像执行 `up -d --no-build accounting-mcp`，等待 `/readyz` 成功后再reload Nginx。
 4. 重跑 MCP 初始化、固定工具清单和只读 Xero 探针。
 
 不要执行 `docker compose down -v`，不要删除 PostgreSQL 目录，也不要在无法确认写入结果时重试 Xero 写操作。

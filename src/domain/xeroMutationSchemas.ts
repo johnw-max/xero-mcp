@@ -3,6 +3,7 @@ import {
   XERO_MUTATION_OBJECT_TYPES,
   XERO_MUTATION_OPERATIONS,
   XERO_MUTATION_SOURCE_EVIDENCE_TYPES,
+  xeroMutationTargetsExistingObject,
 } from "./xeroMutation.js";
 
 const identifier = z.string().trim().min(1).max(255);
@@ -39,13 +40,18 @@ export const prepareXeroMutationSchema = z.object({
   confirmationPhrase: confirmationPhrase.optional(),
   targetXeroObjectId: identifier.optional(),
 }).strict().superRefine((value, context) => {
-  if (value.operation === "UPDATE" && !value.targetXeroObjectId) {
-    context.addIssue({ code: "custom", message: "UPDATE requires targetXeroObjectId", path: ["targetXeroObjectId"] });
-  }
-  if (value.operation !== "UPDATE" && value.targetXeroObjectId) {
+  const targetsExistingObject = xeroMutationTargetsExistingObject(value.operation);
+  if (targetsExistingObject && !value.targetXeroObjectId) {
     context.addIssue({
       code: "custom",
-      message: "targetXeroObjectId is only valid for UPDATE",
+      message: `${value.operation} requires targetXeroObjectId`,
+      path: ["targetXeroObjectId"],
+    });
+  }
+  if (!targetsExistingObject && value.targetXeroObjectId) {
+    context.addIssue({
+      code: "custom",
+      message: "targetXeroObjectId is only valid for an exact existing-object mutation",
       path: ["targetXeroObjectId"],
     });
   }
@@ -78,6 +84,11 @@ export const confirmXeroMutationSchema = z.object({
   confirmationPhrase,
 }).strict();
 
+export const authoriseAutonomousXeroMutationSchema = z.object({
+  preparationId: z.string().regex(/^xmp_[a-f0-9]{32}$/),
+  requestId,
+}).strict();
+
 export const startXeroMutationSchema = z.object({
   mutationRequestId: z.string().regex(/^xmr_[a-f0-9]{32}$/),
 }).strict();
@@ -100,6 +111,10 @@ export const completeXeroMutationReadbackSchema = z.object({
     status: z.string().trim().min(1).max(64),
     canonicalPayload: jsonObject,
     evidence: jsonObject.optional(),
+    // Internal, provider-owned execution evidence. This field is never part of
+    // an Agent-facing mutation schema; it lets the mutation receipt preserve
+    // the exact tenant COA profile revision/hash used at the permit edge.
+    serverCoaExecutionConstraints: jsonObject.optional(),
   }).strict(),
 }).strict();
 
@@ -115,6 +130,7 @@ export const rejectXeroMutationProviderSchema = z.object({
 
 export type PrepareXeroMutationInput = z.infer<typeof prepareXeroMutationSchema>;
 export type ConfirmXeroMutationInput = z.infer<typeof confirmXeroMutationSchema>;
+export type AuthoriseAutonomousXeroMutationInput = z.infer<typeof authoriseAutonomousXeroMutationSchema>;
 export type StartXeroMutationInput = z.infer<typeof startXeroMutationSchema>;
 export type MarkXeroMutationUnknownInput = z.infer<typeof markXeroMutationUnknownSchema>;
 export type RecordXeroMutationWriteEvidenceInput = z.infer<typeof recordXeroMutationWriteEvidenceSchema>;

@@ -19,6 +19,8 @@ import {
   type PrepareQuoteDraftInput,
 } from "../domain/xeroQuotePurchaseOrderDraft.js";
 import { hashObject } from "../security/hash.js";
+import { canonicalPayloadMismatchFields } from "./canonicalPayloadDiff.js";
+import { xeroProviderDateOnly } from "./xeroProviderDate.js";
 
 const QUOTE_LINE_AMOUNT_TYPES: Readonly<Record<CanonicalLineAmountType, QuoteLineAmountTypes>> = {
   EXCLUSIVE: QuoteLineAmountTypes.EXCLUSIVE,
@@ -68,10 +70,61 @@ export function toXeroQuoteCreatePayload(input: unknown): Quotes {
   };
 }
 
+/**
+ * Builds the complete, server-controlled replacement body for a Quote update.
+ * The target is deliberately repeated in both the SDK path parameter and the
+ * body.  Xero's single-object update endpoint is the only supported update
+ * route; an update-or-create body would make a target typo capable of creating
+ * a new document.
+ */
+export function toXeroQuoteUpdatePayload(
+  targetQuoteId: string,
+  input: unknown,
+): Quotes {
+  const value = parseCanonicalQuoteDraftPayload(input);
+  if (!providerUuid(targetQuoteId)) throw new Error("Quote update target must be a UUID.");
+  return {
+    quotes: [{
+      quoteID: targetQuoteId,
+      status: QuoteStatusCodes.DRAFT,
+      contact: { contactID: value.contactId },
+      date: value.quoteDate,
+      expiryDate: value.expiryDate,
+      currencyCode: xeroCurrency(value.currency),
+      reference: value.reference,
+      lineAmountTypes: QUOTE_LINE_AMOUNT_TYPES[value.lineAmountType],
+      lineItems: value.lines.map(xeroLine),
+    }],
+  };
+}
+
 export function toXeroPurchaseOrderCreatePayload(input: unknown): PurchaseOrders {
   const value = parseCanonicalPurchaseOrderDraftPayload(input);
   return {
     purchaseOrders: [{
+      status: PurchaseOrder.StatusEnum.DRAFT,
+      contact: { contactID: value.contactId },
+      date: value.purchaseOrderDate,
+      ...(value.expectedArrivalDate ? { expectedArrivalDate: value.expectedArrivalDate } : {}),
+      ...(value.deliveryDate ? { deliveryDate: value.deliveryDate } : {}),
+      currencyCode: xeroCurrency(value.currency),
+      reference: value.reference,
+      lineAmountTypes: PURCHASE_ORDER_LINE_AMOUNT_TYPES[value.lineAmountType],
+      lineItems: value.lines.map(xeroLine),
+    }],
+  };
+}
+
+/** See toXeroQuoteUpdatePayload: this is a full replacement, never a patch. */
+export function toXeroPurchaseOrderUpdatePayload(
+  targetPurchaseOrderId: string,
+  input: unknown,
+): PurchaseOrders {
+  const value = parseCanonicalPurchaseOrderDraftPayload(input);
+  if (!providerUuid(targetPurchaseOrderId)) throw new Error("Purchase-order update target must be a UUID.");
+  return {
+    purchaseOrders: [{
+      purchaseOrderID: targetPurchaseOrderId,
       status: PurchaseOrder.StatusEnum.DRAFT,
       contact: { contactID: value.contactId },
       date: value.purchaseOrderDate,
@@ -124,7 +177,13 @@ export interface ProviderTotalsEvidence {
 
 export type DraftReadbackMappingResult<TSnapshot> =
   | { ok: true; snapshot: TSnapshot }
-  | { ok: false; reason: "MALFORMED_PROVIDER_READBACK" };
+  | {
+      ok: false;
+      reason:
+        | "MALFORMED_PROVIDER_READBACK"
+        | "PROVIDER_LINE_ECONOMICS_MISMATCH"
+        | "PROVIDER_TOTALS_MISMATCH";
+    };
 
 export type DraftReadbackVerificationResult<TSnapshot, TCanonical> =
   | {
@@ -137,6 +196,8 @@ export type DraftReadbackVerificationResult<TSnapshot, TCanonical> =
       ok: false;
       reasons: Array<
         | "MALFORMED_PROVIDER_READBACK"
+        | "PROVIDER_LINE_ECONOMICS_MISMATCH"
+        | "PROVIDER_TOTALS_MISMATCH"
         | "EXPECTED_OBJECT_ID_INVALID"
         | "EXPECTED_CANONICAL_INVALID"
         | "XERO_OBJECT_ID_MISMATCH"
@@ -144,6 +205,13 @@ export type DraftReadbackVerificationResult<TSnapshot, TCanonical> =
       >;
       snapshot?: TSnapshot;
       readbackCanonicalPayload?: TCanonical;
+      /**
+       * Dot/bracket field paths ("lines[0].accountCode") where the readback
+       * canonical payload disagreed with what was prepared. Only present
+       * alongside CANONICAL_PAYLOAD_MISMATCH, and only names fields - never
+       * values. See canonicalPayloadDiff.ts for the constraint this rests on.
+       */
+      mismatchFields?: readonly string[];
     };
 
 /**
@@ -200,7 +268,7 @@ function providerTracking(value: unknown): string[] | undefined {
 function providerLines(value: unknown): {
   lines: ProviderLineInput[];
   lineAmountEvidence: ProviderLineAmountEvidence;
-} | undefined {
+} | { reason: "PROVIDER_LINE_ECONOMICS_MISMATCH" } | undefined {
   if (!Array.isArray(value) || value.length < 1 || value.length > 20) return undefined;
   const lines: ProviderLineInput[] = [];
   const lineAmountValues: Array<string | null> = [];
@@ -217,6 +285,14 @@ function providerLines(value: unknown): {
     const taxType = providerTrimmedString(line.taxType, 100);
     const itemCode = line.itemCode === undefined ? undefined : providerTrimmedString(line.itemCode, 30);
     const trackingOptionIds = providerTracking(line.tracking);
+    if (
+      unitAmount !== undefined &&
+      Math.abs(unitAmount) < 1e-7 &&
+      lineAmount !== undefined &&
+      Math.abs(lineAmount) > 1e-7
+    ) {
+      return { reason: "PROVIDER_LINE_ECONOMICS_MISMATCH" };
+    }
     if (
       !description || quantity === undefined || unitAmount === undefined ||
       lineAmount === undefined || discountRate === undefined || discountAmount === undefined ||
@@ -267,6 +343,7 @@ function providerTotals(
   );
   if (!Number.isFinite(lineTotal)) return undefined;
   const lineBasis = lineAmountType === "Inclusive" ? total : subTotal;
+  if (Math.abs(lineTotal) < 1e-7 && Math.abs(lineBasis) > 1e-7) return undefined;
   if (Math.abs(lineBasis - lineTotal) > 0.021) return undefined;
   return {
     subTotal: subTotal.toFixed(4),
@@ -299,12 +376,13 @@ export function mapQuoteDraftReadback(
     const quoteId = providerUuid(quote?.quoteID);
     const contact = providerRecord(quote?.contact);
     const contactId = providerUuid(contact?.contactID);
-    const quoteDate = providerTrimmedString(quote?.date, 10);
-    const expiryDate = providerTrimmedString(quote?.expiryDate, 10);
+    const quoteDate = providerTrimmedString(xeroProviderDateOnly(quote?.date), 10);
+    const expiryDate = providerTrimmedString(xeroProviderDateOnly(quote?.expiryDate), 10);
     const currency = providerTrimmedString(quote?.currencyCode, 3);
     const reference = providerTrimmedString(quote?.reference, 255);
     const lineAmountType = quoteLineAmountType(quote?.lineAmountTypes);
     const mappedLines = providerLines(quote?.lineItems);
+    if (mappedLines && "reason" in mappedLines) return { ok: false, reason: mappedLines.reason };
     const totals = quote && lineAmountType && mappedLines
       ? providerTotals(quote, lineAmountType, mappedLines.lineAmountEvidence)
       : undefined;
@@ -312,7 +390,12 @@ export function mapQuoteDraftReadback(
       !quote || !providerHasNoValidationErrors(quote) || quote.status !== "DRAFT" || !quoteId || !contactId ||
       !quoteDate || !expiryDate || !currency || !reference || !lineAmountType || !mappedLines || !totals
     ) {
-      return { ok: false, reason: "MALFORMED_PROVIDER_READBACK" };
+      return {
+        ok: false,
+        reason: mappedLines?.lines.some((line) => Math.abs(line.unit_amount) < 1e-7)
+          ? "PROVIDER_TOTALS_MISMATCH"
+          : "MALFORMED_PROVIDER_READBACK",
+      };
     }
     const canonicalPayload = buildQuoteDraftPrimitive({
       source_ref: `xero-readback://quote/${quoteId}`,
@@ -349,17 +432,18 @@ export function mapPurchaseOrderDraftReadback(
     const purchaseOrderId = providerUuid(purchaseOrder?.purchaseOrderID);
     const contact = providerRecord(purchaseOrder?.contact);
     const contactId = providerUuid(contact?.contactID);
-    const purchaseOrderDate = providerTrimmedString(purchaseOrder?.date, 10);
+    const purchaseOrderDate = providerTrimmedString(xeroProviderDateOnly(purchaseOrder?.date), 10);
     const expectedArrivalDate = purchaseOrder?.expectedArrivalDate === undefined
       ? undefined
-      : providerTrimmedString(purchaseOrder.expectedArrivalDate, 10);
+      : providerTrimmedString(xeroProviderDateOnly(purchaseOrder.expectedArrivalDate), 10);
     const deliveryDate = purchaseOrder?.deliveryDate === undefined
       ? undefined
-      : providerTrimmedString(purchaseOrder.deliveryDate, 10);
+      : providerTrimmedString(xeroProviderDateOnly(purchaseOrder.deliveryDate), 10);
     const currency = providerTrimmedString(purchaseOrder?.currencyCode, 3);
     const reference = providerTrimmedString(purchaseOrder?.reference, 255);
     const lineAmountType = purchaseOrderLineAmountType(purchaseOrder?.lineAmountTypes);
     const mappedLines = providerLines(purchaseOrder?.lineItems);
+    if (mappedLines && "reason" in mappedLines) return { ok: false, reason: mappedLines.reason };
     const totals = purchaseOrder && lineAmountType && mappedLines
       ? providerTotals(purchaseOrder, lineAmountType, mappedLines.lineAmountEvidence)
       : undefined;
@@ -371,7 +455,12 @@ export function mapPurchaseOrderDraftReadback(
       (purchaseOrder.expectedArrivalDate !== undefined && !expectedArrivalDate) ||
       (purchaseOrder.deliveryDate !== undefined && !deliveryDate)
     ) {
-      return { ok: false, reason: "MALFORMED_PROVIDER_READBACK" };
+      return {
+        ok: false,
+        reason: mappedLines?.lines.some((line) => Math.abs(line.unit_amount) < 1e-7)
+          ? "PROVIDER_TOTALS_MISMATCH"
+          : "MALFORMED_PROVIDER_READBACK",
+      };
     }
     const canonicalPayload = buildPurchaseOrderDraftPrimitive({
       source_ref: `xero-readback://purchase-order/${purchaseOrderId}`,
@@ -426,6 +515,7 @@ export function verifyQuoteDraftReadback(
       ...(reasons.includes("CANONICAL_PAYLOAD_MISMATCH") ? {
         snapshot: mapped.snapshot,
         readbackCanonicalPayload: mapped.snapshot.canonicalPayload,
+        mismatchFields: canonicalPayloadMismatchFields(expected, mapped.snapshot.canonicalPayload),
       } : {}),
     };
   }
@@ -462,6 +552,7 @@ export function verifyPurchaseOrderDraftReadback(
       ...(reasons.includes("CANONICAL_PAYLOAD_MISMATCH") ? {
         snapshot: mapped.snapshot,
         readbackCanonicalPayload: mapped.snapshot.canonicalPayload,
+        mismatchFields: canonicalPayloadMismatchFields(expected, mapped.snapshot.canonicalPayload),
       } : {}),
     };
   }

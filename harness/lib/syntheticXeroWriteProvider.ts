@@ -144,7 +144,6 @@ export class SyntheticXeroWriteProvider extends SyntheticXeroAccountingProvider 
       invoiceDate: input.invoice_date,
       dueDate: input.due_date,
       currency: input.currency,
-      reference: input.reference,
       lineAmountType: input.line_amount_type,
       subTotal: fixedFour(subTotal),
       totalTax: "0.0000",

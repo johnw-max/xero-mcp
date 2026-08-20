@@ -29,6 +29,7 @@ const enabledConfig: Extract<McpOAuthBrokerConfig, { enabled: true }> = {
     redirectUris: ["https://agent2.zcloak.ai/api/mcp/accounting-mcp/oauth/callback"],
   }],
   missingResourceCompatClientIds: [],
+  manualReturnClientIds: [],
   accessTokenTtlSeconds: 900,
   refreshTokenTtlSeconds: 2_592_000,
   authorizationCodeTtlSeconds: 300,

@@ -6,11 +6,18 @@
  * module only; importing it does not register MCP tools or grant OAuth scopes.
  */
 
+import {
+  XERO_WRITE_ACTIONS,
+  isAgentReachableWriteAction,
+  type XeroWriteActionId,
+} from "../domain/xeroWriteActions.js";
+
 export const XERO_BUSINESS_OBJECTS = [
   "SYSTEM",
   "ORGANISATION",
   "TAX_RATE",
   "REPORT",
+  "JOURNAL",
   "CUSTOMER_INVOICE",
   "SUPPLIER_BILL",
   "PURCHASE_ORDER",
@@ -18,6 +25,8 @@ export const XERO_BUSINESS_OBJECTS = [
   "CREDIT_NOTE",
   "MANUAL_JOURNAL",
   "CONTACT",
+  "CONTACT_GROUP",
+  "TRACKING_CATEGORY",
   "ACCOUNT",
   "ITEM",
   "ATTACHMENT",
@@ -30,8 +39,7 @@ export type XeroBusinessObject = (typeof XERO_BUSINESS_OBJECTS)[number];
 
 export const XERO_RISK_CLASSES = [
   "READ_PREPARE",
-  "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
-  "DUAL_APPROVAL",
+  "AUTONOMOUS_CONTROLLED_WRITE",
   "DISABLED",
 ] as const;
 
@@ -40,7 +48,6 @@ export type XeroRiskClass = (typeof XERO_RISK_CLASSES)[number];
 export const XERO_RELEASE_DECISIONS = [
   "AVAILABLE_NOW",
   "PLANNED_CONTROLLED",
-  "PREPARE_ONLY",
   "NOT_EXPOSED",
 ] as const;
 
@@ -58,8 +65,7 @@ export type XeroOfficialSupportLevel = (typeof XERO_OFFICIAL_SUPPORT_LEVELS)[num
 
 export const XERO_CONTROL_REQUIREMENTS = [
   "NONE",
-  "EXPLICIT_CONFIRMATION",
-  "DUAL_APPROVAL",
+  "TYPED_CASE_WRITE_GATE",
   "NOT_PERMITTED",
 ] as const;
 
@@ -68,7 +74,6 @@ export type XeroControlRequirement = (typeof XERO_CONTROL_REQUIREMENTS)[number];
 export const XERO_CAPABILITY_PERMISSIONS = [
   "XERO_ACCOUNTING_READ",
   "XERO_DRAFT_WRITE",
-  "XERO_DUAL_APPROVAL",
 ] as const;
 
 export type XeroCapabilityPermission = (typeof XERO_CAPABILITY_PERMISSIONS)[number];
@@ -117,6 +122,30 @@ const TRIAL_BALANCE_SUPPORT = {
   accountingApi: "READ_ONLY",
   officialMcp: "READ_ONLY",
   note: "The Accounting Reports API and official MCP expose trial-balance reads; this product keeps the result bounded.",
+} as const satisfies XeroOfficialSupport;
+
+const REPORT_SUPPORT = {
+  accountingApi: "READ_ONLY",
+  officialMcp: "READ_ONLY",
+  note: "Xero's Accounting Reports API supplies these provider-owned report structures; this product returns bounded, non-recomputed read projections.",
+} as const satisfies XeroOfficialSupport;
+
+const JOURNAL_SUPPORT = {
+  accountingApi: "READ_ONLY",
+  officialMcp: "NOT_LISTED",
+  note: "The Accounting API exposes posted Journals; this is a zCloak bounded read extension rather than a generic ledger endpoint.",
+} as const satisfies XeroOfficialSupport;
+
+const TRACKING_CATEGORY_SUPPORT = {
+  accountingApi: "READ_WRITE",
+  officialMcp: "READ_WRITE",
+  note: "Tracking Categories and Options are Xero reference data. This public surface currently reads them only.",
+} as const satisfies XeroOfficialSupport;
+
+const CONTACT_GROUP_SUPPORT = {
+  accountingApi: "READ_WRITE",
+  officialMcp: "READ_ONLY",
+  note: "Contact Groups are supported reference data. This public surface currently reads them only.",
 } as const satisfies XeroOfficialSupport;
 
 const BILL_SUPPORT = {
@@ -220,6 +249,24 @@ export const XERO_CAPABILITY_POLICIES = [
     releaseRationale: "This reports server-resolved connection identity without exposing credentials or mutating Xero.",
   },
   {
+    actionId: "system.organisation_switch_prepare",
+    object: "SYSTEM",
+    label: "Start a user-confirmed Xero organisation switch",
+    riskClass: "READ_PREPARE",
+    officialSupport: CONNECTION_STATUS_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "This creates only a short-lived confirmation capability. The ledger changes only after exact user selection on the MCP-hosted page, and Xero accounting data is not mutated.",
+  },
+  {
+    actionId: "system.ledger_target_session_issue",
+    object: "SYSTEM",
+    label: "Pin one conversation to the current Xero organisation",
+    riskClass: "READ_PREPARE",
+    officialSupport: CONNECTION_STATUS_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "This issues only a short-lived installation-owned target capability. It does not mutate Xero and prevents concurrent conversations from following another conversation's organisation switch.",
+  },
+  {
     actionId: "organisation.read_prepare",
     object: "ORGANISATION",
     label: "Read the server-bound Xero organisation",
@@ -247,6 +294,105 @@ export const XERO_CAPABILITY_POLICIES = [
     releaseRationale: "The bounded report is read-only and supports accounting analysis without posting or reconciliation.",
   },
   {
+    actionId: "journal.read_prepare",
+    object: "JOURNAL",
+    label: "Read posted Xero journals",
+    riskClass: "READ_PREPARE",
+    officialSupport: JOURNAL_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "Bounded JournalNumber-offset reads expose actual ledger events without creating a secondary ledger.",
+  },
+  {
+    actionId: "report.profit_and_loss_read",
+    object: "REPORT",
+    label: "Read Xero profit and loss report",
+    riskClass: "READ_PREPARE",
+    officialSupport: REPORT_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The provider-owned report is read-only and supports analysis without recalculation or mutation.",
+  },
+  {
+    actionId: "report.balance_sheet_read",
+    object: "REPORT",
+    label: "Read Xero balance sheet report",
+    riskClass: "READ_PREPARE",
+    officialSupport: REPORT_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The provider-owned report is read-only and supports analysis without recalculation or mutation.",
+  },
+  {
+    actionId: "report.aged_receivables_read",
+    object: "REPORT",
+    label: "Read Xero aged receivables report by contact",
+    riskClass: "READ_PREPARE",
+    officialSupport: REPORT_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The bounded, contact-specific provider report is read-only and does not allocate or collect payments.",
+  },
+  {
+    actionId: "report.aged_payables_read",
+    object: "REPORT",
+    label: "Read Xero aged payables report by contact",
+    riskClass: "READ_PREPARE",
+    officialSupport: REPORT_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The bounded, contact-specific provider report is read-only and does not create, allocate, or release payments.",
+  },
+  {
+    actionId: "tracking_category.read_prepare",
+    object: "TRACKING_CATEGORY",
+    label: "Read Xero tracking categories and options",
+    riskClass: "READ_PREPARE",
+    officialSupport: TRACKING_CATEGORY_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "Bounded tracking reference reads support deterministic coding validation without changing category or option history.",
+  },
+  {
+    actionId: "tracking_category.create",
+    object: "TRACKING_CATEGORY",
+    label: "Create an active tracking category",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: TRACKING_CATEGORY_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches tracking preflight, typed provider create, receipt persistence, and exact ACTIVE read-back.",
+  },
+  {
+    actionId: "tracking_category.update",
+    object: "TRACKING_CATEGORY",
+    label: "Rename an active tracking category",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: TRACKING_CATEGORY_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact-ID ACTIVE preflight, typed provider rename, receipt persistence, and exact read-back.",
+  },
+  {
+    actionId: "tracking_option.create",
+    object: "TRACKING_CATEGORY",
+    label: "Create an active option in an exact tracking category",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: TRACKING_CATEGORY_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact ACTIVE-parent preflight, typed provider create, receipt persistence, and exact option read-back.",
+  },
+  {
+    actionId: "tracking_option.update",
+    object: "TRACKING_CATEGORY",
+    label: "Rename an active tracking option",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: TRACKING_CATEGORY_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact parent/option preflight, typed provider rename, receipt persistence, and exact read-back.",
+  },
+  {
+    actionId: "contact_group.read_prepare",
+    object: "CONTACT_GROUP",
+    label: "Read Xero contact groups",
+    riskClass: "READ_PREPARE",
+    officialSupport: CONTACT_GROUP_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "Bounded contact-group reference reads support segmentation analysis without membership or group mutation.",
+  },
+  {
     actionId: "customer_invoice.read_prepare",
     object: "CUSTOMER_INVOICE",
     label: "Read customer invoices and prepare analysis or a proposed draft",
@@ -259,28 +405,37 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "customer_invoice.create_draft",
     object: "CUSTOMER_INVOICE",
     label: "Create an ACCREC customer invoice in DRAFT",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: INVOICE_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "The code-level controlled draft path now enforces exact confirmation, idempotency, tenant binding, and exact read-back; runtime execution still requires the write gate and exact tenant allowlist.",
+    releaseRationale: "The controlled draft path enforces a typed Accounting Case, immutable proposal, idempotency, tenant binding, and exact read-back; runtime execution still requires the emergency write gate.",
+  },
+  {
+    actionId: "customer_invoice.authorise",
+    object: "CUSTOMER_INVOICE",
+    label: "Authorise an existing ACCREC DRAFT invoice",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: INVOICE_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The closed typed Case route accepts one exact invoice UUID, proves DRAFT immediately before the atomic provider claim, and requires a provider receipt plus same-ID AUTHORISED read-back.",
   },
   {
     actionId: "customer_invoice.update_draft",
     object: "CUSTOMER_INVOICE",
     label: "Update an existing ACCREC DRAFT invoice",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: INVOICE_SUPPORT,
-    releaseDecision: "PLANNED_CONTROLLED",
-    releaseRationale: "The original object version and complete replacement payload must be confirmed to prevent stale overwrites.",
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route seals an exact DRAFT replacement, enforces version checks, persists a receipt, and verifies same-ID read-back.",
   },
   {
     actionId: "customer_invoice.submit_authorise_or_send",
     object: "CUSTOMER_INVOICE",
     label: "Submit, authorise, or send a customer invoice",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: INVOICE_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
-    releaseRationale: "These actions affect the ledger or create an external customer communication and need independent approval.",
+    releaseDecision: "NOT_EXPOSED",
+    releaseRationale: "A mixed status/send action is not exposed: authorisation has its own exact typed action and external delivery is outside the Ledger Gateway.",
   },
   {
     actionId: "customer_invoice.pay_void_or_delete",
@@ -290,6 +445,15 @@ export const XERO_CAPABILITY_POLICIES = [
     officialSupport: INVOICE_SUPPORT,
     releaseDecision: "NOT_EXPOSED",
     releaseRationale: "Cash application and destructive/final status changes are outside the Agent write boundary.",
+  },
+  {
+    actionId: "customer_invoice.void",
+    object: "CUSTOMER_INVOICE",
+    label: "Void an eligible AUTHORISED customer invoice",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: INVOICE_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact AUTHORISED preflight, typed void provider, receipt persistence, and same-ID VOIDED read-back.",
   },
   {
     actionId: "supplier_bill.read_prepare",
@@ -304,28 +468,37 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "supplier_bill.create_draft",
     object: "SUPPLIER_BILL",
     label: "Create an ACCPAY supplier bill in DRAFT",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: BILL_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "This is the currently released controlled write and requires exact confirmation plus all write safeguards.",
+    releaseRationale: "This released typed-Case write still requires all deterministic, tenant, idempotency, receipt, and read-back safeguards.",
+  },
+  {
+    actionId: "supplier_bill.authorise",
+    object: "SUPPLIER_BILL",
+    label: "Authorise an existing ACCPAY DRAFT bill",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: BILL_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The closed typed Case route accepts one exact bill UUID, proves DRAFT immediately before the atomic provider claim, and requires a provider receipt plus same-ID AUTHORISED read-back.",
   },
   {
     actionId: "supplier_bill.update_draft",
     object: "SUPPLIER_BILL",
     label: "Update an existing ACCPAY DRAFT bill",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: BILL_SUPPORT,
-    releaseDecision: "PLANNED_CONTROLLED",
-    releaseRationale: "Draft update needs object-version conflict protection and complete post-write comparison before release.",
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route seals an exact DRAFT replacement, enforces version checks, persists a receipt, and verifies same-ID read-back.",
   },
   {
     actionId: "supplier_bill.submit_or_authorise",
     object: "SUPPLIER_BILL",
     label: "Submit or authorise a supplier bill",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: BILL_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
-    releaseRationale: "Ledger-impacting status changes require segregation of duties.",
+    releaseDecision: "NOT_EXPOSED",
+    releaseRationale: "The generic mixed action is not exposed; bill authorisation uses its own exact typed action.",
   },
   {
     actionId: "supplier_bill.pay_void_or_delete",
@@ -335,6 +508,15 @@ export const XERO_CAPABILITY_POLICIES = [
     officialSupport: BILL_SUPPORT,
     releaseDecision: "NOT_EXPOSED",
     releaseRationale: "Cash movement and destructive/final status changes remain outside the Agent boundary.",
+  },
+  {
+    actionId: "supplier_bill.void",
+    object: "SUPPLIER_BILL",
+    label: "Void an eligible AUTHORISED supplier bill",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: BILL_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact AUTHORISED preflight, typed void provider, receipt persistence, and same-ID VOIDED read-back.",
   },
   {
     actionId: "purchase_order.read_prepare",
@@ -349,45 +531,45 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "purchase_order.create_draft",
     object: "PURCHASE_ORDER",
     label: "Create a purchase order in DRAFT",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: PURCHASE_ORDER_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "The controlled DRAFT path binds OAuth tenant, source unit, immutable payload, exact confirmation, idempotency, and exact read-back; runtime execution still requires the write gate and tenant allowlist.",
+    releaseRationale: "The controlled DRAFT path binds OAuth tenant, source unit, immutable payload, typed Case operation, idempotency, and exact read-back; runtime execution still requires the emergency write gate.",
   },
   {
     actionId: "purchase_order.update_draft",
     object: "PURCHASE_ORDER",
     label: "Update an existing DRAFT purchase order",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: PURCHASE_ORDER_SUPPORT,
-    releaseDecision: "PLANNED_CONTROLLED",
-    releaseRationale: "Require immutable intent and stale-version protection before allowing replacement of a draft.",
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route seals a complete DRAFT replacement, enforces version checks, persists a receipt, and verifies same-ID read-back.",
   },
   {
     actionId: "purchase_order.submit_or_authorise",
     object: "PURCHASE_ORDER",
     label: "Submit or authorise a purchase order",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: PURCHASE_ORDER_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
-    releaseRationale: "This creates a purchasing commitment and requires independent approval.",
+    releaseDecision: "NOT_EXPOSED",
+    releaseRationale: "Purchase-order commitment state transitions are outside the R1 Ledger Gateway write surface.",
   },
   {
     actionId: "purchase_order.mark_sent",
     object: "PURCHASE_ORDER",
     label: "Mark an approved purchase order as sent without delivering it",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: PURCHASE_ORDER_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
-    releaseRationale: "The sentToContact flag is a record-state change only; it requires approval and must never be reported as actual delivery.",
+    releaseDecision: "NOT_EXPOSED",
+    releaseRationale: "The Ledger Gateway does not publish delivery-state mutations or represent them as actual supplier communication.",
   },
   {
     actionId: "purchase_order.email_or_dispatch",
     object: "PURCHASE_ORDER",
     label: "Email or otherwise deliver a purchase order to a supplier",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: PURCHASE_ORDER_EXTERNAL_DELIVERY_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
+    releaseDecision: "NOT_EXPOSED",
     releaseRationale: "External delivery is a separate communication action and is not provided by the public Accounting API/MCP wrapper.",
   },
   {
@@ -412,36 +594,36 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "quote.create_draft",
     object: "QUOTE",
     label: "Create a quote in DRAFT",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: QUOTE_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "The controlled DRAFT path validates exact references and economic read-back, and remains gated by OAuth tenant, explicit confirmation, idempotency, write gate, and tenant allowlist.",
+    releaseRationale: "The controlled DRAFT path validates exact references and economic read-back, and remains gated by OAuth tenant, typed Case operation, idempotency, and the emergency write gate.",
   },
   {
     actionId: "quote.update_draft",
     object: "QUOTE",
     label: "Update an existing DRAFT quote",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: QUOTE_SUPPORT,
-    releaseDecision: "PLANNED_CONTROLLED",
-    releaseRationale: "Require object-version conflict checks and exact read-back before release.",
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route seals a complete DRAFT replacement, enforces version checks, persists a receipt, and verifies same-ID read-back.",
   },
   {
     actionId: "quote.mark_sent",
     object: "QUOTE",
     label: "Mark a quote as SENT without delivering it",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: QUOTE_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
-    releaseRationale: "SENT is a Xero record status, not proof of email delivery; changing it still needs independent approval.",
+    releaseDecision: "NOT_EXPOSED",
+    releaseRationale: "The Ledger Gateway does not publish delivery-state mutations or represent them as actual customer communication.",
   },
   {
     actionId: "quote.email_or_dispatch",
     object: "QUOTE",
     label: "Email or otherwise deliver a quote to a customer",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: QUOTE_EXTERNAL_DELIVERY_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
+    releaseDecision: "NOT_EXPOSED",
     releaseRationale: "External delivery represents price and terms and is separate from merely setting Xero status to SENT.",
   },
   {
@@ -466,28 +648,55 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "credit_note.create_draft",
     object: "CREDIT_NOTE",
     label: "Create a credit note in DRAFT",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: CREDIT_NOTE_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "Controlled DRAFT creation enforces reason, source linkage, confirmation, duplicate controls, and exact read-back.",
+    releaseRationale: "Controlled DRAFT creation enforces reason, source linkage, typed Case operation, duplicate controls, and exact read-back.",
   },
   {
     actionId: "credit_note.update_draft",
     object: "CREDIT_NOTE",
     label: "Update an existing DRAFT credit note",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: CREDIT_NOTE_SUPPORT,
-    releaseDecision: "PLANNED_CONTROLLED",
-    releaseRationale: "Require immutable intent and stale-version checks before changing a financial adjustment draft.",
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route seals a complete DRAFT replacement, enforces version checks, persists a receipt, and verifies same-ID read-back.",
   },
   {
     actionId: "credit_note.authorise_or_allocate",
     object: "CREDIT_NOTE",
     label: "Authorise or allocate a credit note",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: CREDIT_NOTE_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
-    releaseRationale: "Authorisation or allocation changes reported balances and requires independent review.",
+    releaseDecision: "NOT_EXPOSED",
+    releaseRationale: "The mixed action is prohibited; authorisation and allocation must be separate exact typed Case actions.",
+  },
+  {
+    actionId: "credit_note.authorise",
+    object: "CREDIT_NOTE",
+    label: "Authorise an existing DRAFT credit note",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: CREDIT_NOTE_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact DRAFT preflight, typed credit-note authorisation, receipt persistence, and same-ID AUTHORISED read-back.",
+  },
+  {
+    actionId: "credit_note.allocate",
+    object: "CREDIT_NOTE",
+    label: "Allocate an authorised credit note to an exact invoice",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: CREDIT_NOTE_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact allocation preflight, typed provider allocation, receipt persistence, and both-side read-back.",
+  },
+  {
+    actionId: "credit_note.refund",
+    object: "CREDIT_NOTE",
+    label: "Record a credit-note refund in Xero",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: CREDIT_NOTE_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact refund preflight, typed provider refund record, receipt persistence, and same-ID read-back.",
   },
   {
     actionId: "credit_note.refund_pay_void_or_delete",
@@ -496,7 +705,25 @@ export const XERO_CAPABILITY_POLICIES = [
     riskClass: "DISABLED",
     officialSupport: CREDIT_NOTE_SUPPORT,
     releaseDecision: "NOT_EXPOSED",
-    releaseRationale: "Cash movement and destructive/final changes remain outside the Agent boundary.",
+    releaseRationale: "The generic mixed action is prohibited; exact refund and supported void actions use separate typed routes, while delete remains excluded.",
+  },
+  {
+    actionId: "credit_note.void",
+    object: "CREDIT_NOTE",
+    label: "Void an eligible authorised credit note",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: CREDIT_NOTE_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact AUTHORISED preflight, typed credit-note void, receipt persistence, and same-ID VOIDED read-back.",
+  },
+  {
+    actionId: "credit_note.unallocate",
+    object: "CREDIT_NOTE",
+    label: "Remove an exact allocation from an authorised credit note",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: CREDIT_NOTE_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact AUTHORISED credit-note and allocation membership preflight, typed allocation DELETE, receipt persistence, and allocation disappearance/IsDeleted read-back.",
   },
   {
     actionId: "manual_journal.read_prepare",
@@ -511,7 +738,7 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "manual_journal.create_draft",
     object: "MANUAL_JOURNAL",
     label: "Create a balanced manual journal in DRAFT",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: MANUAL_JOURNAL_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
     releaseRationale: "Controlled creation allows only balanced DRAFT entries with source evidence, explicit no-tax treatment, protected-account checks, and exact read-back.",
@@ -520,19 +747,19 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "manual_journal.update_draft",
     object: "MANUAL_JOURNAL",
     label: "Update an existing DRAFT manual journal",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: MANUAL_JOURNAL_SUPPORT,
-    releaseDecision: "PLANNED_CONTROLLED",
-    releaseRationale: "Require full replacement confirmation, balance validation, and stale-version protection.",
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route seals a balanced DRAFT replacement, enforces version checks, persists a receipt, and verifies same-ID read-back.",
   },
   {
     actionId: "manual_journal.post",
     object: "MANUAL_JOURNAL",
-    label: "Post a manual journal",
-    riskClass: "DUAL_APPROVAL",
+    label: "Post an existing DRAFT manual journal",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: MANUAL_JOURNAL_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
-    releaseRationale: "Posting changes the ledger and must remain segregated from Agent preparation.",
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The closed typed Case route accepts one exact manual-journal UUID, proves DRAFT immediately before the atomic provider claim, and requires a provider receipt plus same-ID POSTED read-back.",
   },
   {
     actionId: "manual_journal.locked_period_void_or_delete",
@@ -542,6 +769,15 @@ export const XERO_CAPABILITY_POLICIES = [
     officialSupport: MANUAL_JOURNAL_SUPPORT,
     releaseDecision: "NOT_EXPOSED",
     releaseRationale: "Period override and destructive actions are prohibited for the Agent.",
+  },
+  {
+    actionId: "manual_journal.void",
+    object: "MANUAL_JOURNAL",
+    label: "Void an eligible posted manual journal",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: MANUAL_JOURNAL_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact POSTED preflight, typed manual-journal void, receipt persistence, and same-ID VOIDED read-back.",
   },
   {
     actionId: "contact.read_prepare",
@@ -556,28 +792,28 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "contact.create_basic",
     object: "CONTACT",
     label: "Create a contact with constrained basic identity fields",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: CONTACT_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "Controlled creation is limited to basic identity fields with duplicate detection, explicit confirmation, and exact read-back.",
+    releaseRationale: "Controlled creation is limited to basic identity fields with duplicate detection, typed Case operation, and exact read-back.",
   },
   {
     actionId: "contact.update_basic",
     object: "CONTACT",
     label: "Update constrained basic contact fields",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: CONTACT_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "Controlled updates require an exact field diff, immutable contact ID, stale-object comparison, confirmation, and exact read-back.",
+    releaseRationale: "Controlled updates require an exact field diff, immutable contact ID, stale-object comparison, typed Case operation, and exact read-back.",
   },
   {
     actionId: "contact.update_sensitive_or_archive",
     object: "CONTACT",
     label: "Change tax identity, payment terms, or archive a contact",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: CONTACT_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
-    releaseRationale: "These changes can affect tax, cash operations, or historical workflow and need independent approval.",
+    releaseDecision: "NOT_EXPOSED",
+    releaseRationale: "Sensitive tax/payment fields and archival are outside the constrained basic Contact write surface.",
   },
   {
     actionId: "contact.bank_data_merge_delete_or_privacy_action",
@@ -601,19 +837,19 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "account.create_or_update_structure",
     object: "ACCOUNT",
     label: "Create an account or change code, type, or reporting structure",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: ACCOUNT_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
-    releaseRationale: "Chart-of-accounts structure affects reporting across many transactions and needs independent approval.",
+    releaseDecision: "NOT_EXPOSED",
+    releaseRationale: "Chart-of-accounts structure mutation is outside the R1 Ledger Gateway write surface.",
   },
   {
     actionId: "account.update_tax_or_archive",
     object: "ACCOUNT",
     label: "Change an account tax default or archive it",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: ACCOUNT_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
-    releaseRationale: "Tax defaults and archival can silently affect future coding and require independent approval.",
+    releaseDecision: "NOT_EXPOSED",
+    releaseRationale: "Account tax-default and archival mutation is outside the R1 Ledger Gateway write surface.",
   },
   {
     actionId: "account.modify_bank_system_or_delete",
@@ -637,16 +873,16 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "item.create_basic_untracked",
     object: "ITEM",
     label: "Create a basic untracked item",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: ITEM_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
-    releaseRationale: "Controlled creation allows only constrained untracked items after exact code duplicate checks, confirmation, and exact read-back.",
+    releaseRationale: "Controlled creation allows only constrained untracked items after exact code duplicate checks, typed Case operation, and exact read-back.",
   },
   {
     actionId: "item.update_basic_untracked",
     object: "ITEM",
     label: "Update basic descriptive fields on an untracked item",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: ITEM_SUPPORT,
     releaseDecision: "AVAILABLE_NOW",
     releaseRationale: "Controlled updates require an exact field diff and exclude accounting defaults, prices, tax, and tracking fields.",
@@ -655,10 +891,10 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "item.update_account_tax_price_or_tracking",
     object: "ITEM",
     label: "Change item accounts, tax, price, or inventory tracking",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: ITEM_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
-    releaseRationale: "These defaults can affect many future transactions and require independent approval.",
+    releaseDecision: "NOT_EXPOSED",
+    releaseRationale: "R1 Item writes are limited to basic untracked fields and exclude accounting, tax, price and tracking defaults.",
   },
   {
     actionId: "item.adjust_stock_value_or_delete",
@@ -682,7 +918,7 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "attachment.upload_to_confirmed_draft",
     object: "ATTACHMENT",
     label: "Upload an approved file to one confirmed DRAFT parent",
-    riskClass: "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: ATTACHMENT_SUPPORT,
     releaseDecision: "PLANNED_CONTROLLED",
     releaseRationale: "Require fixed parent ID, source receipt, SHA-256, MIME/size allowlist, no overwrite, and includeOnline=false.",
@@ -691,10 +927,10 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "attachment.upload_to_final_or_publish_online",
     object: "ATTACHMENT",
     label: "Upload to a final record or publish an attachment online",
-    riskClass: "DUAL_APPROVAL",
+    riskClass: "DISABLED",
     officialSupport: ATTACHMENT_SUPPORT,
-    releaseDecision: "PREPARE_ONLY",
-    releaseRationale: "Final-record evidence and customer-visible publication require independent approval.",
+    releaseDecision: "NOT_EXPOSED",
+    releaseRationale: "Publishing customer-visible files and attaching to final records is outside the R1 Ledger Gateway surface.",
   },
   {
     actionId: "attachment.arbitrary_fetch_overwrite_or_guess_parent",
@@ -717,11 +953,38 @@ export const XERO_CAPABILITY_POLICIES = [
   {
     actionId: "payment.create",
     object: "PAYMENT",
-    label: "Create or allocate a payment",
+    label: "Record a payment against an exact Xero invoice",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: PAYMENT_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact invoice/account preflight, typed payment provider, receipt persistence, and same-ID balance read-back.",
+  },
+  {
+    actionId: "payment.allocate",
+    object: "PAYMENT",
+    label: "Allocate an existing Xero payment to an exact document",
     riskClass: "DISABLED",
     officialSupport: PAYMENT_SUPPORT,
     releaseDecision: "NOT_EXPOSED",
-    releaseRationale: "Payments have no safe DRAFT and immediately change economic state.",
+    releaseRationale: "The stable SDK has no safe payment-allocation primitive; do not infer allocation from unrelated Prepayment or Overpayment endpoints.",
+  },
+  {
+    actionId: "payment.refund",
+    object: "PAYMENT",
+    label: "Record a credit-note refund payment in Xero",
+    riskClass: "DISABLED",
+    officialSupport: PAYMENT_SUPPORT,
+    releaseDecision: "NOT_EXPOSED",
+    releaseRationale: "Generic payment.refund is not exposed; the exact ledger-payment route is credit_note.refund with its own typed Case controls.",
+  },
+  {
+    actionId: "payment.reverse",
+    object: "PAYMENT",
+    label: "Reverse an eligible Xero payment",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: PAYMENT_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact payment preflight, typed reversal provider, receipt persistence, and same-ID balance read-back.",
   },
   {
     actionId: "payment.delete_or_reverse",
@@ -745,10 +1008,10 @@ export const XERO_CAPABILITY_POLICIES = [
     actionId: "bank_transaction.create",
     object: "BANK_TRANSACTION",
     label: "Create a spend-money or receive-money bank transaction",
-    riskClass: "DISABLED",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
     officialSupport: BANK_TRANSACTION_SUPPORT,
-    releaseDecision: "NOT_EXPOSED",
-    releaseRationale: "Bank-account transactions have no safe DRAFT and affect cash records.",
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact bank/reference preflight, typed transaction provider, receipt persistence, and same-ID read-back.",
   },
   {
     actionId: "bank_transaction.update_or_delete",
@@ -758,6 +1021,24 @@ export const XERO_CAPABILITY_POLICIES = [
     officialSupport: BANK_TRANSACTION_SUPPORT,
     releaseDecision: "NOT_EXPOSED",
     releaseRationale: "Cash-record mutation and destructive actions remain outside the Agent boundary.",
+  },
+  {
+    actionId: "bank_transaction.update",
+    object: "BANK_TRANSACTION",
+    label: "Update an exact eligible Xero bank transaction",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: BANK_TRANSACTION_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact target/version preflight, typed transaction replacement, receipt persistence, and same-ID read-back.",
+  },
+  {
+    actionId: "bank_transaction.reverse",
+    object: "BANK_TRANSACTION",
+    label: "Soft-reverse an exact eligible Xero bank transaction",
+    riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
+    officialSupport: BANK_TRANSACTION_SUPPORT,
+    releaseDecision: "AVAILABLE_NOW",
+    releaseRationale: "The public Case route reaches exact AUTHORISED/unreconciled preflight, one-shot typed status=DELETED update, receipt persistence, and same-ID DELETED read-back.",
   },
   {
     actionId: "reconciliation.analyse_and_match_candidates",
@@ -793,6 +1074,18 @@ export interface AgentFacingXeroCapabilityDecision {
   readonly policyAllowsExecution: boolean;
   /** Static catalog decision only; this is never sufficient authority to mutate Xero. */
   readonly policyAllowsMutation: boolean;
+  /**
+   * Whether a released tool can actually invoke this write action today. Present
+   * only for write actions.
+   *
+   * Policy permission and reachability are different facts, and conflating them
+   * is how six actions came to be described as available while nothing could
+   * call them: the only exposed write tools bind to the Accounting Case, and its
+   * executor dispatches four. `policyAllowsExecution` still answers "would policy
+   * permit this"; this answers "is there a way to ask for it". A reader deciding
+   * what the agent can do needs the second one.
+   */
+  readonly agentReachableWriteAction?: boolean;
   readonly requiredScopes: readonly ("xero.read" | "xero.draft.write")[];
   readonly requiredPermissions: readonly XeroCapabilityPermission[];
   readonly instruction: string;
@@ -808,15 +1101,10 @@ function executionRequirementsFor(policy: XeroCapabilityPolicy): {
         requiredScopes: Object.freeze(["xero.read"]),
         requiredPermissions: Object.freeze(["XERO_ACCOUNTING_READ"]),
       };
-    case "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE":
+    case "AUTONOMOUS_CONTROLLED_WRITE":
       return {
         requiredScopes: Object.freeze(["xero.draft.write"]),
         requiredPermissions: Object.freeze(["XERO_DRAFT_WRITE"]),
-      };
-    case "DUAL_APPROVAL":
-      return {
-        requiredScopes: Object.freeze([]),
-        requiredPermissions: Object.freeze(["XERO_DUAL_APPROVAL"]),
       };
     case "DISABLED":
       return {
@@ -830,10 +1118,8 @@ function controlRequirementFor(riskClass: XeroRiskClass): XeroControlRequirement
   switch (riskClass) {
     case "READ_PREPARE":
       return "NONE";
-    case "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE":
-      return "EXPLICIT_CONFIRMATION";
-    case "DUAL_APPROVAL":
-      return "DUAL_APPROVAL";
+    case "AUTONOMOUS_CONTROLLED_WRITE":
+      return "TYPED_CASE_WRITE_GATE";
     case "DISABLED":
       return "NOT_PERMITTED";
   }
@@ -843,17 +1129,14 @@ function instructionFor(policy: XeroCapabilityPolicy): string {
   if (policy.releaseDecision === "PLANNED_CONTROLLED") {
     return "Not currently exposed: prepare a proposal only and do not mutate Xero.";
   }
-  if (policy.releaseDecision === "PREPARE_ONLY") {
-    return "Prepare a proposal only; do not execute until an independent dual-approval control is available.";
-  }
   if (policy.releaseDecision === "NOT_EXPOSED") {
     return "Do not execute or mutate Xero; offer a safe read or preparation alternative.";
   }
   if (policy.riskClass === "READ_PREPARE") {
     return "Read, analyse, or prepare only; do not mutate Xero.";
   }
-  if (policy.riskClass === "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE") {
-    return "Execute only after exact user confirmation and all tenant, idempotency, audit, and read-back controls pass.";
+  if (policy.riskClass === "AUTONOMOUS_CONTROLLED_WRITE") {
+    return "Execute only through a typed Accounting Case after exact target binding, deterministic validation, idempotency, atomic claim, audit, provider receipt, and read-back controls pass.";
   }
 
   // Catalog validation rejects AVAILABLE_NOW for these classes. Keeping this
@@ -861,17 +1144,21 @@ function instructionFor(policy: XeroCapabilityPolicy): string {
   return "Do not execute or mutate Xero.";
 }
 
+function isKnownWriteActionId(actionId: string): actionId is XeroWriteActionId {
+  return Object.prototype.hasOwnProperty.call(XERO_WRITE_ACTIONS, actionId);
+}
+
 function toAgentFacingDecision(
   policy: XeroCapabilityPolicy,
 ): AgentFacingXeroCapabilityDecision {
   const executableRisk =
     policy.riskClass === "READ_PREPARE" ||
-    policy.riskClass === "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE";
+    policy.riskClass === "AUTONOMOUS_CONTROLLED_WRITE";
   const policyAllowsExecution =
     policy.releaseDecision === "AVAILABLE_NOW" && executableRisk;
   const policyAllowsMutation =
     policy.releaseDecision === "AVAILABLE_NOW" &&
-    policy.riskClass === "CONFIRMED_DRAFT_OR_LOW_RISK_WRITE";
+    policy.riskClass === "AUTONOMOUS_CONTROLLED_WRITE";
   const requirements = executionRequirementsFor(policy);
 
   return Object.freeze({
@@ -884,6 +1171,9 @@ function toAgentFacingDecision(
     controlRequirement: controlRequirementFor(policy.riskClass),
     policyAllowsExecution,
     policyAllowsMutation,
+    ...(isKnownWriteActionId(policy.actionId)
+      ? { agentReachableWriteAction: isAgentReachableWriteAction(policy.actionId) }
+      : {}),
     requiredScopes: requirements.requiredScopes,
     requiredPermissions: requirements.requiredPermissions,
     instruction: instructionFor(policy),
@@ -903,15 +1193,9 @@ function validateCatalog(): void {
 
     if (
       policy.releaseDecision === "AVAILABLE_NOW" &&
-      (policy.riskClass === "DUAL_APPROVAL" || policy.riskClass === "DISABLED")
+      policy.riskClass === "DISABLED"
     ) {
       throw new Error(`Unsafe Xero capability marked AVAILABLE_NOW: ${policy.actionId}`);
-    }
-    if (
-      policy.releaseDecision === "PREPARE_ONLY" &&
-      policy.riskClass !== "DUAL_APPROVAL"
-    ) {
-      throw new Error(`PREPARE_ONLY capability must require dual approval: ${policy.actionId}`);
     }
     if (
       policy.releaseDecision === "NOT_EXPOSED" &&

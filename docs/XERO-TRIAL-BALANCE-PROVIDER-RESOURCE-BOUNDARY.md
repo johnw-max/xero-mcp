@@ -57,4 +57,4 @@ deadline、raw 限额与解压限额均为每次请求独立状态，不修改�
 6. 调用方主动取消时立即中止 socket；
 7. Provider 只在 manager 完成 refresh/binding 后把 token 与固定 Tenant 交给有界 transport。
 
-这些测试不调用线上 Xero，也不修改 MCP Trial Balance transform、MCP 工具定义或 QuickBooks。
+这些测试不调用线上 Xero，也不修改 MCP Trial Balance transform 或 MCP 工具定义。

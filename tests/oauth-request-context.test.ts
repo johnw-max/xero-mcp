@@ -19,6 +19,7 @@ const resolvedToken: ResolvedMcpAccessToken = {
   installationId: "installation-id",
   bindingId: "binding-id",
   connectionId: "connection-id",
+  bindingRevision: 7,
   authorizationId: "authorization-id",
   workspaceId: "workspace-id",
   subjectType: "USER",
@@ -45,6 +46,7 @@ describe("OAuth RequestContext", () => {
       oauthInstallationId: "installation-id",
       bindingId: "binding-id",
       connectionId: "connection-id",
+      bindingRevision: 7,
       scopes: ["xero.read"],
       authn: {
         issuer: "https://xero-mcp.example.test",
@@ -122,6 +124,7 @@ describe("OAuth RequestContext", () => {
           installationId: resolvedToken.installationId,
           bindingId: resolvedToken.bindingId,
           connectionId: resolvedToken.connectionId,
+          bindingRevision: resolvedToken.bindingRevision,
           authorizationId: resolvedToken.authorizationId,
           workspaceId: resolvedToken.workspaceId,
           subjectType: resolvedToken.subjectType,
@@ -134,6 +137,44 @@ describe("OAuth RequestContext", () => {
     });
 
     expect(context.authn.tokenId).toBe(resolvedToken.tokenId);
+    expect(context.bindingRevision).toBe(7);
     expect(JSON.stringify(context)).not.toContain("raw-secret-that-must-not-enter-context");
+  });
+
+  it("rejects missing or invalid active binding revisions from verified AuthInfo", () => {
+    const authInfo = {
+      token: "raw-secret-that-must-not-enter-context",
+      clientId: resolvedToken.clientId,
+      scopes: [...resolvedToken.grantedScopes],
+      expiresAt: Math.floor(Date.now() / 1_000) + 900,
+      resource: new URL(resolvedToken.resource),
+      extra: {
+        credentialId: resolvedToken.tokenId,
+        installationId: resolvedToken.installationId,
+        bindingId: resolvedToken.bindingId,
+        connectionId: resolvedToken.connectionId,
+        authorizationId: resolvedToken.authorizationId,
+        workspaceId: resolvedToken.workspaceId,
+        subjectType: resolvedToken.subjectType,
+        subjectId: resolvedToken.subjectId,
+        agentId: resolvedToken.agentId,
+        policyId: resolvedToken.policyId,
+        tenantId: resolvedToken.tenantId,
+      },
+    };
+
+    expect(() => createOAuthRequestContextFromAuthInfo({
+      issuer: "https://xero-mcp.example.test",
+      expectedAudience: resolvedToken.audience,
+      authInfo,
+    })).toThrowError(/binding revision/u);
+    expect(() => createOAuthRequestContextFromAuthInfo({
+      issuer: "https://xero-mcp.example.test",
+      expectedAudience: resolvedToken.audience,
+      authInfo: {
+        ...authInfo,
+        extra: { ...authInfo.extra, bindingRevision: 0 },
+      },
+    })).toThrowError(/binding revision/u);
   });
 });

@@ -30,6 +30,11 @@ export interface RequestContext {
   readonly oauthInstallationId?: string;
   readonly bindingId?: string;
   readonly connectionId?: string;
+  readonly bindingRevision?: number;
+  /** Server-only keyed hash of an immutable short-lived ledger target capability. */
+  readonly targetSessionHash?: string;
+  readonly targetSessionId?: string;
+  readonly targetSessionExpiresAt?: Date;
   readonly scopes: readonly string[];
   readonly roles: readonly string[];
   readonly authn: RequestAuthentication;
@@ -44,6 +49,7 @@ export interface OAuthBoundRequestContext extends RequestContext {
   readonly oauthInstallationId: string;
   readonly bindingId: string;
   readonly connectionId: string;
+  readonly bindingRevision: number;
   readonly legacyDemo: false;
 }
 
@@ -63,17 +69,54 @@ export function requireOAuthBoundRequestContext(context: RequestContext): OAuthB
     !nonEmpty(context.agentId) ||
     !nonEmpty(context.oauthInstallationId) ||
     !nonEmpty(context.bindingId) ||
-    !nonEmpty(context.connectionId)
+    !nonEmpty(context.connectionId) ||
+    !Number.isSafeInteger(context.bindingRevision) ||
+    (context.bindingRevision ?? 0) < 1
   ) {
-    throw new AppError("FORBIDDEN", "The OAuth request is missing its trusted connection binding.", {
+    throw new AppError("AUTH_REQUIRED", "The OAuth request is missing its trusted connection binding.", {
+      httpStatus: 401,
+      details: {
+        failureLayer: "MCP_AUTHENTICATION",
+        reasonCodes: ["TRUSTED_CONNECTION_BINDING_MISSING"],
+        recoveryAction: "REAUTHENTICATE_MCP",
+        providerMutationPossible: false,
+      },
+    });
+  }
+
+  const hasTargetSession = context.targetSessionHash !== undefined ||
+    context.targetSessionId !== undefined || context.targetSessionExpiresAt !== undefined;
+  if (
+    hasTargetSession &&
+    (
+      !nonEmpty(context.targetSessionHash) ||
+      !/^[0-9a-f]{64}$/u.test(context.targetSessionHash) ||
+      !nonEmpty(context.targetSessionId) ||
+      !(context.targetSessionExpiresAt instanceof Date) ||
+      !Number.isFinite(context.targetSessionExpiresAt.getTime())
+    )
+  ) {
+    throw new AppError("TARGET_SESSION_INVALID", "The OAuth request has an incomplete ledger target session.", {
       httpStatus: 403,
+      details: {
+        failureLayer: "TARGET_BINDING",
+        reasonCodes: ["TARGET_SESSION_CONTEXT_INCOMPLETE"],
+        recoveryAction: "PIN_LEDGER_TARGET",
+        providerMutationPossible: false,
+      },
     });
   }
 
   const expectedActorId = `${context.workspaceId}:${subjectType.toLowerCase()}:${context.subjectId}`;
   if (context.actorId !== expectedActorId) {
-    throw new AppError("FORBIDDEN", "The OAuth request identity does not match its connection binding.", {
+    throw new AppError("SUBJECT_FORBIDDEN", "The OAuth request identity does not match its connection binding.", {
       httpStatus: 403,
+      details: {
+        failureLayer: "SUBJECT_BINDING",
+        reasonCodes: ["SUBJECT_BINDING_MISMATCH"],
+        recoveryAction: "REAUTHENTICATE_MCP",
+        providerMutationPossible: false,
+      },
     });
   }
   return context as OAuthBoundRequestContext;
@@ -145,6 +188,11 @@ export function createOAuthRequestContext(options: {
   resolvedToken: ResolvedMcpAccessToken;
 }): RequestContext {
   const token = options.resolvedToken;
+  if (!Number.isSafeInteger(token.bindingRevision) || token.bindingRevision < 1) {
+    throw new AppError("AUTH_REQUIRED", "The resolved OAuth token has no valid binding revision.", {
+      httpStatus: 401,
+    });
+  }
   const scopes = Object.freeze([...token.grantedScopes]);
   const roles = Object.freeze([] as string[]);
   const authn = Object.freeze({
@@ -165,6 +213,7 @@ export function createOAuthRequestContext(options: {
     oauthInstallationId: token.installationId,
     bindingId: token.bindingId,
     connectionId: token.connectionId,
+    bindingRevision: token.bindingRevision,
     scopes,
     roles,
     authn,
@@ -174,6 +223,15 @@ export function createOAuthRequestContext(options: {
 
 function requiredAuthInfoString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0 || value !== value.trim()) {
+    throw new AppError("AUTH_REQUIRED", `The verified OAuth token is missing ${field}.`, {
+      httpStatus: 401,
+    });
+  }
+  return value;
+}
+
+function requiredAuthInfoPositiveSafeInteger(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
     throw new AppError("AUTH_REQUIRED", `The verified OAuth token is missing ${field}.`, {
       httpStatus: 401,
     });
@@ -215,6 +273,7 @@ export function createOAuthRequestContextFromAuthInfo(options: {
     installationId: requiredAuthInfoString(extra.installationId, "installation ID"),
     bindingId: requiredAuthInfoString(extra.bindingId, "binding ID"),
     connectionId: requiredAuthInfoString(extra.connectionId, "connection ID"),
+    bindingRevision: requiredAuthInfoPositiveSafeInteger(extra.bindingRevision, "binding revision"),
     authorizationId: requiredAuthInfoString(extra.authorizationId, "authorization ID"),
     workspaceId: requiredAuthInfoString(extra.workspaceId, "workspace ID"),
     subjectType,

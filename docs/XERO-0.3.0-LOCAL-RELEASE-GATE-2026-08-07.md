@@ -34,7 +34,7 @@
 - P0 只读业务合同、受控写入合同和多角色合成合同均已通过。
 - 本地真实 Agent 已覆盖 AR/AP 历史调查、查重、prepare 与零写入边界。
 - Agent2 线上真实 Xero 已完成完整 signature flow：读账 → 分析 → prepare → 用户明确确认 → 仅 1 次 DRAFT create → Provider receipt → 同 ID read-back → 同 Reference 精确 1 笔 → 越权拒绝。
-- 最终写闸 CLOSED，boot-close active/success，QuickBooks/PostgreSQL/stock 连续性通过。
+- 最终写闸 CLOSED，boot-close active/success，PostgreSQL/stock 连续性通过。
 
 ## 上线边界
 

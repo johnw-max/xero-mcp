@@ -26,7 +26,7 @@ import {
   leastPrivilegeXeroScopesForBroker,
   type BrokerMcpScope,
 } from "../providers/xeroScopes.js";
-import { safeEqual } from "../security/hash.js";
+import { hashObject, safeEqual } from "../security/hash.js";
 import {
   generateOAuthSecret,
   keyedOAuthSecretHash,
@@ -55,6 +55,71 @@ const EXACT_PKCE_CHALLENGE = /^[A-Za-z0-9_-]{43}$/u;
 const EXACT_OPAQUE_BROWSER_VALUE = /^[A-Za-z0-9_-]{43}$/u;
 const PERSONAL_POC_WORKSPACE_ID = "personal-poc";
 const PERSONAL_POC_POLICY_ID = "policy_personal-poc-xero-v1";
+const SHARED_TEST_SUBJECT_PREFIX = "shared-test-installation";
+const ORGANISATION_SELECTION_TICKET_SCHEMA = "xero-organisation-selection-ticket:v1";
+const ORGANISATION_SELECTION_TICKET_CONTEXT = "zcloak-xero-mcp-organisation-selection-v1";
+
+interface OrganisationSelectionTicket {
+  schemaVersion: typeof ORGANISATION_SELECTION_TICKET_SCHEMA;
+  browserSecret: string;
+  selectionCsrfHash: string;
+  expiresAt: string;
+}
+
+function createOrganisationSelectionTicket(options: {
+  cipher: TokenCipher;
+  browserSecret: string;
+  selectionCsrfHash: string;
+  expiresAt: Date;
+}): string {
+  const ticket: OrganisationSelectionTicket = {
+    schemaVersion: ORGANISATION_SELECTION_TICKET_SCHEMA,
+    browserSecret: options.browserSecret,
+    selectionCsrfHash: options.selectionCsrfHash,
+    expiresAt: options.expiresAt.toISOString(),
+  };
+  return options.cipher.encrypt(JSON.stringify(ticket), ORGANISATION_SELECTION_TICKET_CONTEXT);
+}
+
+function readOrganisationSelectionTicket(options: {
+  cipher: TokenCipher;
+  rawTicket: string;
+  expectedSelectionCsrfHash: string;
+  now: Date;
+}): OrganisationSelectionTicket | undefined {
+  try {
+    const decoded = JSON.parse(options.cipher.decrypt(
+      options.rawTicket,
+      ORGANISATION_SELECTION_TICKET_CONTEXT,
+    )) as unknown;
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return undefined;
+    const ticket = decoded as Record<string, unknown>;
+    if (JSON.stringify(Object.keys(ticket).sort()) !== JSON.stringify([
+      "browserSecret",
+      "expiresAt",
+      "schemaVersion",
+      "selectionCsrfHash",
+    ])) return undefined;
+    if (
+      ticket.schemaVersion !== ORGANISATION_SELECTION_TICKET_SCHEMA ||
+      typeof ticket.browserSecret !== "string" ||
+      !EXACT_OPAQUE_BROWSER_VALUE.test(ticket.browserSecret) ||
+      typeof ticket.selectionCsrfHash !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(ticket.selectionCsrfHash) ||
+      !safeEqual(ticket.selectionCsrfHash, options.expectedSelectionCsrfHash) ||
+      typeof ticket.expiresAt !== "string"
+    ) return undefined;
+    const expiresAt = new Date(ticket.expiresAt);
+    if (
+      !Number.isFinite(expiresAt.getTime()) ||
+      expiresAt.toISOString() !== ticket.expiresAt ||
+      expiresAt <= options.now
+    ) return undefined;
+    return ticket as unknown as OrganisationSelectionTicket;
+  } catch {
+    return undefined;
+  }
+}
 
 function exactNonEmpty(value: string, maxLength: number): boolean {
   return value.length > 0 &&
@@ -170,11 +235,11 @@ function setPrivateBrowserHeaders(response: Response): void {
   response.setHeader("X-Frame-Options", "DENY");
 }
 
-function setSelectionPageHeaders(response: Response): void {
+export function setSelectionPageHeaders(response: Response): void {
   setPrivateBrowserHeaders(response);
   response.setHeader(
     "Content-Security-Policy",
-    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   );
 }
 
@@ -182,7 +247,7 @@ function setPersonalPocReturnPageHeaders(response: Response, formAction: string)
   setPrivateBrowserHeaders(response);
   response.setHeader(
     "Content-Security-Policy",
-    `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; base-uri 'none'; frame-ancestors 'none'`,
+    `default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action ${formAction}; base-uri 'none'; frame-ancestors 'none'`,
   );
 }
 
@@ -209,19 +274,51 @@ export function sendBrokerHostAuthorizationResult(
 }
 
 export function shouldUsePersonalPocManualReturn(options: {
+  broker: Pick<EnabledBrokerConfig, "manualReturnClientIds">;
   personalPoc: boolean;
   clientId: string;
-  allowedClientIds: readonly string[];
 }): boolean {
-  return options.personalPoc && options.allowedClientIds.includes(options.clientId);
+  return options.personalPoc && options.broker.manualReturnClientIds.includes(options.clientId);
 }
+
+/**
+ * The recorded outcome of one successful organisation-selection completion,
+ * kept just long enough to answer a repeated submit of the same form with the
+ * same 302 instead of a new credential or an error. Keyed by `flowHash`,
+ * which is only computable from the caller's already-verified, cookie-bound
+ * selection ticket — so reading this cache grants no capability beyond what
+ * the original request already proved.
+ */
+interface CompletedSelectionReplay {
+  selectedConnectionId: string;
+  manualPersonalPocReturn: boolean;
+  returnUrl: string;
+  hostName: string;
+  organisationName: string;
+  /** Mirrors the issued authorization code's own expiry. Past this, the code is dead and replaying it would only mislead, so the entry is dropped instead. */
+  expiresAt: number;
+}
+
+const COMPLETED_SELECTION_REPLAY_CACHE_LIMIT = 500;
+
+/**
+ * `"UNKNOWN"` is not evidence of anything — it means this process cannot
+ * confirm the flow *ever* completed, only that it is no longer available to
+ * complete now. Reading `"UNKNOWN"` as "not connected" would be exactly as
+ * wrong as reading it as "connected": both assert a fact the cache does not
+ * contain. Callers must render the honest, hedged copy for it, never the
+ * confident "already connected" copy that `"KNOWN_COMPLETED"` earns.
+ */
+type CompletedSelectionMatch = "REPLAYED" | "KNOWN_COMPLETED" | "UNKNOWN";
 
 /**
  * End-to-end outer OAuth provider for a pre-registered MCP Host.
  *
  * Host identity is deliberately not inferred from OAuth parameters. Until a
- * signed Host assertion exists, this provider only runs in the explicitly
- * labelled one-person POC profile.
+ * signed Host assertion exists, this provider only runs in an explicitly
+ * labelled test profile. Shared-test mode treats the registered client as the
+ * application identity while each OAuth grant gets an isolated, server-owned
+ * installation subject; it must not be described as verified human identity.
  */
 export class McpOAuthBrokerProvider implements OAuthServerProvider {
   readonly skipLocalPkceValidation = true;
@@ -236,6 +333,14 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
   readonly #clock: () => Date;
   readonly #secretFactory: () => string;
   readonly #idFactory: (purpose: "installation" | "authorization" | "binding") => string;
+  /**
+   * Per-process only: a second instance behind a non-sticky load balancer, or
+   * a restart between the two submits, simply misses the cache and falls back
+   * to the "already connected" page (see `handleOrganisationSelection`). That
+   * fallback is correct either way, so this stays a plain in-memory Map
+   * rather than new persisted state.
+   */
+  readonly #completedSelections = new Map<string, CompletedSelectionReplay>();
 
   constructor(options: {
     config: AppConfig;
@@ -297,7 +402,9 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
     const xeroState = this.#newSecret("Xero state");
     const flowHash = this.#hash("browser_flow", browserSecret);
     const installationId = this.#newId("installation");
-    const subjectId = this.#config.demoActorId;
+    const subjectId = this.#broker.sharedTestUsers
+      ? `${SHARED_TEST_SUBJECT_PREFIX}:${installationId}`
+      : this.#config.demoActorId;
     const flow: OAuthBrokerAuthorizationFlow = {
       flowHash,
       browserSessionHash: this.#hash("browser_session", browserSecret),
@@ -444,6 +551,7 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
       const now = this.#now();
       const authorizationId = this.#newId("authorization");
       const selectionCsrf = this.#newSecret("organisation selection CSRF");
+      const selectionCsrfHash = this.#hash("csrf_token", selectionCsrf);
       const exchanged = await this.#xeroAuthorization.exchange({
         xeroState,
         callbackQuery: queryString,
@@ -458,12 +566,29 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
         browserSessionHash,
         authorization: exchanged.authorization,
         connections: exchanged.connections,
-        selectionCsrfHash: this.#hash("csrf_token", selectionCsrf),
+        selectionCsrfHash,
         now,
       });
       if (!completed) throw new Error("The Broker flow could not enter organisation selection.");
+      const selectionTicket = createOrganisationSelectionTicket({
+        cipher: this.#stateCipher,
+        browserSecret,
+        selectionCsrfHash,
+        expiresAt: completed.expiresAt,
+      });
 
       setSelectionPageHeaders(response);
+      // Re-issue the already verified browser-flow cookie once the OAuth
+      // callback has returned to our first-party page. Some browsers apply
+      // bounce-tracking cleanup after the cross-site Xero redirect and can
+      // otherwise drop the cookie before the same-origin organisation form is
+      // submitted. This keeps the existing cookie, CSRF, Origin, and one-time
+      // repository checks intact; it does not create a cookie-less fallback.
+      response.cookie(
+        MCP_OAUTH_FLOW_COOKIE,
+        browserSecret,
+        brokerFlowCookieOptions(this.#broker.browserFlowTtlSeconds),
+      );
       response.type("html").send(renderXeroOrganisationSelectionPage({
         organisations: exchanged.connections.map((connection) => ({
           connectionId: connection.connectionId,
@@ -471,6 +596,7 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
           tenantId: connection.tenantId,
         })),
         csrfToken: selectionCsrf,
+        selectionTicket,
         requestedScopes: completed.requestedScopes,
         personalPocOnly: completed.personalPoc,
       }));
@@ -506,16 +632,18 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
         details: { resultStatus: `${originStatus}_${fetchMetadataStatus}` },
       });
     }
-    const browserSecret = readExactCookie(request.headers.cookie, MCP_OAUTH_FLOW_COOKIE);
     const csrfToken = typeof request.body?.csrf_token === "string" ? request.body.csrf_token : undefined;
+    const rawSelectionTicket = typeof request.body?.selection_ticket === "string"
+      ? request.body.selection_ticket
+      : undefined;
     const selectedConnectionId = typeof request.body?.connection_id === "string"
       ? request.body.connection_id
       : undefined;
     if (
-      !browserSecret ||
-      !EXACT_OPAQUE_BROWSER_VALUE.test(browserSecret) ||
       !csrfToken ||
       !exactNonEmpty(csrfToken, 256) ||
+      !rawSelectionTicket ||
+      !exactNonEmpty(rawSelectionTicket, 4_096) ||
       !selectedConnectionId ||
       !exactNonEmpty(selectedConnectionId, 256)
     ) {
@@ -523,12 +651,14 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
         httpStatus: 403,
         details: {
           resultStatus: [
-            browserSecret
-              ? EXACT_OPAQUE_BROWSER_VALUE.test(browserSecret) ? "COOKIE_OK" : "COOKIE_INVALID"
-              : "COOKIE_MISSING",
             csrfToken
               ? exactNonEmpty(csrfToken, 256) ? "CSRF_OK" : "CSRF_INVALID"
               : "CSRF_MISSING",
+            rawSelectionTicket
+              ? exactNonEmpty(rawSelectionTicket, 4_096)
+                ? "SELECTION_TICKET_PRESENT"
+                : "SELECTION_TICKET_INVALID"
+              : "SELECTION_TICKET_MISSING",
             selectedConnectionId
               ? exactNonEmpty(selectedConnectionId, 256) ? "CONNECTION_OK" : "CONNECTION_INVALID"
               : "CONNECTION_MISSING",
@@ -538,6 +668,34 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
     }
 
     const now = this.#now();
+    const selectionCsrfHash = this.#hash("csrf_token", csrfToken);
+    const selectionTicket = readOrganisationSelectionTicket({
+      cipher: this.#stateCipher,
+      rawTicket: rawSelectionTicket,
+      expectedSelectionCsrfHash: selectionCsrfHash,
+      now,
+    });
+    const cookieSecret = readExactCookie(request.headers.cookie, MCP_OAUTH_FLOW_COOKIE);
+    if (
+      !selectionTicket ||
+      (cookieSecret && !safeEqual(cookieSecret, selectionTicket.browserSecret))
+    ) {
+      throw new AppError("FORBIDDEN", "The organisation selection proof is invalid or expired.", {
+        httpStatus: 403,
+        details: {
+          resultStatus: !selectionTicket
+            ? "SELECTION_TICKET_INVALID"
+            : "COOKIE_SELECTION_TICKET_MISMATCH",
+        },
+      });
+    }
+    // The encrypted, one-time selection ticket is minted only after the
+    // original HttpOnly cookie passes the Xero callback. It preserves the
+    // exact browser-flow binding if bounce-tracking cleanup removes that
+    // cookie before this same-origin POST. CSRF, Origin/fetch metadata,
+    // expiry, selected-connection membership, and repository one-time state
+    // all remain mandatory.
+    const browserSecret = selectionTicket.browserSecret;
     const flowHash = this.#hash("browser_flow", browserSecret);
     const browserSessionHash = this.#hash("browser_session", browserSecret);
     const selection = await this.#repository.getBrokerSelection({
@@ -546,9 +704,20 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
       now,
     });
     if (!selection) {
+      // The most common reason this flow is no longer AWAITING_SELECTION is
+      // that this exact browser session already completed it — a double
+      // click, a back-button resubmit. If we still remember that outcome,
+      // hand back the identical result instead of an error; the caller's
+      // intent was already satisfied. A cache miss is genuinely ambiguous
+      // (never completed vs. completed by a process/entry we cannot see)
+      // and must not be reported as either "connected" or "not connected".
+      const match = this.#replayCompletedSelection(flowHash, selectedConnectionId, now, response);
+      if (match === "REPLAYED") return;
       throw new AppError("FORBIDDEN", "The organisation selection has expired or was already used.", {
         httpStatus: 403,
-        details: { resultStatus: "FLOW_SELECTION_MISSING" },
+        details: {
+          resultStatus: match === "KNOWN_COMPLETED" ? "FLOW_ALREADY_COMPLETED" : "FLOW_SELECTION_MISSING",
+        },
       });
     }
     const selectedConnection = selection.connections.find(
@@ -565,7 +734,7 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
     const result = await this.#repository.completeBrokerOrganisationSelection({
       flowHash,
       browserSessionHash,
-      selectionCsrfHash: this.#hash("csrf_token", csrfToken),
+      selectionCsrfHash,
       selectedConnectionId,
       bindingId: this.#newId("binding"),
       policyId: PERSONAL_POC_POLICY_ID,
@@ -576,11 +745,60 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
       now,
     });
     if (!result) {
+      // A concurrent twin of this exact request (two requests that both read
+      // AWAITING_SELECTION before either committed) can lose the repository
+      // race yet still deserve the winner's outcome, not an error. A cache
+      // hit for this exact flowHash is unambiguous proof *this* flow
+      // completed (we only ever write it after our own commit for it), so it
+      // takes priority over the generic "still settling" rejection below,
+      // which is for a genuinely different, older installation's grant.
+      const match = this.#replayCompletedSelection(flowHash, selectedConnectionId, now, response);
+      if (match === "REPLAYED") return;
       throw new AppError("FORBIDDEN", "The organisation selection is invalid or was already used.", {
         httpStatus: 403,
-        details: { resultStatus: "SELECTION_COMPLETE_REJECTED" },
+        details: {
+          resultStatus: match === "KNOWN_COMPLETED" ? "FLOW_ALREADY_COMPLETED" : "SELECTION_COMPLETE_REJECTED",
+        },
       });
     }
+
+    await this.#repository.appendGovernanceAuditEvent({
+      eventId: `event_${randomUUID()}`,
+      streamId: `installation:${result.installation.installationId}`,
+      schemaVersion: "zcloak.governance-event.v1",
+      eventType: "xero.authorization.connected",
+      source: "OAUTH",
+      action: "xero.authorization.connect",
+      actorId: `${result.binding.workspaceId}:${result.binding.subjectType.toLowerCase()}:${result.binding.subjectId}`,
+      workspaceId: result.binding.workspaceId,
+      agentId: result.binding.agentId,
+      installationId: result.binding.installationId,
+      bindingId: result.binding.bindingId,
+      connectionId: result.binding.connectionId,
+      tenantId: selectedConnection.tenantId,
+      policyId: result.binding.policyId,
+      correlationId: `oauth:${flowHash}`,
+      disposition: "AUTO_EXECUTE",
+      outcome: "SUCCEEDED",
+      inputHash: hashObject({
+        flowHash,
+        selectedConnectionId,
+        clientId: result.flow.clientId,
+      }),
+      outputHash: hashObject({
+        installationId: result.installation.installationId,
+        bindingId: result.binding.bindingId,
+        connectionId: result.binding.connectionId,
+      }),
+      evidence: {
+        provider: "xero",
+        userSelectedOrganisation: true,
+        grantedScopeCount: result.authorizationCode.grantedScopes.length,
+        personalPoc: result.flow.personalPoc,
+        providerMutation: false,
+      },
+      occurredAt: now,
+    });
 
     const outerState = this.#stateCipher.decrypt(result.outerStateCiphertext, flowHash);
     if (!safeEqual(this.#hash("host_state", outerState), result.flow.outerStateHash)) {
@@ -596,12 +814,24 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
     });
     const hostName = this.#broker.hostClients.find((client) => client.clientId === result.flow.clientId)?.name
       ?? "MCP Host";
+    const manualPersonalPocReturn = shouldUsePersonalPocManualReturn({
+      broker: this.#broker,
+      personalPoc: result.flow.personalPoc,
+      clientId: result.flow.clientId,
+    });
+    // Recorded before the response is sent so a concurrent twin that loses
+    // the repository race above (see the `!result` branch) can still find
+    // this outcome the instant this call resolves.
+    this.#recordCompletedSelection(flowHash, {
+      selectedConnectionId,
+      manualPersonalPocReturn,
+      returnUrl,
+      hostName,
+      organisationName: selectedConnection.tenantName,
+      expiresAt: result.authorizationCode.expiresAt.getTime(),
+    }, now);
     sendBrokerHostAuthorizationResult(response, {
-      manualPersonalPocReturn: shouldUsePersonalPocManualReturn({
-        personalPoc: result.flow.personalPoc,
-        clientId: result.flow.clientId,
-        allowedClientIds: this.#broker.missingResourceCompatClientIds,
-      }),
+      manualPersonalPocReturn,
       returnUrl,
       hostName,
       organisationName: selectedConnection.tenantName,
@@ -613,6 +843,67 @@ export class McpOAuthBrokerProvider implements OAuthServerProvider {
     rawSecret: string,
   ): string {
     return keyedOAuthSecretHash(this.#broker.tokenHashKey, purpose, rawSecret);
+  }
+
+  /** Drops any entry whose authorization code has already expired, so the cache cannot outlive what it is standing in for. */
+  #pruneCompletedSelections(now: Date): void {
+    const nowMs = now.getTime();
+    for (const [key, entry] of this.#completedSelections) {
+      if (entry.expiresAt <= nowMs) this.#completedSelections.delete(key);
+    }
+  }
+
+  #recordCompletedSelection(flowHash: string, entry: CompletedSelectionReplay, now: Date): void {
+    this.#pruneCompletedSelections(now);
+    if (this.#completedSelections.size >= COMPLETED_SELECTION_REPLAY_CACHE_LIMIT) {
+      const oldestKey = this.#completedSelections.keys().next().value;
+      if (oldestKey !== undefined) this.#completedSelections.delete(oldestKey);
+    }
+    this.#completedSelections.set(flowHash, entry);
+  }
+
+  /**
+   * A second POST that presents this flow's valid selection ticket and CSRF
+   * token, naming the same connection this flow already completed, is the
+   * same request arriving twice — a double click, an impatient second tap, a
+   * back-button resubmit. Replaying the exact original outcome (same
+   * authorization code, same Host state) satisfies the caller without
+   * minting a new credential or writing to the repository again.
+   *
+   * A cache miss here does not mean "never completed" — it only means this
+   * process cannot prove either way (a different process instance, or an
+   * entry that was never recorded because it belongs to a genuinely invalid
+   * request). The caller must not read `"UNKNOWN"` as "not connected" and
+   * must not read anything here as grounds to claim a completion it cannot
+   * verify; see `CompletedSelectionMatch`.
+   */
+  #replayCompletedSelection(
+    flowHash: string,
+    selectedConnectionId: string,
+    now: Date,
+    response: Response,
+  ): CompletedSelectionMatch {
+    const entry = this.#completedSelections.get(flowHash);
+    if (!entry) return "UNKNOWN";
+    if (entry.expiresAt > now.getTime() && entry.selectedConnectionId === selectedConnectionId) {
+      response.clearCookie(MCP_OAUTH_FLOW_COOKIE, clearBrokerFlowCookieOptions());
+      sendBrokerHostAuthorizationResult(response, {
+        manualPersonalPocReturn: entry.manualPersonalPocReturn,
+        returnUrl: entry.returnUrl,
+        hostName: entry.hostName,
+        organisationName: entry.organisationName,
+      });
+      return "REPLAYED";
+    }
+    // The cache proves this exact flow (this `flowHash`) really did complete
+    // — we only ever write an entry right after our own successful
+    // repository commit for it — but this specific request is not a safe
+    // replay of that outcome: either the cached authorization code has since
+    // expired, or this submit names a different connection than the one
+    // that was actually completed. Either way, "already connected" is a
+    // true statement even though handing back the cached credential is not
+    // the right response.
+    return "KNOWN_COMPLETED";
   }
 
   #newSecret(description: string): string {

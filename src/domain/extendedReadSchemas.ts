@@ -136,6 +136,10 @@ export const getManualJournalSchema = z.object({
   manual_journal_id: xeroId,
 }).strict();
 
+export const getCreditNoteSchema = z.object({
+  credit_note_id: xeroId,
+}).strict();
+
 export const itemSortSchema = z.enum([
   "CODE_ASC",
   "CODE_DESC",
@@ -214,6 +218,41 @@ export const getBankTransactionSchema = z.object({
   bank_transaction_id: xeroId,
 }).strict();
 
+/**
+ * `/Journals` paginates by an offset on JournalNumber (journals with a
+ * greater JournalNumber than `offset` are returned), not by page number -
+ * confirmed against the xero-node 19.0.0 `getJournals` signature. There is no
+ * agent-facing page size: Xero controls how many journals one call returns,
+ * and exhaustion is only provable by an empty response, so this schema does
+ * not invent a page_size the provider does not honour.
+ */
+export const listJournalsSchema = z.object({
+  offset: z.number().int().min(0).max(2_147_483_647).optional(),
+}).strict();
+
+export const getPaymentSchema = z.object({
+  payment_id: xeroId,
+}).strict();
+
+/**
+ * Xero returns Tracking Categories and their Options as one provider-owned
+ * collection. `limit` bounds the MCP projection; this is not a raw provider
+ * filter or a claim that the collection is exhaustive.
+ */
+export const listTrackingCategoriesSchema = z.object({
+  include_archived: z.boolean().default(false),
+  limit: z.number().int().min(1).max(100).default(100),
+}).strict();
+
+/**
+ * The Xero Contact Groups list endpoint does not expose pagination controls.
+ * Keep the Agent-visible projection bounded and make its conservative
+ * completeness evidence explicit in the provider result.
+ */
+export const listContactGroupsSchema = z.object({
+  limit: z.number().int().min(1).max(100).default(100),
+}).strict();
+
 export type QuoteStatus = z.infer<typeof quoteStatusSchema>;
 export type QuoteSort = z.infer<typeof quoteSortSchema>;
 export type ListQuotesInput = z.infer<typeof listQuotesSchema>;
@@ -226,6 +265,7 @@ export type ManualJournalStatus = z.infer<typeof manualJournalStatusSchema>;
 export type ManualJournalSort = z.infer<typeof manualJournalSortSchema>;
 export type ListManualJournalsInput = z.infer<typeof listManualJournalsSchema>;
 export type GetManualJournalInput = z.infer<typeof getManualJournalSchema>;
+export type GetCreditNoteInput = z.infer<typeof getCreditNoteSchema>;
 export type ItemSort = z.infer<typeof itemSortSchema>;
 export type ListItemsInput = z.infer<typeof listItemsSchema>;
 export type GetItemInput = z.infer<typeof getItemSchema>;
@@ -234,3 +274,7 @@ export type BankTransactionStatus = z.infer<typeof bankTransactionStatusSchema>;
 export type BankTransactionSort = z.infer<typeof bankTransactionSortSchema>;
 export type ListBankTransactionsInput = z.infer<typeof listBankTransactionsSchema>;
 export type GetBankTransactionInput = z.infer<typeof getBankTransactionSchema>;
+export type ListJournalsInput = z.infer<typeof listJournalsSchema>;
+export type GetPaymentInput = z.infer<typeof getPaymentSchema>;
+export type ListTrackingCategoriesInput = z.infer<typeof listTrackingCategoriesSchema>;
+export type ListContactGroupsInput = z.infer<typeof listContactGroupsSchema>;

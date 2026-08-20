@@ -3,6 +3,10 @@ import type { AccountingRepository } from "../src/db/repository.js";
 import { listInvoicesSchema } from "../src/domain/schemas.js";
 import { XeroClientManager } from "../src/providers/xeroClientManager.js";
 import { XeroAccountingProvider } from "../src/providers/xeroProvider.js";
+import {
+  capturedDateFields,
+  loadXeroResponse,
+} from "./fixtures/xero-provider-responses/index.js";
 
 const invoiceId = "11111111-1111-4111-8111-111111111111";
 const contactId = "22222222-2222-4222-8222-222222222222";
@@ -103,7 +107,7 @@ describe("provider invoice history reads", () => {
       true,
       undefined,
       4,
-      true,
+      false,
       25,
       "ACME",
     );
@@ -141,6 +145,41 @@ describe("provider invoice history reads", () => {
       },
     });
     expect(result.invoices[0]).not.toHaveProperty("lines");
+  });
+
+  it("always requests summaryOnly=false so Xero returns exact pagination for the history walk", async () => {
+    // Production incident: with summaryOnly=true, Xero's Invoices endpoint
+    // omits response.body.pagination entirely (confirmed empirically against
+    // the live API), which forced the business-coordinate history walk in
+    // xeroBusinessCoordinateHistory.ts to fail closed with
+    // PROVIDER_PAGINATION_ESTIMATED / PROVIDER_ITEM_COUNT_MISSING_OR_INVALID
+    // on every supplier-bill write. Passing summaryOnly=false restores the
+    // exact pageCount/itemCount Xero already returns for this query shape.
+    const getInvoices = vi.fn().mockResolvedValue({
+      body: { invoices: [], pagination: { page: 1, pageSize: 100, pageCount: 1, itemCount: 0 } },
+      response: { headers: {} },
+    });
+    const provider = providerWithClient({ accountingApi: { getInvoices } });
+
+    await provider.listInvoices("actor-a", listInvoicesSchema.parse({ page_size: 100 }));
+
+    expect(getInvoices).toHaveBeenCalledWith(
+      "tenant-a",
+      undefined,
+      undefined,
+      "Date DESC",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      1,
+      false,
+      undefined,
+      4,
+      false,
+      100,
+      undefined,
+    );
   });
 
   it("does not turn Xero's summary-only attachment omission into a false value", async () => {
@@ -251,5 +290,96 @@ describe("provider invoice history reads", () => {
     expect(bill.linesTruncated).toBe(false);
 
     await expect(provider.getSupplierBill("actor-a", invoiceId)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("provider invoice reads against a captured Xero response", () => {
+  it("keeps the captured invoice_accpay Date-field inventory the mapper already accounts for", () => {
+    // proves: if a future re-capture shows Xero returning a NEW field as a
+    // Date (e.g. amountDue), this list changes and forces a human to check
+    // whether mapInvoiceSummary/mapInvoiceSnapshot handle it - rather than the
+    // gap staying invisible because nobody happened to assert on that field.
+    expect(capturedDateFields("invoice_accpay")).toEqual([
+      "invoices[].date",
+      "invoices[].dueDate",
+      "invoices[].updatedDateUTC",
+    ]);
+  });
+
+  it("maps a real captured Xero AP invoice list page, dropping its empty reference", async () => {
+    // proves: real Xero sends reference: "" rather than omitting the key, and
+    // updatedDateUTC as a live Date alongside a separate updatedDateUTCString.
+    // mapInvoiceSummary must prefer the Date branch and must treat "" as
+    // absent - a hand-built fixture that omitted an empty reference outright
+    // would never exercise the falsy-empty-string branch.
+    const body = loadXeroResponse("invoice_accpay") as {
+      invoices: Array<Record<string, unknown>>;
+      pagination: Record<string, number>;
+    };
+    const getInvoices = vi.fn().mockResolvedValue({ body, response: { headers: {} } });
+    const provider = providerWithClient({ accountingApi: { getInvoices } });
+
+    const result = await provider.listInvoices("actor-a", listInvoicesSchema.parse({ page_size: 100 }));
+
+    expect(result.invoices).toEqual([{
+      invoiceId: "483e4412-488a-405c-9115-0a6f3aacf6a6",
+      type: "ACCPAY",
+      status: "DRAFT",
+      contact: { contactId: "23cb74b0-6e82-4d6a-af84-1e635a4fb59b", name: "Northwind Logistics LLC" },
+      invoiceNumber: "NW-8842",
+      invoiceDate: "2026-08-14",
+      dueDate: "2026-09-13",
+      currency: "USD",
+      currencyRate: "1.0000",
+      subTotal: "2400.0000",
+      totalTax: "0.0000",
+      total: "2400.0000",
+      amountDue: "2400.0000",
+      amountPaid: "0.0000",
+      amountCredited: "0.0000",
+      attachmentsKnown: true,
+      hasAttachments: false,
+      updatedAt: "2026-08-19T09:11:54.120Z",
+    }]);
+    expect(result.pagination).toEqual({
+      page: 1,
+      pageSize: 100,
+      returned: 1,
+      providerPageCount: 1,
+      providerItemCount: 1,
+      hasNextPage: false,
+      hasNextPageIsEstimated: false,
+      omittedInvalid: 0,
+    });
+  });
+
+  it("reads the exact real captured AP invoice, including its one real line item", async () => {
+    const [invoice] = loadXeroResponse("invoice_accpay").invoices as Array<Record<string, unknown>>;
+    const getInvoices = vi.fn().mockResolvedValue({ body: { invoices: [invoice] }, response: { headers: {} } });
+    const provider = providerWithClient({ accountingApi: { getInvoices } });
+
+    const result = await provider.getInvoice("actor-a", "483e4412-488a-405c-9115-0a6f3aacf6a6", "ACCPAY");
+
+    expect(result).toMatchObject({
+      invoiceId: "483e4412-488a-405c-9115-0a6f3aacf6a6",
+      tenantId: "tenant-a",
+      lineAmountType: "Exclusive",
+      lineItemCount: 1,
+      linesTruncated: false,
+    });
+    expect(result.lines).toEqual([{
+      lineItemId: "77ec3279-8bb0-441d-9728-eef4326d0185",
+      description: "Freight forwarding — August",
+      quantity: "1.0000",
+      unitAmount: "2400.0000",
+      lineAmount: "2400.0000",
+      taxAmount: "0.0000",
+      accountId: "c4b1c463-9913-4672-a8b8-01a3b546126f",
+      accountCode: "425",
+      taxType: "NONE",
+    }]);
+
+    await expect(provider.getSupplierBill("actor-a", "483e4412-488a-405c-9115-0a6f3aacf6a6")).resolves
+      .toMatchObject({ type: "ACCPAY", lineItemCount: 1 });
   });
 });

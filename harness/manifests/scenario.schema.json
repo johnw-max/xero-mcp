@@ -35,10 +35,15 @@
     "safety": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data_class", "write_policy", "authorise_forbidden", "payment_forbidden"],
+      "required": ["data_class", "write_policy", "payment_forbidden"],
+      "anyOf": [
+        { "required": ["unreleased_state_actions_forbidden"] },
+        { "required": ["authorise_forbidden"] }
+      ],
       "properties": {
         "data_class": { "const": "SYNTHETIC_ONLY" },
-        "write_policy": { "enum": ["READ_ONLY", "ONE_CONTROLLED_DRAFT_WRITER"] },
+        "write_policy": { "enum": ["READ_ONLY", "ONE_CONTROLLED_DRAFT_WRITER", "ONE_CONTROLLED_CASE_WRITER"] },
+        "unreleased_state_actions_forbidden": { "const": true },
         "authorise_forbidden": { "const": true },
         "payment_forbidden": { "const": true },
         "write_gate_must_start_closed": { "type": "boolean" },

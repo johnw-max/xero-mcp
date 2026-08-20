@@ -33,4 +33,15 @@ describe("conservative Xero write-outcome classification", () => {
   ])("accepts only structured Xero validation evidence as DEFINITELY_REJECTED", (error) => {
     expect(classifyXeroWriteException(error)).toBe("DEFINITELY_REJECTED");
   });
+
+  it("parses the serialized xero-node ApiError envelope as structured rejection evidence", () => {
+    const serializedSdkError = JSON.stringify({
+      response: {
+        statusCode: 400,
+        body: { ErrorNumber: 10, Type: "ValidationException", Message: "Invoice cannot be authorised" },
+      },
+      body: { ErrorNumber: 10, Type: "ValidationException", Message: "Invoice cannot be authorised" },
+    });
+    expect(classifyXeroWriteException(serializedSdkError)).toBe("DEFINITELY_REJECTED");
+  });
 });

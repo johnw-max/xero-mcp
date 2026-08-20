@@ -1,97 +1,80 @@
 # Xero MCP 当前能力与边界（通俗版）
 
-核对日期：2026-08-07  
-当前结论：`43 工具本地候选，未部署，未完成真实 Xero / Agent2 最终验收`
+核对日期：2026-08-20
+
+候选版本：`0.4.0-rc.1`，尚未上线
+
+架构真相源：[`XERO-MCP-TARGET-ARCHITECTURE-2026-08-20.md`](./XERO-MCP-TARGET-ARCHITECTURE-2026-08-20.md)
+
+能力真相源：[`config/xero-capability-manifest.json`](../config/xero-capability-manifest.json)
 
 ## 一句话结论
 
-产品方向已经对：会计在 Agent2 里连接自己的 Xero、查历史、加入材料、让 Agent 分析并准备会计操作；经用户确认后，MCP 才把受控结果写入 Xero，Xero 始终是正式账本。
+当前候选是一个 Xero Ledger Gateway：Google Drive 保存和同步用户材料，Accounting Skills/Agent 理解业务并组织操作，Xero MCP 读取或写入 Xero；Xero 始终是唯一正式账本。
 
-本地候选已经从“只会创建一张供应商账单草稿”扩展到常用读取、六类 DRAFT 和基础 Contact/Item，但现在还不能对外说“线上已经支持”。43 工具版尚未部署，新增 OAuth scope 也尚未重新授权和真实回读。
+本地代码链已有明显进展，但 capability manifest 的 `SHIP` 项还没有当前冻结 candidate 的真实 Xero UAT，因此现在仍是 `NO-GO`，不能说已经上线。
 
-## 现在处于哪一层
+## 当前公共面
 
-| 层级 | 已确认 | 仍待完成 |
-|---|---|---|
-| 当前线上版 | 2026-08-07 公网现场核验为 0.2.13、15 工具；health/ready 与 OAuth metadata 正常 | 仍是 Personal POC；不能代表 43 工具候选，也未在本轮触发真实 Xero 读取或写入 |
-| 43 工具本地候选 | 0.3.0 固定工具合同 40/40；只读业务 7/7、Provider 写入 0；受控写入 6/6、AUTHORISE 0；完整默认回归 780 PASS、37 条条件跳过；HTTP/OAuth 强制测试 2/2、fresh PostgreSQL 强制测试 35/35；类型检查、构建通过 | 仍需目标 VPS 迁移、灰度部署和线上运行证据 |
-| 真实 Xero | 旧版本曾完成单张 Bill DRAFT 同 ID 回读 | 新增对象尚未逐类真实创建和同 ID 回读 |
-| Agent2 | 旧窄版流程有历史 UAT 证据 | 43 工具版尚未重新授权、挂载并跑连续会计对话 |
+公共工具由 manifest 与 allowlist 动态核对，当前工作树为 38 个，不再把 28/29/30 写成发布常量：
 
-## 会计现在可以期待哪些能力
+- 3 个连接/组织控制工具；
+- 31 个有界账本/参考数据读取工具；
+- 4 个 typed Accounting Case 工具：prepare、execute、status、list。
 
-### 1. 读取与分析（Agent 可自主调用）
+读取已包括 Organisation、Accounts、Tax Rates、Tracking Categories/Options、Contacts、Items、Contact Groups、主要单据、Payments、Bank Transactions、Journals、Trial Balance、P&L、Balance Sheet、Aged AR/AP。
 
-- 确认当前连接的 Xero Organisation 和本位币；
-- 读取科目、税码、联系人及精确联系人；
-- 读取 Invoice、Supplier Bill、Credit Note、Payment；
-- 读取 Quote、Purchase Order、Manual Journal、Item、Bank Transaction；
-- 读取有界 Trial Balance，并明确分页、截断和完整性边界；
-- 将 Xero 存量与用户加入的 PDF、表格、截图、邮件说明放在一起做匹配、重复检查、余额分析和编码建议。
+Journals 不等于 Manual Journals。Journals 的真实上线还取决于 Xero 所需 tier、scope 和 use-case approval；缺 entitlement 时必须明确报错，不能把它伪装成空结果。
 
-只读不等于“全量审计证明”。结果达到分页或大小边界时，Agent 必须明确说没有证明完整。
+## 当前代码可达的写入
 
-### 2. 用户确认后可以写入的对象
+所有公开写入都从 typed Accounting Case 进入，不重新开放旧 object-level mutation tools。当前代码可表达并派发：
 
-| 对象 | 当前候选允许的动作 | 写入结果 |
-|---|---|---|
-| Sales Invoice | 创建 | `DRAFT` |
-| Supplier Bill | 创建 | `DRAFT` |
-| Quote | 创建 | `DRAFT` |
-| Purchase Order | 创建 | `DRAFT` |
-| Credit Note | 创建 | `DRAFT`；不分配、不退款 |
-| Manual Journal | 创建平衡、NoTax 分录 | `DRAFT`；不 POST |
-| Contact | 创建或修改基础名称、地址、邮箱、电话 | `ACTIVE`；不碰银行、税务、归档、合并、删除 |
-| Item | 创建或修改基础非库存 Item | `UNTRACKED`；不改价格、科目、税码、库存或 Tracking |
+- Contact：create basic、update basic；
+- Item：create/update basic untracked；
+- DRAFT create：Customer Invoice、Supplier Bill、Credit Note、Quote、Purchase Order、Manual Journal。
 
-每一次写入都必须经过：
+这些仍需在专用 Xero test company 完成真实 provider receipt、对象 ID 和 exact read-back，才能从 `NOT_READY` 晋级。
+
+## 本期仍需补齐
+
+- Invoice/Bill、Credit Note、Quote、Manual Journal 的 existing DRAFT update；
+- Tracking Category/Option 的安全 create/update；
+- Invoice/Bill authorise、Manual Journal post；
+- Payment record/allocation/refund/reversal；
+- Bank Transaction create/update；
+- Credit Note allocation/refund；
+- 官方 API 支持的 void/reverse。
+
+这些是正常会计账本动作，不因包含 Payment/Bank 就永久排除。但每项必须是独立 typed action，并有合法状态校验、幂等、provider receipt、exact read-back 和 unknown-write recovery；不能用 generic update 偷渡。
+
+## 唯一需要用户确认的流程
+
+只有切换 Xero Organisation 需要用户操作网页：Agent 调用 `xero_start_organisation_switch` 返回短效 URL，用户在页面中选择一个已经授权的组织，然后 Agent 重新 pin 并读取 Organisation。
+
+聊天文字不能直接切换组织。其他会计动作不新增签名、审批、确认 token、确认短语或确认状态机。
+
+## 明确不做
+
+- 通过银行或支付机构真实发起、批准或释放资金；
+- Bank Feed 注入/篡改、Batch Payment 银行执行；
+- hard delete 或历史重写；
+- Payroll 发薪、tax filing、period close/lock；
+- 官方 API 不支持时伪造 final reconciliation confirmation；
+- 任意 endpoint、URL、JSON、generic CRUD；
+- 在 MCP 内复制余额或重建第二套 Ledger。
+
+## 怎样才算上线通过
+
+真实用户验收必须按下面的线上组合运行，而不是只调用 provider 或跑本地单测：
 
 ```text
-服务端精确账套绑定
-  -> 只准备、不写入
-  -> 展示不可变提案和来源指纹
-  -> 用户输入当前提案的一次性确认句
-  -> 再检查权限、OAuth scope、写闸和会计引用
-  -> 带幂等保护写入 Xero
-  -> 先保存 Xero ID/回执
-  -> 按同一个 ID 精确回读
-  -> 只有字段和状态一致才报告成功
+Google Drive 中的真实形态材料
+  → 线上 Accounting Skills/Agent
+  → Xero Organisation 读取或 URL 切换
+  → Xero 账本读取
+  → typed Accounting Case 写入
+  → provider receipt + exact read-back + 适用时 Journals 验证
 ```
 
-OAuth Broker 模式以服务端 Installation/Binding 的精确 Tenant 为准；旧共享凭证模式仍必须配置显式 Tenant 白名单。Agent 不能从工具参数切换账套。
-
-权限遵循最小化原则：读取/准备使用 `xero.read`，执行使用 `xero.draft.write`；HTTP 入口不再强迫写入 Token 同时拥有读取权限。Xero consent 也按实际 Host 能力推导，只写草稿时不会顺带申请 Trial Balance、Payment 或 Bank Transaction 的读取权限。
-
-## 现在明确不能做什么
-
-- 不 AUTHORISE、SUBMIT、POST 或发送单据；
-- 不创建、修改或分配 Payment，不收款、不付款、不退款；
-- 不分配 Credit Note；
-- 不创建或修改 Bank Transaction，不执行最终银行对账；
-- 不 Void、Delete、Archive、Merge；
-- 不修改科目表、银行科目、系统科目、税率；
-- 不上传 Xero Attachment；当前还没有可信的 Agent2 文件暂存与 Host 签名原文件收据；
-- 不报税、不关账、不出审计意见；
-- 不支持无人监督批量记账，也不能把 Personal POC 表述成多客户生产系统。
-
-Agent 可以读取现有账务、比较材料和账目、提出对账候选及解释差异；最终 reconciliation 仍由会计在 Xero 完成。
-
-## 上线前必须完成的产品事项
-
-1. **真实业务验收。** 本地测试不能替代 Xero 事实。计划在线展示的对象必须获得 Xero ID、保存写入回执并按同一 ID 回读；随后在 Agent2 以普通会计话术跑连续流程。
-2. **保留确认层级说明。** 10 组写入已统一为服务端一次性 Preparation + 逐字确认句，满足受监督 Demo；如要进入多人生产审批，还需由 Host 签发可验签、绑定具体用户和提案指纹的确认收据。
-
-## 是否已经达到想要的效果
-
-从能力范围看，已经接近想要的基础形态：不只读，也不只会建 Bill；Agent 可以围绕多种常见会计对象自主调查、分析和准备受控操作。
-
-从上线证据看，目前是 `本地发布门槛已通过、可以部署`，还不是 `43 工具线上 Demo Ready`。转为 Demo Ready 的顺序是：
-
-1. 以写闸关闭状态部署 0.3.0；
-2. 让测试 Xero 重新授权新增最小 scope；
-3. 先做关键只读抽样；
-4. 临时开启单账套写闸，对计划演示对象做真实写入、保存回执并按同一 Xero ID 回读；
-5. 在 Agent2 跑自然会计对话的 signature flows；
-6. 立即关闭写闸并清理临时运维通道。
-
-工具清单以 [`src/mcp/toolNames.ts`](../src/mcp/toolNames.ts) 为准；风险边界以 [`src/policy/xeroCapabilityPolicy.ts`](../src/policy/xeroCapabilityPolicy.ts) 为准。
+Drive 文件和 Agent 回答不是记账证据。只有 Xero 对象 ID、持久化 receipt 和同对象精确回读一致，才能称该项写入成功。

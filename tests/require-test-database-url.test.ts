@@ -53,7 +53,7 @@ describe("required PostgreSQL test database guard", () => {
     ) as { scripts?: Record<string, string> };
     const requiredCommand = packageJson.scripts?.["test:postgres:required"] ?? "";
     const postgresIntegrationTests = readdirSync(resolve(process.cwd(), "tests"))
-      .filter((file) => /^postgres-.*\.integration\.test\.ts$/u.test(file))
+      .filter((file) => /\.integration\.test\.ts$/u.test(file))
       .sort();
 
     expect(postgresIntegrationTests.length).toBeGreaterThan(0);

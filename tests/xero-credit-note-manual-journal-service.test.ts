@@ -12,6 +12,13 @@ import { hashObject } from "../src/security/hash.js";
 import { XeroCreditNoteManualJournalService } from "../src/services/xeroCreditNoteManualJournalService.js";
 import { XeroMutationService } from "../src/services/xeroMutationService.js";
 import { AppError } from "../src/errors.js";
+import { XERO_AUTONOMOUS_WRITE_ACTIONS } from "../src/policy/xeroAutonomousActions.js";
+import {
+  bindXeroDeclaredLedger,
+  createXeroDeclaredLedgerExecutionConstraints,
+  type XeroDeclaredLedgerBinding,
+} from "../src/policy/xeroDeclaredLedgerBinding.js";
+import type { AccountSummary, TaxRateSummary } from "../src/providers/types.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const contactId = "22222222-2222-4222-8222-222222222222";
@@ -19,6 +26,27 @@ const revenueAccountId = "33333333-3333-4333-8333-333333333333";
 const expenseAccountId = "44444444-4444-4444-8444-444444444444";
 const creditNoteId = "55555555-5555-4555-8555-555555555555";
 const manualJournalId = "66666666-6666-4666-8666-666666666666";
+
+// ADR-002: server-owned execution constraints now bind the caller-declared
+// account code + TaxType against the tenant's live chart of accounts, not a
+// semantic category profile.
+function testLedgerBinding(forTenantId: string): XeroDeclaredLedgerBinding {
+  const accounts: readonly AccountSummary[] = [
+    { accountId: revenueAccountId, code: "200", name: "Sales", status: "ACTIVE", type: "REVENUE", class: "REVENUE" },
+    { accountId: expenseAccountId, code: "400", name: "Operating expense", status: "ACTIVE", type: "EXPENSE", class: "EXPENSE" },
+  ];
+  const taxRates: readonly TaxRateSummary[] = [
+    { taxType: "OUTPUTY24", name: "GST on Income", status: "ACTIVE", displayTaxRate: "9.0000", effectiveRate: "9.0000", canApplyToRevenue: true },
+  ];
+  return bindXeroDeclaredLedger({
+    tenantId: forTenantId,
+    jurisdiction: "SG",
+    accountCodes: accounts.map((account) => account.code!),
+    taxTypes: taxRates.map((taxRate) => taxRate.taxType),
+    accounts,
+    taxRates,
+  });
+}
 
 const creditNoteInput = {
   source_ref: "work-material:credit-note-001",
@@ -29,6 +57,7 @@ const creditNoteInput = {
   credit_note_date: "2026-08-07",
   currency: "SGD",
   reference: "CN-SOURCE-001",
+  authoritative_provider_field: "CREDIT_NOTE_NUMBER" as const,
   line_amount_type: "Exclusive" as const,
   lines: [{
     description: "Service credit",
@@ -36,7 +65,7 @@ const creditNoteInput = {
     unit_amount: 125.5,
     account_id: revenueAccountId,
     account_code: "200",
-    tax_type: "OUTPUT",
+    tax_type: "OUTPUTY24",
   }],
 };
 
@@ -80,8 +109,10 @@ function harness(options: {
     actorId: "workspace-test:user:user-test",
     audience: "https://mcp.example.test/mcp",
   });
-  const context: RequestContext = options.oauthBound
-    ? createOAuthRequestContext({
+  const oauthBound = options.oauthBound !== false;
+  const context: RequestContext = oauthBound
+    ? Object.freeze({
+        ...createOAuthRequestContext({
         issuer: "https://mcp.example.test",
         resolvedToken: {
           tokenId: "token-test",
@@ -94,6 +125,7 @@ function harness(options: {
           installationId: "installation-test",
           bindingId: "binding-test",
           connectionId: "connection-test",
+          bindingRevision: 1,
           authorizationId: "authorization-test",
           workspaceId: "workspace-test",
           subjectType: "USER",
@@ -102,14 +134,18 @@ function harness(options: {
           policyId: "policy-test",
           tenantId,
         } satisfies ResolvedMcpAccessToken,
+        }),
+        targetSessionId: "target-session-test",
+        targetSessionHash: "c".repeat(64),
+        targetSessionExpiresAt: new Date("2030-01-01T00:00:00.000Z"),
       })
     : {
         ...legacy,
         connectionId: "connection-test",
         scopes: Object.freeze(["xero.read", "xero.draft.write"]),
       };
-  if (options.oauthBound) {
-    vi.spyOn(repository, "resolveAgentConnectionBinding").mockResolvedValue({
+  if (oauthBound) {
+    const resolvedBinding = {
       installationId: "installation-test",
       bindingId: "binding-test",
       workspaceId: "workspace-test",
@@ -117,14 +153,44 @@ function harness(options: {
       subjectId: "user-test",
       agentId: "agent-test",
       connectionId: "connection-test",
+      bindingRevision: 1,
       authorizationId: "authorization-test",
       tenantId,
       tenantName: "Demo Org",
       policyId: "policy-test",
+    };
+    vi.spyOn(repository, "resolveAgentConnectionBinding").mockResolvedValue(resolvedBinding);
+    vi.spyOn(repository, "resolveLedgerTargetSession").mockResolvedValue({
+      session: {
+        sessionId: "target-session-test",
+        sessionHash: "c".repeat(64),
+        installationId: "installation-test",
+        bindingId: "binding-test",
+        connectionId: "connection-test",
+        bindingRevision: 1,
+        createdAt: new Date("2026-08-12T00:00:00.000Z"),
+        expiresAt: new Date("2030-01-01T00:00:00.000Z"),
+      },
+      binding: resolvedBinding,
     });
   }
   const mutations = new XeroMutationService(repository, {
     confirmationSecret: "test-confirmation-secret-that-is-at-least-32-bytes",
+    writeKillSwitchEnabled: options.writeEnabled ?? true,
+    standingDelegations: [{
+      delegationId: "test-xero-standing-delegation",
+      revision: 1,
+      status: "ACTIVE",
+      providerId: "xero",
+      workspaceId: "workspace-test",
+      agentId: "agent-test",
+      installationId: "installation-test",
+      tenantIds: [tenantId],
+      actionIds: XERO_AUTONOMOUS_WRITE_ACTIONS,
+    }],
+    providerCapabilityEvaluator: {
+      evaluate: async () => ({ allowed: true, denyReasons: [], receiptHash: "e".repeat(64) }),
+    },
     unsafeAllowLegacyContextForTests: true,
     legacyBindingForTests: {
       actorId: context.actorId,
@@ -146,6 +212,26 @@ function harness(options: {
     }
   }
   let contactReads = 0;
+  const liveAccounts = () => [
+    {
+      accountId: revenueAccountId,
+      code: "200",
+      name: "Sales",
+      status: "ACTIVE",
+      type: "REVENUE",
+      class: "REVENUE",
+    },
+    {
+      accountId: expenseAccountId,
+      code: "400",
+      name: "Operating expense",
+      status: "ACTIVE",
+      type: "EXPENSE",
+      class: "EXPENSE",
+      ...(options.protectExpenseAccount ? { systemAccount: "CREDITORS" } : {}),
+    },
+  ];
+  const listAccounts = vi.fn(async () => liveAccounts());
   const readProvider = {
     connectionStatus: vi.fn(async () => ({
       connected: true,
@@ -167,30 +253,15 @@ function harness(options: {
         status: options.contactBecomesInactive && contactReads > 1 ? "ARCHIVED" : "ACTIVE",
       };
     }),
-    listAccounts: vi.fn(async () => [
-      {
-        accountId: revenueAccountId,
-        code: "200",
-        name: "Sales",
-        status: "ACTIVE",
-        type: "REVENUE",
-        class: "REVENUE",
-      },
-      {
-        accountId: expenseAccountId,
-        code: "400",
-        name: "Operating expense",
-        status: "ACTIVE",
-        type: "EXPENSE",
-        class: "EXPENSE",
-        ...(options.protectExpenseAccount ? { systemAccount: "CREDITORS" } : {}),
-      },
-    ]),
+    listAccounts,
     listTaxRates: vi.fn(async () => options.missingTax ? [] : [{
       name: "Output tax",
-      taxType: "OUTPUT",
+      taxType: "OUTPUTY24",
       status: "ACTIVE",
+      displayTaxRate: "9.0000",
+      effectiveRate: "9.0000",
       canApplyToRevenue: true,
+      canApplyToAssets: true,
     }]),
   } as unknown as AccountingProvider;
 
@@ -254,10 +325,6 @@ function harness(options: {
           totalTax: "0.0000",
           total: "125.5000",
           noDiscountsVerified: true as const,
-          arithmeticVerified: true as const,
-          lineBasisVerified: true as const,
-          taxTotalVerified: true as const,
-          roundingTolerance: "0.0050",
         },
         },
         readbackCanonicalPayload: expected,
@@ -308,6 +375,8 @@ function harness(options: {
     createCreditNoteDraft,
     createManualJournalDraft,
     creditWriteEvidenceAtRead: () => creditWriteEvidenceAtRead,
+    listAccounts,
+    mutations,
   };
 }
 
@@ -322,7 +391,6 @@ describe("XeroCreditNoteManualJournalService", () => {
     await expect(broker.service.createCreditNoteDraft(broker.context, {
       preparation_id: prepared.preparation_id,
       request_id: "credit-note-broker-empty-allowlist",
-      confirmation_phrase: prepared.confirmation_phrase,
     })).resolves.toMatchObject({ state: "DRAFT_READBACK_VERIFIED", xero_object_id: creditNoteId });
     expect(broker.createCreditNoteDraft).toHaveBeenCalledTimes(1);
   });
@@ -335,14 +403,13 @@ describe("XeroCreditNoteManualJournalService", () => {
       object_type: "CREDIT_NOTE",
       operation: "CREATE_DRAFT",
       proposal: { status: "DRAFT", objectType: "CREDIT_NOTE" },
-      execution_allowed_before_confirmation: false,
+      execution_mode: "STANDING_AUTONOMOUS_DELEGATION",
+      per_transaction_confirmation_required: false,
+      next_action: "CALL_EXECUTE_TOOL",
     });
-    expect(prepared.confirmation_phrase.match(/来源指纹/gu)).toHaveLength(1);
-    expect(prepared.confirmation_phrase).not.toContain("｜来源 ");
     const execution = {
       preparation_id: prepared.preparation_id,
       request_id: "credit-note-controlled-001",
-      confirmation_phrase: prepared.confirmation_phrase,
     };
     await expect(service.createCreditNoteDraft(context, execution)).resolves.toMatchObject({
       state: "DRAFT_READBACK_VERIFIED",
@@ -367,7 +434,6 @@ describe("XeroCreditNoteManualJournalService", () => {
     await service.createCreditNoteDraft(context, {
       preparation_id: prepared.preparation_id,
       request_id: "credit-note-write-evidence",
-      confirmation_phrase: prepared.confirmation_phrase,
     });
     expect(creditWriteEvidenceAtRead()).toMatchObject({
       state: "WRITE_IN_FLIGHT",
@@ -386,7 +452,6 @@ describe("XeroCreditNoteManualJournalService", () => {
     await expect(failed.service.createCreditNoteDraft(failed.context, {
       preparation_id: prepared.preparation_id,
       request_id: "credit-note-double-persistence-failure",
-      confirmation_phrase: prepared.confirmation_phrase,
     })).rejects.toMatchObject({
       code: "WRITE_RESULT_UNKNOWN",
       details: { xeroObjectId: creditNoteId },
@@ -410,7 +475,6 @@ describe("XeroCreditNoteManualJournalService", () => {
     const execution = {
       preparation_id: prepared.preparation_id,
       request_id: "manual-journal-controlled-001",
-      confirmation_phrase: prepared.confirmation_phrase,
     };
     await expect(service.createManualJournalDraft(context, execution)).resolves.toMatchObject({
       state: "DRAFT_READBACK_VERIFIED",
@@ -425,20 +489,19 @@ describe("XeroCreditNoteManualJournalService", () => {
     expect(createManualJournalDraft).toHaveBeenCalledTimes(1);
   });
 
-  it("requires the exact phrase, an open write gate, and the three-field execution envelope", async () => {
+  it("rejects the removed phrase field, requires an open write gate, and accepts only the two-field envelope", async () => {
     const wrong = harness();
     const prepared = await wrong.service.prepareCreditNoteDraft(wrong.context, creditNoteInput);
     await expect(wrong.service.createCreditNoteDraft(wrong.context, {
       preparation_id: prepared.preparation_id,
       request_id: "credit-note-wrong-phrase",
-      confirmation_phrase: `${prepared.confirmation_phrase}-WRONG`,
-    })).rejects.toMatchObject({ code: "APPROVAL_INVALID" });
+      confirmation_phrase: "legacy-model-copied-phrase",
+    } as never)).rejects.toBeDefined();
     expect(wrong.createCreditNoteDraft).not.toHaveBeenCalled();
 
     await expect(wrong.service.createCreditNoteDraft(wrong.context, {
       preparation_id: prepared.preparation_id,
       request_id: "credit-note-extra-field",
-      confirmation_phrase: prepared.confirmation_phrase,
       tenant_id: tenantId,
     } as never)).rejects.toBeDefined();
     expect(wrong.createCreditNoteDraft).not.toHaveBeenCalled();
@@ -452,14 +515,13 @@ describe("XeroCreditNoteManualJournalService", () => {
     await expect(closed.service.createManualJournalDraft(closed.context, {
       preparation_id: closedPrepared.preparation_id,
       request_id: "manual-journal-write-gate-closed",
-      confirmation_phrase: closedPrepared.confirmation_phrase,
     })).rejects.toMatchObject({
-      code: "FORBIDDEN",
+      code: "WRITE_GATE_DISABLED",
       details: { denyReasons: expect.arrayContaining(["WRITE_GATE_CLOSED"]) },
     });
     expect(closed.createManualJournalDraft).not.toHaveBeenCalled();
 
-    const legacyWithoutAllowlist = harness({ omitAllowedTenantId: true });
+    const legacyWithoutAllowlist = harness({ oauthBound: false, omitAllowedTenantId: true });
     const legacyPrepared = await legacyWithoutAllowlist.service.prepareCreditNoteDraft(
       legacyWithoutAllowlist.context,
       {
@@ -471,9 +533,8 @@ describe("XeroCreditNoteManualJournalService", () => {
     await expect(legacyWithoutAllowlist.service.createCreditNoteDraft(legacyWithoutAllowlist.context, {
       preparation_id: legacyPrepared.preparation_id,
       request_id: "credit-note-legacy-no-allowlist",
-      confirmation_phrase: legacyPrepared.confirmation_phrase,
     })).rejects.toMatchObject({
-      code: "FORBIDDEN",
+      code: "TARGET_SESSION_INVALID",
       details: { denyReasons: expect.arrayContaining(["WRITE_TENANT_NOT_ALLOWED"]) },
     });
     expect(legacyWithoutAllowlist.createCreditNoteDraft).not.toHaveBeenCalled();
@@ -489,14 +550,58 @@ describe("XeroCreditNoteManualJournalService", () => {
     await expect(changed.service.createCreditNoteDraft(changed.context, {
       preparation_id: prepared.preparation_id,
       request_id: "credit-note-stale-contact",
-      confirmation_phrase: prepared.confirmation_phrase,
     })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     expect(changed.createCreditNoteDraft).not.toHaveBeenCalled();
     const mutationId = `xmr_${hashObject({ preparationId: prepared.preparation_id }).slice(0, 32)}`;
-    await expect(changed.repository.getXeroMutationRequest(mutationId)).resolves.toMatchObject({
-      state: "FAILED_VALIDATION",
-      validationReceipt: { reasonCode: "PREWRITE_REFERENCE_REVALIDATION_FAILED" },
+    await expect(changed.repository.getXeroMutationRequest(mutationId)).resolves.toBeUndefined();
+  });
+
+  it("rejects same-ID/code credit COA semantic drift before a mutation claim or Provider write", async () => {
+    const drift = harness();
+    const confirmMutation = vi.spyOn(drift.repository, "confirmXeroMutationPreparation");
+    const authorisePermit = vi.spyOn(drift.mutations, "authoriseAutonomous");
+    const constraints = createXeroDeclaredLedgerExecutionConstraints(
+      testLedgerBinding(tenantId),
+      [{ accountCode: "200", taxType: "OUTPUTY24" }],
+    );
+    const prepared = await drift.service.prepareCreditNoteDraft(drift.context, {
+      ...creditNoteInput,
+      source_ref: "work-material:credit-note-coa-permit-edge-drift",
+      source_unit_key: "credit-note:coa-permit-edge-drift",
+    }, constraints);
+    const goodAccounts = [
+      { accountId: revenueAccountId, code: "200", name: "Sales", status: "ACTIVE", type: "REVENUE", class: "REVENUE" },
+      { accountId: expenseAccountId, code: "400", name: "Operating expense", status: "ACTIVE", type: "EXPENSE", class: "EXPENSE" },
+    ];
+    const driftedAccounts = goodAccounts.map((account) => account.accountId === revenueAccountId
+      ? { ...account, type: "ASSET", class: "ASSET" }
+      : account);
+    drift.listAccounts.mockReset();
+    // Outer reference + semantic checks pass. The claim-adjacent complete
+    // reference read remains generically valid, then the semantic comparison
+    // sees the same ID/code with an ASSET type/class.
+    drift.listAccounts
+      .mockResolvedValueOnce(goodAccounts)
+      .mockResolvedValueOnce(goodAccounts)
+      .mockResolvedValueOnce(driftedAccounts)
+      .mockResolvedValue(driftedAccounts);
+
+    await expect(drift.service.createCreditNoteDraft(drift.context, {
+      preparation_id: prepared.preparation_id,
+      request_id: "credit-note-coa-permit-edge-drift",
+    }, constraints)).rejects.toMatchObject({
+      code: "STALE_PREFLIGHT",
+      details: {
+        reasonCodes: ["XERO_DECLARED_EXECUTION_ACCOUNT_SEMANTICS_DRIFT"],
+        providerMutationPossible: false,
+      },
     });
+    expect(authorisePermit).toHaveBeenCalledOnce();
+    expect(confirmMutation).not.toHaveBeenCalled();
+    expect(drift.createCreditNoteDraft).not.toHaveBeenCalled();
+    await expect(drift.repository.getXeroMutationRequest(
+      `xmr_${hashObject({ preparationId: prepared.preparation_id }).slice(0, 32)}`,
+    )).resolves.toBeUndefined();
   });
 
   it("rejects unresolved contact, tax, and protected-account references before preparation", async () => {
@@ -553,7 +658,6 @@ describe("XeroCreditNoteManualJournalService", () => {
     await expect(rejected.service.createCreditNoteDraft(rejected.context, {
       preparation_id: rejectedPreparation.preparation_id,
       request_id: "credit-note-provider-rejected",
-      confirmation_phrase: rejectedPreparation.confirmation_phrase,
     })).rejects.toMatchObject({ code: "PROVIDER_ERROR", retryable: false });
     const rejectedMutationId = `xmr_${hashObject({ preparationId: rejectedPreparation.preparation_id }).slice(0, 32)}`;
     await expect(rejected.repository.getXeroMutationRequest(rejectedMutationId)).resolves.toMatchObject({
@@ -569,7 +673,6 @@ describe("XeroCreditNoteManualJournalService", () => {
     await expect(unknown.service.createCreditNoteDraft(unknown.context, {
       preparation_id: unknownPreparation.preparation_id,
       request_id: "credit-note-provider-unknown",
-      confirmation_phrase: unknownPreparation.confirmation_phrase,
     })).rejects.toMatchObject({ code: "WRITE_RESULT_UNKNOWN" });
     const unknownMutationId = `xmr_${hashObject({ preparationId: unknownPreparation.preparation_id }).slice(0, 32)}`;
     await expect(unknown.repository.getXeroMutationRequest(unknownMutationId)).resolves.toMatchObject({
@@ -586,7 +689,6 @@ describe("XeroCreditNoteManualJournalService", () => {
     await expect(mismatch.service.createManualJournalDraft(mismatch.context, {
       preparation_id: prepared.preparation_id,
       request_id: "manual-journal-readback-mismatch",
-      confirmation_phrase: prepared.confirmation_phrase,
     })).rejects.toMatchObject({ code: "READBACK_MISMATCH" });
     const mutationId = `xmr_${hashObject({ preparationId: prepared.preparation_id }).slice(0, 32)}`;
     await expect(mismatch.repository.getXeroMutationRequest(mutationId)).resolves.toMatchObject({

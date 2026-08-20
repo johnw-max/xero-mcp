@@ -1,4 +1,7 @@
 import type {
+  AgedPayablesInput,
+  AgedReceivablesInput,
+  BalanceSheetInput,
   CreditNoteType,
   CreateDraftSalesInvoiceInput,
   CreateDraftSupplierBillInput,
@@ -8,19 +11,25 @@ import type {
   ListInvoicesInput,
   ListPaymentsInput,
   PaymentType,
+  ProfitAndLossInput,
 } from "../domain/schemas.js";
+import type { LedgerProviderWritePermit } from "../control-kernel/ledgerProviderWritePermit.js";
 import type {
   ListBankTransactionsInput,
   ListItemsInput,
+  ListJournalsInput,
+  ListContactGroupsInput,
   ListManualJournalsInput,
   ListPurchaseOrdersInput,
   ListQuotesInput,
+  ListTrackingCategoriesInput,
 } from "../domain/extendedReadSchemas.js";
 import type { RequestContext } from "../security/requestContext.js";
 import type {
   BankTransactionSnapshot,
   BankTransactionSummary,
   ItemSummary,
+  JournalSummary,
   ManualJournalSnapshot,
   ManualJournalSummary,
   PurchaseOrderSnapshot,
@@ -42,18 +51,20 @@ export interface ConnectionSummary {
   connectUrl?: string;
   connectUrlExpiresAt?: string;
   connectionLifecycle?: {
-    organisationBinding: "EXACTLY_ONE_ORGANISATION_PER_MCP_CONNECTION";
+    organisationBinding: "ONE_IMMUTABLE_ORGANISATION_PER_TARGET_SESSION";
+    currentTenantMeaning: "COMPATIBILITY_POINTER_NOT_LEDGER_TARGET";
+    targetSessionLifetime: "SHORT_LIVED_SERVER_ENFORCED";
     accessTokenRefresh: "AUTOMATIC_NO_USER_ACTION";
     organisationChange: {
       supported: true;
-      requiresFreshXeroOAuth: true;
+      requiresFreshXeroOAuth: "ONLY_IF_ORGANISATION_NOT_ALREADY_AUTHORISED";
       silentChatSwitchAllowed: false;
       hostSteps: readonly [
-        "REVOKE_CURRENT_MCP_AUTHORISATION",
-        "CONNECT_MCP_AGAIN",
-        "COMPLETE_XERO_LOGIN_OR_CONSENT",
+        "ASK_AGENT_TO_SWITCH_XERO_ORGANISATION",
+        "OPEN_SHORT_LIVED_CONFIRMATION_LINK",
         "SELECT_EXACTLY_ONE_XERO_ORGANISATION",
-        "RETURN_TO_HOST_AND_VERIFY_CONNECTION_STATUS",
+        "PIN_SELECTED_ORGANISATION",
+        "VERIFY_WITH_PINNED_ORGANISATION_READ",
       ];
     };
   };
@@ -67,6 +78,18 @@ export interface OrganisationSummary {
   baseCurrency?: string;
   organisationType?: string;
   version?: string;
+  /** Direct Xero Organisation fields. Omission means unknown; callers must not infer them from tax-rate lists. */
+  paysTax?: boolean;
+  financialYearEndDay?: number;
+  financialYearEndMonth?: number;
+  salesTaxBasis?: string;
+  salesTaxPeriod?: string;
+  defaultSalesTax?: string;
+  defaultPurchasesTax?: string;
+  periodLockDate?: string;
+  endOfYearLockDate?: string;
+  isDemoCompany?: boolean;
+  organisationStatus?: string;
 }
 
 export interface AccountSummary {
@@ -85,6 +108,7 @@ export interface TaxRateSummary {
   taxType?: string;
   status?: string;
   displayTaxRate?: string;
+  effectiveRate?: string;
   canApplyToExpenses?: boolean;
   canApplyToAssets?: boolean;
   canApplyToLiabilities?: boolean;
@@ -95,6 +119,10 @@ export interface TaxRateSummary {
 export interface ContactSummary {
   contactId: string;
   name?: string;
+  /** Strong, server-read business identity fields used by Accounting Case matching. */
+  email?: string;
+  companyNumber?: string;
+  accountNumber?: string;
   contactNumber?: string;
   status?: string;
   isSupplier?: boolean;
@@ -123,6 +151,7 @@ export interface InvoiceLineSnapshot {
   unitAmount: string;
   lineAmount?: string;
   taxAmount?: string;
+  accountId?: string;
   accountCode: string;
   taxType: string;
 }
@@ -141,6 +170,7 @@ export interface InvoiceSummary {
   invoiceDate?: string;
   dueDate?: string;
   currency?: string;
+  currencyRate?: string;
   reference?: string;
   subTotal?: string;
   totalTax?: string;
@@ -213,6 +243,15 @@ export interface CreditNoteListResult {
   pagination: ReadPageEvidence;
 }
 
+/** Exact provider GET projection used by duplicate-history and readback controls. */
+export interface CreditNoteSnapshot extends CreditNoteSummary {
+  tenantId: string;
+  lineAmountType?: string;
+  lines: InvoiceLineSnapshot[];
+  lineItemCount?: number;
+  linesTruncated?: boolean;
+}
+
 export interface PaymentSummary {
   paymentId: string;
   type: PaymentType;
@@ -263,6 +302,64 @@ export interface PurchaseOrderListResult {
 
 export interface ManualJournalListResult {
   manualJournals: ManualJournalSummary[];
+  pagination: ReadPageEvidence;
+}
+
+/**
+ * `/Journals` pages by an offset on JournalNumber, not by page number, and
+ * proves exhaustion only by returning an empty page - so this is not
+ * `ReadPageEvidence` (there is no provider page/item count and no agent-facing
+ * page_size). `hasNextPage`/`hasNextPageIsEstimated`/`omittedInvalid` are kept
+ * in the same vocabulary as `ReadPageEvidence` on purpose, so the shared
+ * "collection" read-evidence completeness heuristic in xeroReadEvidence.ts
+ * reads this correctly without needing its own per-tool branch.
+ */
+export interface JournalPageEvidence {
+  requestedOffset: number;
+  returned: number;
+  /** The highest raw JournalNumber seen in this page; pass as `offset` to continue. Absent only when this page was empty. */
+  nextOffset?: number;
+  /** True only when this call itself returned zero journals - the one signal Xero proves exhaustion with. */
+  exhausted: boolean;
+  hasNextPage: boolean;
+  hasNextPageIsEstimated: boolean;
+  omittedInvalid: number;
+}
+
+export interface JournalListResult {
+  journals: JournalSummary[];
+  pagination: JournalPageEvidence;
+}
+
+export interface TrackingOptionSummary {
+  trackingOptionId: string;
+  name?: string;
+  status?: string;
+}
+
+export interface TrackingCategorySummary {
+  trackingCategoryId: string;
+  name?: string;
+  status?: string;
+  options: TrackingOptionSummary[];
+  optionCount: number;
+  optionsTruncated: boolean;
+  omittedInvalidOptions: number;
+}
+
+export interface TrackingCategoryListResult {
+  trackingCategories: TrackingCategorySummary[];
+  pagination: ReadPageEvidence;
+}
+
+export interface ContactGroupSummary {
+  contactGroupId: string;
+  name?: string;
+  status?: string;
+}
+
+export interface ContactGroupListResult {
+  contactGroups: ContactGroupSummary[];
   pagination: ReadPageEvidence;
 }
 
@@ -362,23 +459,38 @@ export interface AccountingProvider {
     bankTransactionId: string,
   ): Promise<BankTransactionSnapshot>;
   getInvoice(principal: AccountingPrincipal, invoiceId: string, expectedType?: InvoiceType): Promise<InvoiceSnapshot>;
+  getCreditNote(
+    principal: AccountingPrincipal,
+    creditNoteId: string,
+    expectedType?: CreditNoteType,
+  ): Promise<CreditNoteSnapshot>;
   getSupplierBill(principal: AccountingPrincipal, invoiceId: string): Promise<SupplierBillSnapshot>;
   createDraftSupplierBill(
     principal: AccountingPrincipal,
     input: CreateDraftSupplierBillInput,
     idempotencyKey: string,
     recordWriteEvidence?: RecordProviderDraftWriteEvidence,
+    providerWritePermit?: LedgerProviderWritePermit,
+    mutationRequestId?: string,
   ): Promise<ProviderWriteResult>;
   createDraftSalesInvoice(
     principal: AccountingPrincipal,
     input: CreateDraftSalesInvoiceInput,
     idempotencyKey: string,
     recordWriteEvidence?: RecordProviderDraftWriteEvidence,
+    providerWritePermit?: LedgerProviderWritePermit,
+    mutationRequestId?: string,
   ): Promise<ProviderSalesInvoiceWriteResult>;
-  authoriseSupplierBill(
-    principal: AccountingPrincipal,
-    invoiceId: string,
-    idempotencyKey: string,
-  ): Promise<ProviderWriteResult>;
   getTrialBalance(principal: AccountingPrincipal, date?: string): Promise<Record<string, unknown>>;
+  listJournals(principal: AccountingPrincipal, input: ListJournalsInput): Promise<JournalListResult>;
+  getProfitAndLoss(principal: AccountingPrincipal, input: ProfitAndLossInput): Promise<Record<string, unknown>>;
+  getBalanceSheet(principal: AccountingPrincipal, input: BalanceSheetInput): Promise<Record<string, unknown>>;
+  getAgedReceivables(principal: AccountingPrincipal, input: AgedReceivablesInput): Promise<Record<string, unknown>>;
+  getAgedPayables(principal: AccountingPrincipal, input: AgedPayablesInput): Promise<Record<string, unknown>>;
+  getPayment(principal: AccountingPrincipal, paymentId: string): Promise<PaymentSummary>;
+  listTrackingCategories(
+    principal: AccountingPrincipal,
+    input: ListTrackingCategoriesInput,
+  ): Promise<TrackingCategoryListResult>;
+  listContactGroups(principal: AccountingPrincipal, input: ListContactGroupsInput): Promise<ContactGroupListResult>;
 }

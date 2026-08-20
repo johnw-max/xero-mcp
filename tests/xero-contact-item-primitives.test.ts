@@ -21,6 +21,7 @@ import {
   verifyContactReadback,
   verifyItemReadback,
 } from "../src/providers/xeroContactItemMapper.js";
+import { loadXeroResponse } from "./fixtures/xero-provider-responses/index.js";
 
 describe("safe Xero contact primitives", () => {
   it("prepares only reviewed contact fields and a server-owned external reference", () => {
@@ -508,8 +509,99 @@ describe("safe Xero contact primitives", () => {
       expectedCreatedId: "11111111-1111-4111-8111-111111111111",
     })).toMatchObject({
       verified: false,
-      mismatches: ["target"],
+      mismatches: ["target.name"],
     });
+  });
+
+  it("verifies a real Xero contact readback carrying the default empty phone and address blocks", () => {
+    // Xero returns four empty phone blocks and two empty address blocks on every
+    // contact, whatever was sent. Test doubles that echo the request never show
+    // this, so every contact write was scored WRITE_UNCERTAIN in production while
+    // the stored object was exactly correct.
+    const providerDefaults = {
+      phones: [
+        { phoneType: "DDI", phoneNumber: "", phoneAreaCode: "", phoneCountryCode: "" },
+        { phoneType: "DEFAULT", phoneNumber: "", phoneAreaCode: "", phoneCountryCode: "" },
+        { phoneType: "FAX", phoneNumber: "", phoneAreaCode: "", phoneCountryCode: "" },
+        { phoneType: "MOBILE", phoneNumber: "", phoneAreaCode: "", phoneCountryCode: "" },
+      ],
+      addresses: [
+        { addressType: "STREET", city: "", region: "", postalCode: "", country: "" },
+        { addressType: "POBOX", city: "", region: "", postalCode: "", country: "" },
+      ],
+    };
+    const prepared = prepareContactCreate({ name: "Westbrook Facilities" }, {
+      externalKey: "crm/supplier/77",
+      namespace: "acctdemo",
+      confirmationToken: "1122334455667788",
+    });
+    const raw = {
+      contactID: "278fd2b0-c2a7-4e1b-88d1-047253f74501",
+      name: "Westbrook Facilities",
+      contactNumber: prepared.externalReference,
+      updatedDateUTC: "2026-08-19T09:00:00.000Z",
+      ...providerDefaults,
+    };
+    const options = {
+      namespace: "acctdemo",
+      expectedCreatedId: "278fd2b0-c2a7-4e1b-88d1-047253f74501",
+    };
+    const snapshot = mapSafeContactReadback(raw, { namespace: "acctdemo" });
+    expect(snapshot).toBeDefined();
+    expect(snapshot).not.toHaveProperty("phones");
+    expect(snapshot).not.toHaveProperty("addresses");
+    expect(verifyContactReadback(prepared, raw, options)).toMatchObject({
+      verified: true,
+      mismatches: [],
+    });
+
+    // The protection this check exists for must still fire: a field we asserted
+    // coming back altered, and a provider entry we cannot parse at all.
+    expect(verifyContactReadback(prepared, { ...raw, name: "Westbrook Holdings" }, options))
+      .toMatchObject({ verified: false, mismatches: ["target.name"] });
+    expect(verifyContactReadback(prepared, {
+      ...raw,
+      phones: [{ phoneType: "SATELLITE", phoneNumber: "1" }],
+    }, options)).toMatchObject({ verified: false, mismatches: ["readback.invalid"] });
+
+    // A phone we did assert must not be silently dropped by the provider.
+    const withPhone = prepareContactCreate({
+      name: "Westbrook Facilities",
+      phones: [{ phone_type: "DEFAULT", phone_number: "65551234" }],
+    }, {
+      externalKey: "crm/supplier/77",
+      namespace: "acctdemo",
+      confirmationToken: "1122334455667788",
+    });
+    expect(verifyContactReadback(withPhone, raw, options))
+      .toMatchObject({ verified: false, mismatches: ["target.phones"] });
+  });
+
+  it("maps a real captured Xero contact readback, filtering its four empty phone and two empty address blocks", () => {
+    // proves: the hand-built "providerDefaults" stand-in above was never checked
+    // against a real capture. If safePhone/safeAddress ever stop recognizing a
+    // genuine Xero all-blank block as EMPTY (e.g. because a real block carries a
+    // field the hand-built stand-in never included), every contact write in
+    // production starts failing verification - the exact defect this repo
+    // already shipped once, this time against the actual wire shape.
+    const [contact] = loadXeroResponse("contact_single").contacts as unknown[];
+
+    const snapshot = mapSafeContactReadback(contact, { namespace: "zcacct" });
+
+    expect(snapshot).not.toHaveProperty("phones");
+    expect(snapshot).not.toHaveProperty("addresses");
+    expect(snapshot).toEqual({
+      contactId: "e2497490-6310-471d-b391-75293a0426ae",
+      name: "Halstead Cleaning Services",
+      accountNumber: "HALSTEAD_CLEANING_001",
+      externalReference: "ZC:zcacct:51ba1cf9d7d125581bc5f5e468b1b4f3",
+      contactNumberEvidence: { kind: "OWNED_NAMESPACE" },
+      updatedAt: "2026-08-19T08:50:58.300Z",
+    });
+    // Real Xero sends emailAddress/bankAccountDetails as "" rather than
+    // omitting them; boundedString must treat that as absent, not leak it.
+    expect(JSON.stringify(snapshot)).not.toContain("bankAccountDetails");
+    expect(snapshot).not.toHaveProperty("email");
   });
 });
 
@@ -794,7 +886,10 @@ describe("safe untracked Xero item primitives", () => {
       updatedDateUTC: "2026-08-07T10:00:00.000Z",
     }, {
       expectedCreatedId: "33333333-3333-4333-8333-333333333333",
-    })).toMatchObject({ verified: false, mismatches: ["target"] });
+    // proves: a single disagreeing target field (isTrackedAsInventory: false
+    // vs the provider's true) is now named as "target.isTrackedAsInventory",
+    // not collapsed to the bare, unactionable "target" it used to report.
+    })).toMatchObject({ verified: false, mismatches: ["target.isTrackedAsInventory"] });
     expect(mapSafeItemReadback({
       itemID: "33333333-3333-4333-8333-333333333333",
       code: "SVC-001",
@@ -822,5 +917,31 @@ describe("safe untracked Xero item primitives", () => {
       isTrackedAsInventory: false,
       updatedDateUTC: "2026-08-07T10:00:00.000Z",
     })).toBeUndefined();
+  });
+
+  it("names the exact target field that disagreed and never leaks the disagreeing value through that name", () => {
+    // proves: (1) a single changed target field is now named "target.name",
+    // aligned with verifyContactReadback's existing target.name shape,
+    // instead of the previous bare "target" that told the caller nothing it
+    // could act on; (2) the field NAME is safe to return because it is a
+    // fixed schema key, but the field VALUE never appears anywhere in the
+    // result - mirroring xeroFailureEnvelope.test.ts's "SECRET-LEAK" guarantee
+    // one layer further upstream, at the primitive that feeds it.
+    const prepared = prepareItemCreate({
+      code: "SVC-001",
+      name: "Accounting advisory",
+    }, { confirmationToken: "0102030405060708" });
+    const raw = {
+      itemID: "33333333-3333-4333-8333-333333333333",
+      code: "SVC-001",
+      name: "SECRET-LEAK-PROVIDER-VALUE",
+      isSold: true,
+      isPurchased: true,
+      isTrackedAsInventory: false,
+      updatedDateUTC: "2026-08-07T10:00:00.000Z",
+    };
+    const result = verifyItemReadback(prepared, raw, { expectedCreatedId: raw.itemID });
+    expect(result).toMatchObject({ verified: false, mismatches: ["target.name"] });
+    expect(JSON.stringify(result.mismatches)).not.toContain("SECRET-LEAK");
   });
 });

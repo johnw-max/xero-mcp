@@ -467,10 +467,16 @@ describe("OAuth Broker V2 flow repository contract", () => {
     )).resolves.toHaveLength(1);
   });
 
-  it("never auto-selects a sole organisation and enforces the Personal POC single-active-installation boundary", async () => {
+  it("never auto-selects a sole organisation and rejects a racing selection for the same MCP client", async () => {
     const repository: AccountingRepository = new InMemoryAccountingRepository();
-    const first = await advanceToSelection(repository, "poc-first", {}, 1);
-    const second = await advanceToSelection(repository, "poc-second", {}, 1);
+    const identity: FlowIdentityOverride = {
+      workspaceId: "workspace-poc-race",
+      subjectId: "user-poc-race",
+      agentId: "agent-poc-race",
+      clientId: "client-poc-race",
+    };
+    const first = await advanceToSelection(repository, "poc-first", {}, 1, identity);
+    const second = await advanceToSelection(repository, "poc-second", {}, 1, identity);
 
     await expect(repository.getBrokerSelection({
       flowHash: first.flow.flowHash,
@@ -500,6 +506,190 @@ describe("OAuth Broker V2 flow repository contract", () => {
       authorizationCodeHash: hash("code-poc-second"),
       authorizationCodeExpiresAt: fiveMinutesLater,
       now: twoMinutesLater,
+    })).resolves.toBeUndefined();
+  });
+
+  it("replaces a stranded Personal POC selection after its unexchanged authorization code expires", async () => {
+    const repository: AccountingRepository = new InMemoryAccountingRepository();
+    const identity: FlowIdentityOverride = {
+      workspaceId: "workspace-poc-stranded",
+      subjectId: "user-poc-stranded",
+      agentId: "agent-poc-stranded",
+      clientId: "client-poc-stranded",
+    };
+    const first = await advanceToSelection(repository, "poc-stranded-first", {}, 1, identity);
+    const firstIssued = await repository.completeBrokerOrganisationSelection({
+      flowHash: first.flow.flowHash,
+      browserSessionHash: first.flow.browserSessionHash,
+      selectionCsrfHash: first.selectionCsrfHash,
+      selectedConnectionId: first.connections[0]!.connectionId,
+      bindingId: "binding-poc-stranded-first",
+      policyId: "policy-poc-stranded-first",
+      authorizationCodeHash: hash("code-poc-stranded-first"),
+      authorizationCodeExpiresAt: fiveMinutesLater,
+      now: twoMinutesLater,
+    });
+    if (!firstIssued) throw new Error("expected stranded grant to complete selection");
+
+    const second = await advanceToSelection(repository, "poc-stranded-second", {}, 1, identity);
+    await expect(repository.completeBrokerOrganisationSelection({
+      flowHash: second.flow.flowHash,
+      browserSessionHash: second.flow.browserSessionHash,
+      selectionCsrfHash: second.selectionCsrfHash,
+      selectedConnectionId: second.connections[0]!.connectionId,
+      bindingId: "binding-poc-stranded-second",
+      policyId: "policy-poc-stranded-second",
+      authorizationCodeHash: hash("code-poc-stranded-second"),
+      authorizationCodeExpiresAt: tenMinutesLater,
+      now: fiveMinutesLater,
+    })).resolves.toMatchObject({ installation: { status: "ACTIVE" } });
+    await expect(repository.resolveAgentConnectionBinding({
+      installationId: firstIssued.installation.installationId,
+      bindingId: firstIssued.binding.bindingId,
+      workspaceId: firstIssued.binding.workspaceId,
+      subjectType: firstIssued.binding.subjectType,
+      subjectId: firstIssued.binding.subjectId,
+      agentId: firstIssued.binding.agentId,
+      connectionId: firstIssued.binding.connectionId,
+    })).resolves.toBeUndefined();
+  });
+
+  it("allows distinct Personal POC MCP clients to remain connected independently", async () => {
+    const repository: AccountingRepository = new InMemoryAccountingRepository();
+    const first = await advanceToSelection(repository, "poc-client-a", {}, 1);
+    const second = await advanceToSelection(repository, "poc-client-b", {}, 1);
+    const complete = (context: typeof first, suffix: string) => repository.completeBrokerOrganisationSelection({
+      flowHash: context.flow.flowHash,
+      browserSessionHash: context.flow.browserSessionHash,
+      selectionCsrfHash: context.selectionCsrfHash,
+      selectedConnectionId: context.connections[0]!.connectionId,
+      bindingId: `binding-${suffix}`,
+      policyId: `policy-${suffix}`,
+      authorizationCodeHash: hash(`code-${suffix}`),
+      authorizationCodeExpiresAt: fiveMinutesLater,
+      now: twoMinutesLater,
+    });
+
+    await expect(complete(first, "poc-client-a")).resolves.toMatchObject({ installation: { status: "ACTIVE" } });
+    await expect(complete(second, "poc-client-b")).resolves.toMatchObject({ installation: { status: "ACTIVE" } });
+  });
+
+  it("allows independent installation subjects to share one Host client", async () => {
+    const repository: AccountingRepository = new InMemoryAccountingRepository();
+    const clientId = "client-shared-test";
+    const first = await advanceToSelection(repository, "shared-test-a", {}, 1, {
+      workspaceId: "workspace-shared-test",
+      subjectId: "shared-test-installation:a",
+      agentId: "host-client:shared-test",
+      clientId,
+    });
+    const second = await advanceToSelection(repository, "shared-test-b", {}, 1, {
+      workspaceId: "workspace-shared-test",
+      subjectId: "shared-test-installation:b",
+      agentId: "host-client:shared-test",
+      clientId,
+    });
+    const complete = (context: typeof first, suffix: string) => repository.completeBrokerOrganisationSelection({
+      flowHash: context.flow.flowHash,
+      browserSessionHash: context.flow.browserSessionHash,
+      selectionCsrfHash: context.selectionCsrfHash,
+      selectedConnectionId: context.connections[0]!.connectionId,
+      bindingId: `binding-${suffix}`,
+      policyId: `policy-${suffix}`,
+      authorizationCodeHash: hash(`code-${suffix}`),
+      authorizationCodeExpiresAt: fiveMinutesLater,
+      now: twoMinutesLater,
+    });
+
+    const firstResult = await complete(first, "shared-test-a");
+    const secondResult = await complete(second, "shared-test-b");
+    expect(firstResult).toMatchObject({ installation: { status: "ACTIVE" } });
+    expect(secondResult).toMatchObject({ installation: { status: "ACTIVE" } });
+    if (!firstResult || !secondResult) throw new Error("expected both shared-test grants to complete");
+    await expect(repository.resolveAgentConnectionBinding({
+      installationId: firstResult.installation.installationId,
+      bindingId: firstResult.binding.bindingId,
+      workspaceId: firstResult.binding.workspaceId,
+      subjectType: firstResult.binding.subjectType,
+      subjectId: firstResult.binding.subjectId,
+      agentId: firstResult.binding.agentId,
+      connectionId: firstResult.binding.connectionId,
+    })).resolves.toBeDefined();
+    await expect(repository.resolveAgentConnectionBinding({
+      installationId: secondResult.installation.installationId,
+      bindingId: secondResult.binding.bindingId,
+      workspaceId: secondResult.binding.workspaceId,
+      subjectType: secondResult.binding.subjectType,
+      subjectId: secondResult.binding.subjectId,
+      agentId: secondResult.binding.agentId,
+      connectionId: secondResult.binding.connectionId,
+    })).resolves.toBeDefined();
+  });
+
+  it("atomically replaces an established Personal POC grant for the same MCP client", async () => {
+    const repository: AccountingRepository = new InMemoryAccountingRepository();
+    const identity: FlowIdentityOverride = {
+      workspaceId: "workspace-poc-reauthorize",
+      subjectId: "user-poc-reauthorize",
+      agentId: "agent-poc-reauthorize",
+      clientId: "client-poc-reauthorize",
+    };
+    const first = await advanceToSelection(repository, "poc-reauthorize-first", {}, 1, identity);
+    const firstIssued = await repository.completeBrokerOrganisationSelection({
+      flowHash: first.flow.flowHash,
+      browserSessionHash: first.flow.browserSessionHash,
+      selectionCsrfHash: first.selectionCsrfHash,
+      selectedConnectionId: first.connections[0]!.connectionId,
+      bindingId: "binding-poc-reauthorize-first",
+      policyId: "policy-poc-reauthorize-first",
+      authorizationCodeHash: hash("code-poc-reauthorize-first"),
+      authorizationCodeExpiresAt: fiveMinutesLater,
+      now: twoMinutesLater,
+    });
+    if (!firstIssued) throw new Error("expected first grant to complete");
+    await repository.createMcpRefreshTokenFamily({
+      family: {
+        familyId: "family-poc-reauthorize-first",
+        installationId: firstIssued.installation.installationId,
+        bindingId: firstIssued.binding.bindingId,
+        connectionId: firstIssued.binding.connectionId,
+        clientId: first.flow.clientId,
+        resource: first.flow.resource,
+        audience: first.flow.audience,
+        grantedScopes: first.flow.requestedScopes,
+        status: "ACTIVE",
+        createdAt: twoMinutesLater,
+        updatedAt: twoMinutesLater,
+      },
+      initialToken: {
+        tokenHash: hash("refresh-poc-reauthorize-first"),
+        tokenId: "refresh-poc-reauthorize-first",
+        familyId: "family-poc-reauthorize-first",
+        issuedAt: twoMinutesLater,
+        expiresAt: hourLater,
+      },
+    });
+
+    const second = await advanceToSelection(repository, "poc-reauthorize-second", {}, 1, identity);
+    await expect(repository.completeBrokerOrganisationSelection({
+      flowHash: second.flow.flowHash,
+      browserSessionHash: second.flow.browserSessionHash,
+      selectionCsrfHash: second.selectionCsrfHash,
+      selectedConnectionId: second.connections[0]!.connectionId,
+      bindingId: "binding-poc-reauthorize-second",
+      policyId: "policy-poc-reauthorize-second",
+      authorizationCodeHash: hash("code-poc-reauthorize-second"),
+      authorizationCodeExpiresAt: tenMinutesLater,
+      now: fiveMinutesLater,
+    })).resolves.toMatchObject({ installation: { status: "ACTIVE" } });
+    await expect(repository.resolveAgentConnectionBinding({
+      installationId: firstIssued.installation.installationId,
+      bindingId: firstIssued.binding.bindingId,
+      workspaceId: firstIssued.binding.workspaceId,
+      subjectType: firstIssued.binding.subjectType,
+      subjectId: firstIssued.binding.subjectId,
+      agentId: firstIssued.binding.agentId,
+      connectionId: firstIssued.binding.connectionId,
     })).resolves.toBeUndefined();
   });
 

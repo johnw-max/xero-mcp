@@ -26,6 +26,21 @@ const BROKER_TRIAL_BALANCE_READ_CAPABILITY: XeroScopeCapability = {
   anyOf: ["accounting.reports.trialbalance.read", "accounting.reports.read"],
 };
 
+const BROKER_PROFIT_AND_LOSS_READ_CAPABILITY: XeroScopeCapability = {
+  capability: "profit and loss report read",
+  anyOf: ["accounting.reports.profitandloss.read", "accounting.reports.read"],
+};
+
+const BROKER_BALANCE_SHEET_READ_CAPABILITY: XeroScopeCapability = {
+  capability: "balance sheet report read",
+  anyOf: ["accounting.reports.balancesheet.read", "accounting.reports.read"],
+};
+
+const BROKER_AGED_REPORT_READ_CAPABILITY: XeroScopeCapability = {
+  capability: "aged receivables and payables report read",
+  anyOf: ["accounting.reports.aged.read", "accounting.reports.read"],
+};
+
 const BROKER_BASE_XERO_SCOPE_CAPABILITIES: readonly XeroScopeCapability[] = [
   BROKER_OFFLINE_REFRESH_CAPABILITY,
 ] as const;
@@ -62,7 +77,12 @@ const BROKER_ITEM_WRITE_CAPABILITY: XeroScopeCapability = {
 
 const BROKER_PAYMENT_READ_CAPABILITY: XeroScopeCapability = {
   capability: "payment history read",
-  anyOf: ["accounting.payments.read", "accounting.transactions.read", "accounting.transactions"],
+  anyOf: [
+    "accounting.payments.read",
+    "accounting.payments",
+    "accounting.transactions.read",
+    "accounting.transactions",
+  ],
 };
 
 const BROKER_MANUAL_JOURNAL_READ_CAPABILITY: XeroScopeCapability = {
@@ -85,6 +105,16 @@ const BROKER_BANK_TRANSACTION_READ_CAPABILITY: XeroScopeCapability = {
   ],
 };
 
+const BROKER_PAYMENT_WRITE_CAPABILITY: XeroScopeCapability = {
+  capability: "payment create, allocation, refund, and reversal",
+  anyOf: ["accounting.payments", "accounting.transactions"],
+};
+
+const BROKER_BANK_TRANSACTION_WRITE_CAPABILITY: XeroScopeCapability = {
+  capability: "bank transaction create, update, and reversal",
+  anyOf: ["accounting.banktransactions", "accounting.transactions"],
+};
+
 // This baseline is also used by the OAuth-off legacy rollback path. It must be
 // able to serve the complete released controlled-write surface, while granular
 // payment history keeps its earlier rollback-compatible optional treatment.
@@ -97,8 +127,14 @@ export const REQUIRED_XERO_SCOPE_CAPABILITIES: readonly XeroScopeCapability[] = 
   BROKER_ITEM_WRITE_CAPABILITY,
   BROKER_CONTACT_WRITE_CAPABILITY,
   BROKER_MANUAL_JOURNAL_WRITE_CAPABILITY,
+  BROKER_PAYMENT_WRITE_CAPABILITY,
+  BROKER_BANK_TRANSACTION_WRITE_CAPABILITY,
+  BROKER_PAYMENT_READ_CAPABILITY,
   BROKER_BANK_TRANSACTION_READ_CAPABILITY,
   BROKER_TRIAL_BALANCE_READ_CAPABILITY,
+  BROKER_PROFIT_AND_LOSS_READ_CAPABILITY,
+  BROKER_BALANCE_SHEET_READ_CAPABILITY,
+  BROKER_AGED_REPORT_READ_CAPABILITY,
 ] as const;
 
 const LEGACY_STRICT_SETTINGS_READ_CAPABILITY: XeroScopeCapability = {
@@ -136,6 +172,21 @@ const LEGACY_STRICT_TRIAL_BALANCE_READ_CAPABILITY: XeroScopeCapability = {
   anyOf: ["accounting.reports.trialbalance.read", "accounting.reports.read"],
 };
 
+const LEGACY_STRICT_PROFIT_AND_LOSS_READ_CAPABILITY: XeroScopeCapability = {
+  capability: "profit and loss report read",
+  anyOf: ["accounting.reports.profitandloss.read", "accounting.reports.read"],
+};
+
+const LEGACY_STRICT_BALANCE_SHEET_READ_CAPABILITY: XeroScopeCapability = {
+  capability: "balance sheet report read",
+  anyOf: ["accounting.reports.balancesheet.read", "accounting.reports.read"],
+};
+
+const LEGACY_STRICT_AGED_REPORT_READ_CAPABILITY: XeroScopeCapability = {
+  capability: "aged receivables and payables report read",
+  anyOf: ["accounting.reports.aged.read", "accounting.reports.read"],
+};
+
 export const REQUIRED_READ_ONLY_XERO_SCOPE_CAPABILITIES: readonly XeroScopeCapability[] = [
   BROKER_OFFLINE_REFRESH_CAPABILITY,
   LEGACY_STRICT_SETTINGS_READ_CAPABILITY,
@@ -145,6 +196,9 @@ export const REQUIRED_READ_ONLY_XERO_SCOPE_CAPABILITIES: readonly XeroScopeCapab
   LEGACY_STRICT_MANUAL_JOURNAL_READ_CAPABILITY,
   LEGACY_STRICT_BANK_TRANSACTION_READ_CAPABILITY,
   LEGACY_STRICT_TRIAL_BALANCE_READ_CAPABILITY,
+  LEGACY_STRICT_PROFIT_AND_LOSS_READ_CAPABILITY,
+  LEGACY_STRICT_BALANCE_SHEET_READ_CAPABILITY,
+  LEGACY_STRICT_AGED_REPORT_READ_CAPABILITY,
 ] as const;
 
 export function missingXeroScopeCapabilities(
@@ -242,6 +296,9 @@ export function missingBrokerXeroScopeCapabilities(
     required.push(BROKER_SETTINGS_READ_CAPABILITY);
     required.push(BROKER_CONTACT_READ_CAPABILITY);
     required.push(BROKER_TRIAL_BALANCE_READ_CAPABILITY);
+    required.push(BROKER_PROFIT_AND_LOSS_READ_CAPABILITY);
+    required.push(BROKER_BALANCE_SHEET_READ_CAPABILITY);
+    required.push(BROKER_AGED_REPORT_READ_CAPABILITY);
     required.push(BROKER_INVOICE_READ_CAPABILITY);
     required.push(BROKER_PAYMENT_READ_CAPABILITY);
     required.push(BROKER_MANUAL_JOURNAL_READ_CAPABILITY);
@@ -249,9 +306,11 @@ export function missingBrokerXeroScopeCapabilities(
   }
   if (requested.has("xero.draft.write")) {
     required.push(BROKER_DRAFT_WRITE_CAPABILITY);
-    required.push(BROKER_MANUAL_JOURNAL_WRITE_CAPABILITY);
     required.push(BROKER_CONTACT_WRITE_CAPABILITY);
     required.push(BROKER_ITEM_WRITE_CAPABILITY);
+    required.push(BROKER_MANUAL_JOURNAL_WRITE_CAPABILITY);
+    required.push(BROKER_PAYMENT_WRITE_CAPABILITY);
+    required.push(BROKER_BANK_TRANSACTION_WRITE_CAPABILITY);
   }
 
   const granted = new Set(grantedXeroScopes);
@@ -282,25 +341,26 @@ export function leastPrivilegeXeroScopesForBroker(
 
   for (const identityScope of ["openid", "profile", "email"]) add(identityScope);
   choose(BROKER_OFFLINE_REFRESH_CAPABILITY);
-  if (requested.has("xero.draft.write")) {
-    choose(BROKER_ITEM_WRITE_CAPABILITY);
-    choose(BROKER_CONTACT_WRITE_CAPABILITY);
-  }
-  else if (requested.has("xero.read")) {
+  if (requested.has("xero.read")) {
     choose(BROKER_SETTINGS_READ_CAPABILITY);
     choose(BROKER_CONTACT_READ_CAPABILITY);
+    choose(BROKER_TRIAL_BALANCE_READ_CAPABILITY);
+    choose(BROKER_PROFIT_AND_LOSS_READ_CAPABILITY);
+    choose(BROKER_BALANCE_SHEET_READ_CAPABILITY);
+    choose(BROKER_AGED_REPORT_READ_CAPABILITY);
+    choose(BROKER_INVOICE_READ_CAPABILITY);
+    choose(BROKER_PAYMENT_READ_CAPABILITY);
+    choose(BROKER_MANUAL_JOURNAL_READ_CAPABILITY);
+    choose(BROKER_BANK_TRANSACTION_READ_CAPABILITY);
   }
-  if (requested.has("xero.read")) choose(BROKER_TRIAL_BALANCE_READ_CAPABILITY);
   if (requested.has("xero.draft.write")) {
     choose(BROKER_DRAFT_WRITE_CAPABILITY);
+    choose(BROKER_CONTACT_WRITE_CAPABILITY);
+    choose(BROKER_ITEM_WRITE_CAPABILITY);
     choose(BROKER_MANUAL_JOURNAL_WRITE_CAPABILITY);
+    choose(BROKER_PAYMENT_WRITE_CAPABILITY);
+    choose(BROKER_BANK_TRANSACTION_WRITE_CAPABILITY);
   }
-  else if (requested.has("xero.read")) choose(BROKER_INVOICE_READ_CAPABILITY);
-  if (requested.has("xero.read")) choose(BROKER_PAYMENT_READ_CAPABILITY);
-  if (requested.has("xero.read") && !requested.has("xero.draft.write")) {
-    choose(BROKER_MANUAL_JOURNAL_READ_CAPABILITY);
-  }
-  if (requested.has("xero.read")) choose(BROKER_BANK_TRANSACTION_READ_CAPABILITY);
 
   const missing = missingBrokerXeroScopeCapabilities(selected, requestedMcpScopes);
   if (missing.length > 0) {

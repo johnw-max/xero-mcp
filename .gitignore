@@ -15,3 +15,9 @@ deploy/.env.vps
 *.pem
 *.key
 *.crt
+
+# Generated local acceptance output stays outside the source merge.
+artifacts/local-acceptance/
+artifacts/online-uat/
+artifacts/system-review/
+**/__pycache__/
