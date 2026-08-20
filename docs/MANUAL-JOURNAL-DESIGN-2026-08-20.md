@@ -53,3 +53,42 @@
 日记账的回读有一个已知坑:`xeroProviderDate` 的整合已经处理了 `/Date(ms+tz)/`
 返回 `Date` 对象的情况,但手工日记账**从未真实写入过**,
 所以那条路径至今没有被真实响应验证过。这正是第 8 条存在的原因。
+
+---
+
+## 五、路由归属(2026-08-20 补,与报价单/采购单的决定配套)
+
+报价单/采购单接线时暴露出:`NativeDocumentRoute` 这四个值不只是"文档种类",
+它背后连着一整套**总账过账**假设——
+`xeroDocumentCoordinateAuthority` 的 InvoiceNumber/CreditNoteNumber 唯一性、
+`xeroBusinessCoordinateHistory` 的 ACCREC/ACCPAY 去重、
+`xeroBusinessCoordinateAuthority.ts` 里那个与 TS 联合无法互相校验的 `z.enum`。
+
+所以路由分成**三族**,按"是否过账"和"有没有交易对手"切:
+
+| 族 | 成员 | 过总账 | 有交易对手 | 复用发票机制 |
+|---|---|---|---|---|
+| `NativeDocumentRoute` | 销售发票、供应商账单、客户贷项、供应商贷项 | 是 | 是 | 是 |
+| `CommercialDocumentRoute` | 报价单、采购单 | **否** | 是 | 否 |
+| `MANUAL_JOURNAL` | 手工日记账 | **是** | **否** | 否 |
+
+手工日记账**确实过总账**,这一点和报价单不同,不能拿"它不是账本事件"当理由。
+它不能进 `NativeDocumentRoute` 的理由是另一条:**没有交易对手,也没有
+ACCREC/ACCPAY 这种单据类型**。`xeroBusinessCoordinateHistory` 的
+`snapshot.type !== (originalRoute === "SALES_INVOICE" ? "ACCREC" : "ACCPAY")`
+对它无从谈起。
+
+## 六、日记账去重是本设计里最难的一处,不要照抄报价单的结论
+
+报价单/采购单可以接受"跨系统重复检测暂不覆盖",因为重开一张报价单不影响任何余额,
+且 Xero 里可删。**手工日记账不是。** 重复入账直接造成错报,而且它**没有
+单据号**(Xero `ManualJournal` 没有 InvoiceNumber 那样的天然唯一坐标)。
+
+因此:
+- 本服务器自身的重复写入,由坐标预留挡住——**坐标怎么定义要专门设计**,
+  候选是 `(narration, date, 逐行 {accountCode, debit/credit} 的规范化哈希)`。
+- 跨系统重复(有人在 Xero 网页端手工录过同一笔),**在做出可靠方案之前
+  不得声称已覆盖**,并且必须以显式 reason code 告知调用方。
+
+如果这条挡住了草稿态手工日记账的验收,**先把上面那句"未覆盖"做诚实**,
+再谈能力,不要为了让它看起来通过而弱化去重。
