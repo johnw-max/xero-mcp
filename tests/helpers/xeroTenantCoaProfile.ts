@@ -9,6 +9,7 @@ import {
   validateXeroCompiledOperationAgainstSource,
 } from "../../src/policy/xeroAccountingCaseProviderContract.js";
 import type { AccountingCaseOperation, AccountingFact, NativeDocumentFact } from "../../src/domain/accountingCase.js";
+import type { PrepareAccountingCaseInput } from "../../src/domain/accountingCaseSchemas.js";
 import type { XeroAccountingCaseBusinessAuthorityProfile } from "../../src/policy/xeroBusinessCoordinateAuthority.js";
 import { compileAccountingCase } from "../../src/control-kernel/accountingCaseCompiler.js";
 import { createXeroDeclaredLedgerPolicy } from "../../src/policy/xeroDeclaredLedgerPolicy.js";
@@ -214,14 +215,23 @@ function exactTestHistoricalOriginal(
     ? {
         ...structuredClone(matches[0]!),
         tenantId,
-        invoiceNumber: credit.originalDocumentReference,
+        // invoiceNumber is optional on InvoiceSnapshot, and under
+        // exactOptionalPropertyTypes "present but undefined" is not the same
+        // as absent. Spread it only when there is a value.
+        ...(credit.originalDocumentReference === undefined
+          ? {}
+          : { invoiceNumber: credit.originalDocumentReference }),
       }
     : undefined;
 }
 
 /** Injects only fixed server-side exact-GET evidence for legacy direct compiler tests. */
 function injectTestOriginalTransactionEvidence(
-  facts: readonly AccountingFact[],
+  // The schema's parsed fact type, not readonly AccountingFact[]: zod emits
+  // optional members as `T | undefined`, which exactOptionalPropertyTypes
+  // will not accept for a `?: T` domain field. This is what the caller
+  // actually holds and what compileAccountingCase itself takes.
+  facts: PrepareAccountingCaseInput["facts"],
   tenantId: string,
   contactBindings: ReturnType<typeof projectXeroAccountingCaseCompilerInput>["contactBindings"],
   accountingPolicy: ReturnType<typeof createXeroDeclaredLedgerPolicy>,

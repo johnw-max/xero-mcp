@@ -66,14 +66,18 @@ export function createTestXeroGovernanceArtifacts(
     not_before: options.receiptNotBefore ?? options.receiptIssuedAt ?? "2026-08-13T23:30:00.000Z",
     expires_at: options.receiptExpiresAt ?? "2026-08-14T23:30:00.000Z",
     provider_atomic_uniqueness: false as const,
-    exclusive_writer_coverage: [
+    exclusive_writer_coverage: ([
       ["SALES_INVOICE", "GENERIC_RECURRING_REFERENCE", "REFERENCE"],
       ["SUPPLIER_BILL", "FORMAL_DOCUMENT_NUMBER", "INVOICE_NUMBER"],
       ["SUPPLIER_BILL", "GENERIC_RECURRING_REFERENCE", "INVOICE_NUMBER"],
       ["CUSTOMER_CREDIT", "GENERIC_RECURRING_REFERENCE", "REFERENCE"],
       ["SUPPLIER_CREDIT", "FORMAL_DOCUMENT_NUMBER", "CREDIT_NOTE_NUMBER"],
       ["SUPPLIER_CREDIT", "GENERIC_RECURRING_REFERENCE", "CREDIT_NOTE_NUMBER"],
-    ].map(([route, reference_kind, authoritative_provider_field]) => ({
+      // `as const` makes these tuples of literals. Without it the array infers
+      // as string[][], destructuring yields `string | undefined` under
+      // noUncheckedIndexedAccess, and the coverage entries stop matching the
+      // exact route/field unions the authority schema requires.
+    ] as const).map(([route, reference_kind, authoritative_provider_field]) => ({
       route,
       reference_kind,
       authoritative_provider_field,

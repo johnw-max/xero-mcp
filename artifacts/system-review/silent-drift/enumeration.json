@@ -1,0 +1,1943 @@
+{
+  "area": "silent-drift",
+  "enumerated_by": "[C1_ternary_fallback_candidate] grep -rn \"^\\s*: .* ? .* : .*$\" src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | sort ; [C2_switch_over_union] grep -rn \"switch\\s*(\" src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | sort ; [C3_zod_enum_literal_array] grep -rn \"z\\.enum(\\[\" src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | sort ; [C4_record_type] grep -rn \"Record<\" src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | grep -v \"Record<string\" ; [C5_as_const_array_or_inline_iteration] grep -rn \"for (const .* of \\[\" src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | sort; grep -rn \"\\] as const)\" src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | sort ; [C6_sql_check_constraint] grep -rn \"CHECK\\s*(\" migrations/*.sql | grep -iE \"state|status|kind|type|route|action|class|disposition\" ; [C7_sql_trigger_hardcoded_action_id_branch] grep -rn \"NEW\\.action_id = '\\|operation_row\\.action_id = '\\|existing\\.action_id = '\" migrations/*.sql | sort ; [C1b_ternary_head_broadened] grep -rnE '=\\s*[a-zA-Z_][\\w.]*(\\.\\w+)?\\s*===\\s*\"[A-Z_]+\"\\s*$' src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | sort",
+  "command_output_sha256": {
+    "C1_ternary_fallback_candidate": "674b86e4332accdb00f09051b3d63e8bb4e28bba217066a5f5add4d7a2055e66",
+    "C2_switch_over_union": "c8977b5f0f295920962a0054ec9934fc80fc69356628953471deb478ab3e2df4",
+    "C3_zod_enum_literal_array": "b777a5b4c6fd3281abd4a44405ffb3ee85352736728cc2d3990a6f85ef970a1f",
+    "C4_record_type": "90278308f7a8316711619ea8444123b4f840c53951497b84d145cd13fbaab56e",
+    "C5_as_const_array_or_inline_iteration": "d151850a8d1dc97767221302cd8ccd684a2bb6f72eb8d8d6fc2c78ab9de38f84",
+    "C6_sql_check_constraint": "a629e855ecc0b6bd7372ce7f4d41c6345cfa91e1ca0781b1f7fa074c37718c86",
+    "C7_sql_trigger_hardcoded_action_id_branch": "57a986728c581e28f1d3f0fb55a3943d33e7f8c1945011c8dfa33c106080ae42",
+    "C1b_ternary_head_broadened": "66c2f71dad609737fd19ef852242f303596ec518f96c70baf08b0c3af8b8ab0f"
+  },
+  "notes": "Seven mechanical greps (C1-C7, one per category from the task brief plus C7 added mid-review for a PL/pgSQL trigger instance the original six categories' commands could not reach) run from the repo root against the working tree at time of read. Per-command scoping notes are attached to each key below. All commands exclude *.test.ts; the task's own scope note says tests/harness only count if a shadow list there gates production behaviour, and no test-level shadow list meeting that bar was found -- the one credible candidate (harness's synthetic AccountingProvider being behind the real interface) is reported in findings.md as a corroborating observation, not enumerated here, because it is an interface-completeness gap rather than a union-membership shadow and because the review did not independently reproduce the sibling process's exact measurement (see findings.md). IMPORTANT: this branch had four other agents actively editing src/ concurrently for the full duration of this review (confirmed via repeated `git status` checks and line numbers shifting between reads of the same file). Line numbers below are as read at the time of read, stated per-item in coverage.json where a site was re-read after drift was noticed. `git status --short` immediately before this file was written showed active modifications to: src/control-kernel/accountingCaseCompiler.ts, src/domain/accountingCase.ts, src/domain/accountingCasePersistence.ts, src/policy/xeroNativeRouteContract.ts, src/services/xeroAccountingCaseService.ts (plus several harness/scripts/tests files outside this review's src/ scope). No migrations/*.sql file was among the files being concurrently modified, which is itself relevant to SR-14.",
+  "commands": {
+    "C1_ternary_fallback_candidate": {
+      "command": "grep -rn \"^\\s*: .* ? .* : .*$\" src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | sort",
+      "scoping_note": "Proxy for a ternary chain's continuation lines (a line that is itself only `: cond ? a : b`, i.e. the tail of a nested ternary begun on a prior line). Not exhaustive for every ternary chain shape in the repo -- it catches multi-line chained ternaries specifically, which is the shape of the task's confirmed instance. Single-line ternary chains (like the confirmed instance itself, xeroBusinessCoordinateAuthority.ts:34-40, which IS multi-line) and ternaries embedded inside a single expression without their own line were located by manual union cross-referencing instead, documented as such in coverage.json.",
+      "output_sha256": "674b86e4332accdb00f09051b3d63e8bb4e28bba217066a5f5add4d7a2055e66"
+    },
+    "C2_switch_over_union": {
+      "command": "grep -rn \"switch\\s*(\" src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | sort",
+      "scoping_note": "Every `switch (` statement in src/ (test files excluded). Each was read in full to determine whether it switches over a closed union, whether it is exhaustive today, and whether it would be compiler-caught if the union grew.",
+      "output_sha256": "c8977b5f0f295920962a0054ec9934fc80fc69356628953471deb478ab3e2df4"
+    },
+    "C3_zod_enum_literal_array": {
+      "command": "grep -rn \"z\\.enum(\\[\" src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | sort",
+      "scoping_note": "z.enum([...]) calls with a literal array argument -- the risky hand-typed form. Deliberately excludes z.enum(SOME_CONST_ARRAY) (no bracket immediately after the paren), which is the safe array-derived form (e.g. z.enum(XERO_SINGAPORE_ACCOUNTING_CATEGORY_KEYS) in xeroTenantCoaProfile.ts) and was not counted as a candidate for this reason, noted explicitly here rather than silently dropped.",
+      "output_sha256": "b777a5b4c6fd3281abd4a44405ffb3ee85352736728cc2d3990a6f85ef970a1f"
+    },
+    "C4_record_type": {
+      "command": "grep -rn \"Record<\" src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | grep -v \"Record<string\"",
+      "scoping_note": "Every Record<...> reference in src/ except Record<string, ...> (a generic string index is not a union-membership shadow candidate). Each site was classified by whether it is a plain type annotation (protected -- see probe4.ts), a `satisfies` annotation (protected, the task brief's reference pattern), or an `as` cast (unprotected -- see probe5.ts), and whether the cast is nonetheless safe by construction because its key set is array-derived.",
+      "output_sha256": "90278308f7a8316711619ea8444123b4f840c53951497b84d145cd13fbaab56e"
+    },
+    "C5_as_const_array_or_inline_iteration": {
+      "command": "grep -rn \"for (const .* of \\[\" src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | sort; grep -rn \"\\] as const)\" src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | sort",
+      "scoping_note": "Inline array literals iterated with for-of, plus `] as const)` closings (inline as-const arrays used as an argument, e.g. `(X as const).some(...)`). Both are candidate closed-membership lists that might restate a union instead of deriving one. Field-validation loops that merely iterate a fixed set of INPUT FIELDS (not union members) were read and marked not-applicable rather than excluded from the enumeration.",
+      "output_sha256": "d151850a8d1dc97767221302cd8ccd684a2bb6f72eb8d8d6fc2c78ab9de38f84"
+    },
+    "C6_sql_check_constraint": {
+      "command": "grep -rn \"CHECK\\s*(\" migrations/*.sql | grep -iE \"state|status|kind|type|route|action|class|disposition\"",
+      "scoping_note": "SQL CHECK constraints in migrations/*.sql whose column name suggests a closed domain enumeration (state/status/kind/type/route/action/class/disposition). jsonb_typeof shape guards and cross-column consistency checks that happened to match the keyword filter were read and marked not-applicable rather than excluded.",
+      "output_sha256": "a629e855ecc0b6bd7372ce7f4d41c6345cfa91e1ca0781b1f7fa074c37718c86"
+    },
+    "C7_sql_trigger_hardcoded_action_id_branch": {
+      "command": "grep -rn \"NEW\\.action_id = '\\|operation_row\\.action_id = '\\|existing\\.action_id = '\" migrations/*.sql | sort",
+      "scoping_note": "Added after reading migrations/039's accounting_case_operation_guard() trigger function and finding it hand-enumerates action_id inside PL/pgSQL, a shadow of AccountingCaseOperation['actionId'] entirely outside anything tsc can see. This command finds every hardcoded action_id string-literal branch across all migrations so the full lineage (which copies are superseded vs live, and how many distinct trigger functions carry the pattern) could be traced rather than asserted from the one instance first noticed.",
+      "output_sha256": "57a986728c581e28f1d3f0fb55a3943d33e7f8c1945011c8dfa33c106080ae42"
+    },
+    "C1b_ternary_head_broadened": {
+      "command": "grep -rnE '=\\s*[a-zA-Z_][\\w.]*(\\.\\w+)?\\s*===\\s*\"[A-Z_]+\"\\s*$' src --include=\"*.ts\" | grep -v \"\\.test\\.ts\" | sort",
+      "scoping_note": "Added after discovering the original, narrower C1 command (`^\\s*: .* ? .* : .*$`) does not match the task brief's own confirmed SR-01 instance (`const x = route === \"A\" ? ... : route === \"B\" ? ... : fallback` does not begin with a leading `:`). This broadened command finds the HEAD line of a ternary assignment comparing a dotted-path expression against an uppercase string literal -- catches both the confirmed instance and many more candidates, at the cost of also matching many genuinely-safe binary ternaries (each was read and classified individually in coverage.json; not all 32 hits could be traced to the same depth in the time remaining -- 17 were marked NOT_EXAMINED with the reason stated per-item).",
+      "output_sha256": "66c2f71dad609737fd19ef852242f303596ec518f96c70baf08b0c3af8b8ab0f"
+    }
+  },
+  "item_count": 269,
+  "items": [
+    {
+      "id": "src/domain/accountingCaseContinuation.ts:41",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/domain/accountingCaseContinuation.ts",
+      "line": 41,
+      "snippet": ": fact.counterpartyRole === \"CUSTOMER\" ? \"CUSTOMER_CREDIT_NOTE\" : \"SUPPLIER_CREDIT_NOTE\";"
+    },
+    {
+      "id": "src/services/xeroTrialBalanceBounds.ts:560",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroTrialBalanceBounds.ts",
+      "line": 560,
+      "snippet": ": Object.assign(Object.create(null) as Record<string, unknown>, { report: cloned === OMIT ? null : cloned });"
+    },
+    {
+      "id": "src/control-kernel/accountingCaseCompiler.ts:1153",
+      "kind": "C2_switch_over_union",
+      "file": "src/control-kernel/accountingCaseCompiler.ts",
+      "line": 1153,
+      "snippet": "switch (primary.kind) {"
+    },
+    {
+      "id": "src/control-kernel/accountingCaseCompiler.ts:153",
+      "kind": "C2_switch_over_union",
+      "file": "src/control-kernel/accountingCaseCompiler.ts",
+      "line": 153,
+      "snippet": "switch (route) {"
+    },
+    {
+      "id": "src/control-kernel/accountingCaseCompiler.ts:623",
+      "kind": "C2_switch_over_union",
+      "file": "src/control-kernel/accountingCaseCompiler.ts",
+      "line": 623,
+      "snippet": "switch (fact.documentKind) {"
+    },
+    {
+      "id": "src/control-kernel/accountingCaseCompiler.ts:981",
+      "kind": "C2_switch_over_union",
+      "file": "src/control-kernel/accountingCaseCompiler.ts",
+      "line": 981,
+      "snippet": "switch (fact.kind) {"
+    },
+    {
+      "id": "src/domain/accountingCasePersistence.ts:539",
+      "kind": "C2_switch_over_union",
+      "file": "src/domain/accountingCasePersistence.ts",
+      "line": 539,
+      "snippet": "switch (operation.actionId) {"
+    },
+    {
+      "id": "src/policy/xeroCapabilityPolicy.ts:841",
+      "kind": "C2_switch_over_union",
+      "file": "src/policy/xeroCapabilityPolicy.ts",
+      "line": 841,
+      "snippet": "switch (policy.riskClass) {"
+    },
+    {
+      "id": "src/policy/xeroCapabilityPolicy.ts:866",
+      "kind": "C2_switch_over_union",
+      "file": "src/policy/xeroCapabilityPolicy.ts",
+      "line": 866,
+      "snippet": "switch (riskClass) {"
+    },
+    {
+      "id": "src/policy/xeroDeclaredLedgerBinding.ts:133",
+      "kind": "C2_switch_over_union",
+      "file": "src/policy/xeroDeclaredLedgerBinding.ts",
+      "line": 133,
+      "snippet": "switch (normalized) {"
+    },
+    {
+      "id": "src/policy/xeroDeclaredLedgerBinding.ts:160",
+      "kind": "C2_switch_over_union",
+      "file": "src/policy/xeroDeclaredLedgerBinding.ts",
+      "line": 160,
+      "snippet": "switch (accountClass) {"
+    },
+    {
+      "id": "src/policy/xeroDeclaredLedgerPolicy.ts:82",
+      "kind": "C2_switch_over_union",
+      "file": "src/policy/xeroDeclaredLedgerPolicy.ts",
+      "line": 82,
+      "snippet": "switch (value) {"
+    },
+    {
+      "id": "src/policy/xeroEffectiveCapability.ts:88",
+      "kind": "C2_switch_over_union",
+      "file": "src/policy/xeroEffectiveCapability.ts",
+      "line": 88,
+      "snippet": "switch (object) {"
+    },
+    {
+      "id": "src/policy/xeroNativeRouteContract.ts:87",
+      "kind": "C2_switch_over_union",
+      "file": "src/policy/xeroNativeRouteContract.ts",
+      "line": 87,
+      "snippet": "switch (fact.documentKind) {"
+    },
+    {
+      "id": "src/policy/xeroTaxRateResolver.ts:51",
+      "kind": "C2_switch_over_union",
+      "file": "src/policy/xeroTaxRateResolver.ts",
+      "line": 51,
+      "snippet": "switch (normalized) {"
+    },
+    {
+      "id": "src/policy/xeroTaxRateResolver.ts:64",
+      "kind": "C2_switch_over_union",
+      "file": "src/policy/xeroTaxRateResolver.ts",
+      "line": 64,
+      "snippet": "switch (accountClass) {"
+    },
+    {
+      "id": "src/providers/xeroContactItemMutationProvider.ts:158",
+      "kind": "C2_switch_over_union",
+      "file": "src/providers/xeroContactItemMutationProvider.ts",
+      "line": 158,
+      "snippet": "switch (key.kind) {"
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:2630",
+      "kind": "C2_switch_over_union",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 2630,
+      "snippet": "switch (operation.nativeRoute) {"
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:3044",
+      "kind": "C2_switch_over_union",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 3044,
+      "snippet": "switch (operation.actionId) {"
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:3778",
+      "kind": "C2_switch_over_union",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 3778,
+      "snippet": "switch (route) {"
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:4568",
+      "kind": "C2_switch_over_union",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 4568,
+      "snippet": "switch (operationRecord.operation.actionId) {"
+    },
+    {
+      "id": "src/services/xeroControlledMutationService.ts:84",
+      "kind": "C2_switch_over_union",
+      "file": "src/services/xeroControlledMutationService.ts",
+      "line": 84,
+      "snippet": "switch (account.class) {"
+    },
+    {
+      "id": "src/services/xeroTrialBalanceBounds.ts:189",
+      "kind": "C2_switch_over_union",
+      "file": "src/services/xeroTrialBalanceBounds.ts",
+      "line": 189,
+      "snippet": "switch (typeof value) {"
+    },
+    {
+      "id": "src/config.ts:147",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/config.ts",
+      "line": 147,
+      "snippet": "status: z.enum([\"ACTIVE\", \"REVOKED\"]).default(\"ACTIVE\"),"
+    },
+    {
+      "id": "src/config.ts:333",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/config.ts",
+      "line": 333,
+      "snippet": "NODE_ENV: z.enum([\"development\", \"test\", \"production\"]).default(\"development\"),"
+    },
+    {
+      "id": "src/config.ts:375",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/config.ts",
+      "line": 375,
+      "snippet": "LOG_LEVEL: z.enum([\"debug\", \"info\", \"warn\", \"error\"]).default(\"info\"),"
+    },
+    {
+      "id": "src/config.ts:73",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/config.ts",
+      "line": 73,
+      "snippet": "const booleanFlag = z.enum([\"true\", \"false\"]).default(\"false\").transform((value) => value === \"true\");"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:135",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 135,
+      "snippet": "documentKind: z.enum([\"INVOICE\", \"CREDIT_NOTE\"]),"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:136",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 136,
+      "snippet": "counterpartyRole: z.enum([\"CUSTOMER\", \"SUPPLIER\"]),"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:164",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 164,
+      "snippet": "documentValidity: z.enum([\"VALID_FOR_LIVE_BOOKS\", \"TEST_OR_NOT_VALID\", \"UNKNOWN\"]),"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:199",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 199,
+      "snippet": "direction: z.enum([\"CUSTOMER_RECEIPT\", \"SUPPLIER_PAYMENT\"]),"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:238",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 238,
+      "snippet": "receiptStatus: z.enum([\"PRESENT\", \"MISSING\"]),"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:313",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 313,
+      "snippet": "evidenceRole: z.enum(["
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:343",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 343,
+      "snippet": "originalRoute: z.enum([\"SALES_INVOICE\", \"SUPPLIER_BILL\"]),"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:352",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 352,
+      "snippet": "lineAmountType: z.enum([\"EXCLUSIVE\", \"NO_TAX\"]),"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:385",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 385,
+      "snippet": "controlType: z.enum([\"THREE_WAY_MATCH\", \"BANK_DETAILS_VERIFICATION\", \"MISSING_RECEIPT\"]),"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:386",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 386,
+      "snippet": "severity: z.enum([\"INFO\", \"WARNING\", \"BLOCK_NEW_PAYMENT_OR_BANK_CHANGE\"]),"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:465",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 465,
+      "snippet": "environment: z.enum([\"TEST\", \"PRODUCTION\"]),"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:55",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 55,
+      "snippet": "origin: z.enum([\"MODEL_EXTRACTED\", \"AGENT_ASSERTED\", \"SERVER_RESOLVED_PROVIDER_EVIDENCE\"]),"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:78",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 78,
+      "snippet": "usageRoles: z.array(z.enum([\"CUSTOMER\", \"SUPPLIER\"])).min(1).max(2)"
+    },
+    {
+      "id": "src/domain/accountingCaseSchemas.ts:89",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/accountingCaseSchemas.ts",
+      "line": 89,
+      "snippet": "bankVerification: z.enum([\"NOT_APPLICABLE\", \"PENDING_CALLBACK\", \"VERIFIED\"]).optional(),"
+    },
+    {
+      "id": "src/domain/extendedReadSchemas.ts:105",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/extendedReadSchemas.ts",
+      "line": 105,
+      "snippet": "export const manualJournalStatusSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/extendedReadSchemas.ts:112",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/extendedReadSchemas.ts",
+      "line": 112,
+      "snippet": "export const manualJournalSortSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/extendedReadSchemas.ts:143",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/extendedReadSchemas.ts",
+      "line": 143,
+      "snippet": "export const itemSortSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/extendedReadSchemas.ts:173",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/extendedReadSchemas.ts",
+      "line": 173,
+      "snippet": "export const bankTransactionTypeSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/extendedReadSchemas.ts:17",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/extendedReadSchemas.ts",
+      "line": 17,
+      "snippet": "export const quoteStatusSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/extendedReadSchemas.ts:184",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/extendedReadSchemas.ts",
+      "line": 184,
+      "snippet": "export const bankTransactionStatusSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/extendedReadSchemas.ts:189",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/extendedReadSchemas.ts",
+      "line": 189,
+      "snippet": "export const bankTransactionSortSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/extendedReadSchemas.ts:26",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/extendedReadSchemas.ts",
+      "line": 26,
+      "snippet": "export const quoteSortSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/extendedReadSchemas.ts:69",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/extendedReadSchemas.ts",
+      "line": 69,
+      "snippet": "export const purchaseOrderStatusSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/extendedReadSchemas.ts:77",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/extendedReadSchemas.ts",
+      "line": 77,
+      "snippet": "export const purchaseOrderSortSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/schemas.ts:116",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 116,
+      "snippet": "export const paymentTypeSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/schemas.ts:127",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 127,
+      "snippet": "export const paymentStatusSchema = z.enum([\"AUTHORISED\", \"DELETED\"]);"
+    },
+    {
+      "id": "src/domain/schemas.ts:169",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 169,
+      "snippet": "const invoiceAuthoritativeProviderFieldSchema = z.enum([\"INVOICE_NUMBER\", \"REFERENCE\"]);"
+    },
+    {
+      "id": "src/domain/schemas.ts:188",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 188,
+      "snippet": "line_amount_type: z.enum([\"Exclusive\", \"Inclusive\", \"NoTax\"]).optional(),"
+    },
+    {
+      "id": "src/domain/schemas.ts:18",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 18,
+      "snippet": "account_class: z.enum([\"ASSET\", \"EQUITY\", \"EXPENSE\", \"LIABILITY\", \"REVENUE\"]).optional(),"
+    },
+    {
+      "id": "src/domain/schemas.ts:204",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 204,
+      "snippet": "line_amount_type: z.enum([\"Exclusive\", \"Inclusive\", \"NoTax\"]).optional(),"
+    },
+    {
+      "id": "src/domain/schemas.ts:208",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 208,
+      "snippet": "export const sourceEvidenceTypeSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/schemas.ts:226",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 226,
+      "snippet": "line_amount_type: z.enum([\"Exclusive\", \"Inclusive\", \"NoTax\"]),"
+    },
+    {
+      "id": "src/domain/schemas.ts:28",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 28,
+      "snippet": "status: z.enum([\"ACTIVE\", \"ARCHIVED\", \"GDPRREQUEST\"]).default(\"ACTIVE\"),"
+    },
+    {
+      "id": "src/domain/schemas.ts:43",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 43,
+      "snippet": "export const invoiceTypeSchema = z.enum([\"ACCPAY\", \"ACCREC\"]);"
+    },
+    {
+      "id": "src/domain/schemas.ts:45",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 45,
+      "snippet": "export const invoiceStatusSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/schemas.ts:54",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 54,
+      "snippet": "export const invoiceOrderSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/schemas.ts:89",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 89,
+      "snippet": "export const creditNoteTypeSchema = z.enum([\"ACCPAYCREDIT\", \"ACCRECCREDIT\"]);"
+    },
+    {
+      "id": "src/domain/schemas.ts:91",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/schemas.ts",
+      "line": 91,
+      "snippet": "export const creditNoteStatusSchema = z.enum(["
+    },
+    {
+      "id": "src/domain/xeroContactItemMutationSchemas.ts:17",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroContactItemMutationSchemas.ts",
+      "line": 17,
+      "snippet": "phone_type: z.enum([\"DEFAULT\", \"DDI\", \"MOBILE\", \"FAX\", \"OFFICE\"]),"
+    },
+    {
+      "id": "src/domain/xeroContactItemMutationSchemas.ts:24",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroContactItemMutationSchemas.ts",
+      "line": 24,
+      "snippet": "address_type: z.enum([\"POBOX\", \"STREET\"]),"
+    },
+    {
+      "id": "src/domain/xeroContactItemPrimitives.ts:12",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroContactItemPrimitives.ts",
+      "line": 12,
+      "snippet": "phone_type: z.enum([\"DEFAULT\", \"DDI\", \"MOBILE\", \"FAX\", \"OFFICE\"]),"
+    },
+    {
+      "id": "src/domain/xeroContactItemPrimitives.ts:19",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroContactItemPrimitives.ts",
+      "line": 19,
+      "snippet": "address_type: z.enum([\"POBOX\", \"STREET\"]),"
+    },
+    {
+      "id": "src/domain/xeroContactItemPrimitives.ts:378",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroContactItemPrimitives.ts",
+      "line": 378,
+      "snippet": "phoneType: z.enum([\"DEFAULT\", \"DDI\", \"MOBILE\", \"FAX\", \"OFFICE\"]),"
+    },
+    {
+      "id": "src/domain/xeroContactItemPrimitives.ts:385",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroContactItemPrimitives.ts",
+      "line": 385,
+      "snippet": "addressType: z.enum([\"POBOX\", \"STREET\"]),"
+    },
+    {
+      "id": "src/domain/xeroCreditNoteManualJournalDraft.ts:287",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroCreditNoteManualJournalDraft.ts",
+      "line": 287,
+      "snippet": "creditNoteType: z.enum([\"ACCRECCREDIT\", \"ACCPAYCREDIT\"]),"
+    },
+    {
+      "id": "src/domain/xeroCreditNoteManualJournalDraft.ts:292",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroCreditNoteManualJournalDraft.ts",
+      "line": 292,
+      "snippet": "authoritativeProviderField: z.enum([\"CREDIT_NOTE_NUMBER\", \"REFERENCE\"]),"
+    },
+    {
+      "id": "src/domain/xeroCreditNoteManualJournalDraft.ts:293",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroCreditNoteManualJournalDraft.ts",
+      "line": 293,
+      "snippet": "lineAmountType: z.enum([\"EXCLUSIVE\", \"INCLUSIVE\", \"NO_TAX\"]),"
+    },
+    {
+      "id": "src/domain/xeroCreditNoteManualJournalDraft.ts:75",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroCreditNoteManualJournalDraft.ts",
+      "line": 75,
+      "snippet": "credit_note_type: z.enum([\"ACCRECCREDIT\", \"ACCPAYCREDIT\"]),"
+    },
+    {
+      "id": "src/domain/xeroCreditNoteManualJournalDraft.ts:80",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroCreditNoteManualJournalDraft.ts",
+      "line": 80,
+      "snippet": "authoritative_provider_field: z.enum([\"CREDIT_NOTE_NUMBER\", \"REFERENCE\"]),"
+    },
+    {
+      "id": "src/domain/xeroCreditNoteManualJournalDraft.ts:81",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroCreditNoteManualJournalDraft.ts",
+      "line": 81,
+      "snippet": "line_amount_type: z.enum([\"Exclusive\", \"Inclusive\", \"NoTax\"]),"
+    },
+    {
+      "id": "src/domain/xeroQuotePurchaseOrderDraft.ts:167",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroQuotePurchaseOrderDraft.ts",
+      "line": 167,
+      "snippet": "lineAmountType: z.enum([\"EXCLUSIVE\", \"INCLUSIVE\", \"NO_TAX\"]),"
+    },
+    {
+      "id": "src/domain/xeroQuotePurchaseOrderDraft.ts:54",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/domain/xeroQuotePurchaseOrderDraft.ts",
+      "line": 54,
+      "snippet": "line_amount_type: z.enum([\"Exclusive\", \"Inclusive\", \"NoTax\"]),"
+    },
+    {
+      "id": "src/mcp/xeroAccountingCaseBusinessIntake.ts:198",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/mcp/xeroAccountingCaseBusinessIntake.ts",
+      "line": 198,
+      "snippet": "document_validity: z.enum([\"VALID_FOR_LIVE_BOOKS\", \"TEST_OR_NOT_VALID\", \"UNKNOWN\"]),"
+    },
+    {
+      "id": "src/mcp/xeroAccountingCaseBusinessIntake.ts:229",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/mcp/xeroAccountingCaseBusinessIntake.ts",
+      "line": 229,
+      "snippet": "usage_roles: z.array(z.enum([\"CUSTOMER\", \"SUPPLIER\"])).min(1).max(2)"
+    },
+    {
+      "id": "src/policy/xeroAccountingCaseProviderContract.ts:109",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroAccountingCaseProviderContract.ts",
+      "line": 109,
+      "snippet": "originalRoute: z.enum([\"SALES_INVOICE\", \"SUPPLIER_BILL\"]),"
+    },
+    {
+      "id": "src/policy/xeroAccountingCaseProviderContract.ts:83",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroAccountingCaseProviderContract.ts",
+      "line": 83,
+      "snippet": "policy: z.enum([\"TYPED_DURABLE_IDENTITY\", \"CANDIDATE_COLLISION_ONLY\"]),"
+    },
+    {
+      "id": "src/policy/xeroBusinessCoordinateAuthority.ts:105",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroBusinessCoordinateAuthority.ts",
+      "line": 105,
+      "snippet": "authoritative_provider_field: z.enum([\"INVOICE_NUMBER\", \"CREDIT_NOTE_NUMBER\", \"REFERENCE\"]),"
+    },
+    {
+      "id": "src/policy/xeroBusinessCoordinateAuthority.ts:210",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroBusinessCoordinateAuthority.ts",
+      "line": 210,
+      "snippet": "referenceKind: z.enum([\"FORMAL_DOCUMENT_NUMBER\", \"GENERIC_RECURRING_REFERENCE\"]),"
+    },
+    {
+      "id": "src/policy/xeroBusinessCoordinateAuthority.ts:211",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroBusinessCoordinateAuthority.ts",
+      "line": 211,
+      "snippet": "authoritativeProviderField: z.enum([\"INVOICE_NUMBER\", \"CREDIT_NOTE_NUMBER\", \"REFERENCE\"]),"
+    },
+    {
+      "id": "src/policy/xeroBusinessCoordinateAuthority.ts:229",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroBusinessCoordinateAuthority.ts",
+      "line": 229,
+      "snippet": "authoritativeProviderField: z.enum([\"INVOICE_NUMBER\", \"CREDIT_NOTE_NUMBER\", \"REFERENCE\"]),"
+    },
+    {
+      "id": "src/policy/xeroBusinessCoordinateAuthority.ts:51",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroBusinessCoordinateAuthority.ts",
+      "line": 51,
+      "snippet": "const routeSchema = z.enum(["
+    },
+    {
+      "id": "src/policy/xeroBusinessCoordinateAuthority.ts:61",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroBusinessCoordinateAuthority.ts",
+      "line": 61,
+      "snippet": "reference_kind: z.enum([\"FORMAL_DOCUMENT_NUMBER\", \"GENERIC_RECURRING_REFERENCE\"]),"
+    },
+    {
+      "id": "src/policy/xeroBusinessCoordinateAuthority.ts:62",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroBusinessCoordinateAuthority.ts",
+      "line": 62,
+      "snippet": "authoritative_provider_field: z.enum([\"INVOICE_NUMBER\", \"CREDIT_NOTE_NUMBER\", \"REFERENCE\"]),"
+    },
+    {
+      "id": "src/policy/xeroDeclaredLedgerBinding.ts:27",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroDeclaredLedgerBinding.ts",
+      "line": 27,
+      "snippet": "const accountClassSchema = z.enum([\"ASSET\", \"EQUITY\", \"EXPENSE\", \"LIABILITY\", \"REVENUE\"]);"
+    },
+    {
+      "id": "src/policy/xeroDeclaredLedgerPolicy.ts:70",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroDeclaredLedgerPolicy.ts",
+      "line": 70,
+      "snippet": "roundingMode: z.enum([\"HALF_UP\", \"HALF_EVEN\"]),"
+    },
+    {
+      "id": "src/policy/xeroDeclaredLedgerPolicy.ts:71",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroDeclaredLedgerPolicy.ts",
+      "line": 71,
+      "snippet": "taxAggregation: z.enum([\"PER_LINE\", \"DOCUMENT_TOTAL\"]),"
+    },
+    {
+      "id": "src/policy/xeroExternalGovernanceAuthority.ts:40",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroExternalGovernanceAuthority.ts",
+      "line": 40,
+      "snippet": "const routeSchema = z.enum(["
+    },
+    {
+      "id": "src/policy/xeroExternalGovernanceAuthority.ts:46",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroExternalGovernanceAuthority.ts",
+      "line": 46,
+      "snippet": "const providerFieldSchema = z.enum([\"INVOICE_NUMBER\", \"CREDIT_NOTE_NUMBER\", \"REFERENCE\"]);"
+    },
+    {
+      "id": "src/policy/xeroExternalGovernanceAuthority.ts:77",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroExternalGovernanceAuthority.ts",
+      "line": 77,
+      "snippet": "status: z.enum([\"ACTIVE\", \"REVOKED\"]),"
+    },
+    {
+      "id": "src/policy/xeroExternalGovernanceAuthority.ts:97",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroExternalGovernanceAuthority.ts",
+      "line": 97,
+      "snippet": "reference_kind: z.enum([\"FORMAL_DOCUMENT_NUMBER\", \"GENERIC_RECURRING_REFERENCE\"]),"
+    },
+    {
+      "id": "src/policy/xeroTenantCoaProfile.ts:11",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/policy/xeroTenantCoaProfile.ts",
+      "line": 11,
+      "snippet": "const accountClassSchema = z.enum([\"ASSET\", \"EQUITY\", \"EXPENSE\", \"LIABILITY\", \"REVENUE\"]);"
+    },
+    {
+      "id": "src/services/xeroMutationService.ts:118",
+      "kind": "C3_zod_enum_literal_array",
+      "file": "src/services/xeroMutationService.ts",
+      "line": 118,
+      "snippet": "sourceHashSemantics: z.enum(["
+    },
+    {
+      "id": "src/control-kernel/accountingCaseCompiler.ts:1494",
+      "kind": "C4_record_type",
+      "file": "src/control-kernel/accountingCaseCompiler.ts",
+      "line": 1494,
+      "snippet": "const dispositionCounts: Record<AccountingEventDisposition, number> = {"
+    },
+    {
+      "id": "src/control-kernel/accountingCaseProviderContract.ts:50",
+      "kind": "C4_record_type",
+      "file": "src/control-kernel/accountingCaseProviderContract.ts",
+      "line": 50,
+      "snippet": "readonly nativeDocuments: Readonly<Record<NativeDocumentRoute, AccountingCaseProviderNativeDocumentBounds>>;"
+    },
+    {
+      "id": "src/db/inMemoryRepository.ts:4809",
+      "kind": "C4_record_type",
+      "file": "src/db/inMemoryRepository.ts",
+      "line": 4809,
+      "snippet": "const allowedTransitions: Record<typeof current.state, readonly typeof input.state[]> = {"
+    },
+    {
+      "id": "src/db/inMemoryRepository.ts:4930",
+      "kind": "C4_record_type",
+      "file": "src/db/inMemoryRepository.ts",
+      "line": 4930,
+      "snippet": "const allowed: Record<AccountingCaseOperationState, readonly AccountingCaseOperationState[]> = {"
+    },
+    {
+      "id": "src/db/postgresRepository.ts:8369",
+      "kind": "C4_record_type",
+      "file": "src/db/postgresRepository.ts",
+      "line": 8369,
+      "snippet": "const allowedTransitions: Record<AccountingCaseOperationState, readonly AccountingCaseOperationState[]> = {"
+    },
+    {
+      "id": "src/db/postgresRepository.ts:8563",
+      "kind": "C4_record_type",
+      "file": "src/db/postgresRepository.ts",
+      "line": 8563,
+      "snippet": "const allowed: Record<AccountingCaseOperationState, readonly AccountingCaseOperationState[]> = {"
+    },
+    {
+      "id": "src/domain/accountingCase.ts:618",
+      "kind": "C4_record_type",
+      "file": "src/domain/accountingCase.ts",
+      "line": 618,
+      "snippet": "dispositionCounts: Record<AccountingEventDisposition, number>;"
+    },
+    {
+      "id": "src/domain/xeroCreditNoteManualJournalDraft.ts:359",
+      "kind": "C4_record_type",
+      "file": "src/domain/xeroCreditNoteManualJournalDraft.ts",
+      "line": 359,
+      "snippet": "Record<PrepareCreditNoteDraftInput[\"line_amount_type\"], CanonicalDraftLineAmountType>"
+    },
+    {
+      "id": "src/domain/xeroMutation.ts:27",
+      "kind": "C4_record_type",
+      "file": "src/domain/xeroMutation.ts",
+      "line": 27,
+      "snippet": "} as const satisfies Readonly<Record<XeroMutationObjectType, string>>);"
+    },
+    {
+      "id": "src/domain/xeroMutation.ts:51",
+      "kind": "C4_record_type",
+      "file": "src/domain/xeroMutation.ts",
+      "line": 51,
+      "snippet": "}) satisfies Readonly<Record<XeroMutationObjectType, readonly XeroMutationOperation[]>>;"
+    },
+    {
+      "id": "src/domain/xeroQuotePurchaseOrderDraft.ts:172",
+      "kind": "C4_record_type",
+      "file": "src/domain/xeroQuotePurchaseOrderDraft.ts",
+      "line": 172,
+      "snippet": "const LINE_AMOUNT_TYPE_CANONICAL: Readonly<Record<PrepareQuoteDraftInput[\"line_amount_type\"], CanonicalLineAmountType>> = {"
+    },
+    {
+      "id": "src/mcp/xeroFailureEnvelope.ts:37",
+      "kind": "C4_record_type",
+      "file": "src/mcp/xeroFailureEnvelope.ts",
+      "line": 37,
+      "snippet": "const DEFAULT_FAILURE_PROJECTION: Readonly<Record<AppErrorCode, {"
+    },
+    {
+      "id": "src/mcp/xeroReadEvidence.ts:30",
+      "kind": "C4_record_type",
+      "file": "src/mcp/xeroReadEvidence.ts",
+      "line": 30,
+      "snippet": "const XERO_READ_EVIDENCE_PROFILES: Partial<Record<AccountingToolName, XeroReadEvidenceProfile>> = {"
+    },
+    {
+      "id": "src/mcp/xeroToolCapabilityContract.ts:176",
+      "kind": "C4_record_type",
+      "file": "src/mcp/xeroToolCapabilityContract.ts",
+      "line": 176,
+      "snippet": "Record<AccountingToolName, XeroToolCapabilityBinding>"
+    },
+    {
+      "id": "src/mcp/xeroToolCapabilityContract.ts:180",
+      "kind": "C4_record_type",
+      "file": "src/mcp/xeroToolCapabilityContract.ts",
+      "line": 180,
+      "snippet": ") as Record<AccountingToolName, XeroToolCapabilityBinding>,"
+    },
+    {
+      "id": "src/providers/xeroCreditNoteManualJournalDraft.ts:22",
+      "kind": "C4_record_type",
+      "file": "src/providers/xeroCreditNoteManualJournalDraft.ts",
+      "line": 22,
+      "snippet": "const PROVIDER_LINE_AMOUNT_TYPE: Readonly<Record<CanonicalDraftLineAmountType, LineAmountTypes>> = {"
+    },
+    {
+      "id": "src/providers/xeroExtendedReadMapper.ts:746",
+      "kind": "C4_record_type",
+      "file": "src/providers/xeroExtendedReadMapper.ts",
+      "line": 746,
+      "snippet": "const QUOTE_ORDER: Readonly<Record<QuoteSort, string>> = {"
+    },
+    {
+      "id": "src/providers/xeroExtendedReadMapper.ts:755",
+      "kind": "C4_record_type",
+      "file": "src/providers/xeroExtendedReadMapper.ts",
+      "line": 755,
+      "snippet": "const PURCHASE_ORDER_ORDER: Readonly<Record<PurchaseOrderSort, string>> = {"
+    },
+    {
+      "id": "src/providers/xeroExtendedReadMapper.ts:764",
+      "kind": "C4_record_type",
+      "file": "src/providers/xeroExtendedReadMapper.ts",
+      "line": 764,
+      "snippet": "const MANUAL_JOURNAL_ORDER: Readonly<Record<ManualJournalSort, string>> = {"
+    },
+    {
+      "id": "src/providers/xeroExtendedReadMapper.ts:771",
+      "kind": "C4_record_type",
+      "file": "src/providers/xeroExtendedReadMapper.ts",
+      "line": 771,
+      "snippet": "const ITEM_ORDER: Readonly<Record<ItemSort, string>> = {"
+    },
+    {
+      "id": "src/providers/xeroExtendedReadMapper.ts:780",
+      "kind": "C4_record_type",
+      "file": "src/providers/xeroExtendedReadMapper.ts",
+      "line": 780,
+      "snippet": "const BANK_TRANSACTION_ORDER: Readonly<Record<BankTransactionSort, string>> = {"
+    },
+    {
+      "id": "src/providers/xeroProvider.ts:121",
+      "kind": "C4_record_type",
+      "file": "src/providers/xeroProvider.ts",
+      "line": 121,
+      "snippet": "const INVOICE_ORDER: Record<InvoiceOrder, string> = {"
+    },
+    {
+      "id": "src/providers/xeroProvider.ts:195",
+      "kind": "C4_record_type",
+      "file": "src/providers/xeroProvider.ts",
+      "line": 195,
+      "snippet": "const PAYMENT_CONTACT_PATH: Readonly<Record<PaymentType, string>> = {"
+    },
+    {
+      "id": "src/providers/xeroQuotePurchaseOrderDraft.ts:25",
+      "kind": "C4_record_type",
+      "file": "src/providers/xeroQuotePurchaseOrderDraft.ts",
+      "line": 25,
+      "snippet": "const QUOTE_LINE_AMOUNT_TYPES: Readonly<Record<CanonicalLineAmountType, QuoteLineAmountTypes>> = {"
+    },
+    {
+      "id": "src/providers/xeroQuotePurchaseOrderDraft.ts:31",
+      "kind": "C4_record_type",
+      "file": "src/providers/xeroQuotePurchaseOrderDraft.ts",
+      "line": 31,
+      "snippet": "const PURCHASE_ORDER_LINE_AMOUNT_TYPES: Readonly<Record<CanonicalLineAmountType, LineAmountTypes>> = {"
+    },
+    {
+      "id": "src/security/xeroProviderWritePermit.ts:38",
+      "kind": "C4_record_type",
+      "file": "src/security/xeroProviderWritePermit.ts",
+      "line": 38,
+      "snippet": ") as Readonly<Record<XeroProviderWriteAdapterOperation, XeroAutonomousWriteAction>>,"
+    },
+    {
+      "id": "src/services/xeroMutationService.ts:106",
+      "kind": "C4_record_type",
+      "file": "src/services/xeroMutationService.ts",
+      "line": 106,
+      "snippet": ") as Record<XeroAutonomousWriteAction, XeroProviderWriteAdapterOperation>,"
+    },
+    {
+      "id": "src/services/xeroMutationService.ts:98",
+      "kind": "C4_record_type",
+      "file": "src/services/xeroMutationService.ts",
+      "line": 98,
+      "snippet": "Record<XeroAutonomousWriteAction, XeroProviderWriteAdapterOperation>"
+    },
+    {
+      "id": "src/control-kernel/accountingCaseCompiler.ts:388",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/control-kernel/accountingCaseCompiler.ts",
+      "line": 388,
+      "snippet": "for (const line of [...fact.lines].sort((left, right) => left.lineId.localeCompare(right.lineId))) {"
+    },
+    {
+      "id": "src/governance/governanceAudit.ts:29",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/governance/governanceAudit.ts",
+      "line": 29,
+      "snippet": "for (const [name, value] of ["
+    },
+    {
+      "id": "src/governance/governanceAudit.ts:43",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/governance/governanceAudit.ts",
+      "line": 43,
+      "snippet": "for (const hash of [input.inputHash, input.outputHash]) {"
+    },
+    {
+      "id": "src/policy/xeroContactIdentity.ts:158",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/policy/xeroContactIdentity.ts",
+      "line": 158,
+      "snippet": "for (const [field, missing, conflict] of ["
+    },
+    {
+      "id": "src/providers/xeroScopes.ts:214",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/providers/xeroScopes.ts",
+      "line": 214,
+      "snippet": "for (const identityScope of [\"openid\", \"profile\", \"email\"]) add(identityScope);"
+    },
+    {
+      "id": "src/providers/xeroScopes.ts:281",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/providers/xeroScopes.ts",
+      "line": 281,
+      "snippet": "for (const identityScope of [\"openid\", \"profile\", \"email\"]) add(identityScope);"
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:1616",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 1616,
+      "snippet": "for (const field of [\"email\", \"companyNumber\", \"accountNumber\"] as const) {"
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:1682",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 1682,
+      "snippet": "for (const [key, request] of [...requests].sort(([left], [right]) => left.localeCompare(right))) {"
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:3078",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 3078,
+      "snippet": "for (const status of [\"ACTIVE\", \"ARCHIVED\", \"GDPRREQUEST\"] as const) {"
+    },
+    {
+      "id": "src/control-kernel/ledgerProviderWritePermit.ts:124",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/control-kernel/ledgerProviderWritePermit.ts",
+      "line": 124,
+      "snippet": "] as const);"
+    },
+    {
+      "id": "src/control-kernel/ledgerProviderWritePermit.ts:129",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/control-kernel/ledgerProviderWritePermit.ts",
+      "line": 129,
+      "snippet": "] as const);"
+    },
+    {
+      "id": "src/control-kernel/ledgerProviderWritePermit.ts:134",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/control-kernel/ledgerProviderWritePermit.ts",
+      "line": 134,
+      "snippet": "] as const);"
+    },
+    {
+      "id": "src/domain/xeroMutation.ts:42",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/domain/xeroMutation.ts",
+      "line": 42,
+      "snippet": "SUPPLIER_BILL: Object.freeze([\"CREATE_DRAFT\"] as const),"
+    },
+    {
+      "id": "src/domain/xeroMutation.ts:43",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/domain/xeroMutation.ts",
+      "line": 43,
+      "snippet": "SALES_INVOICE: Object.freeze([\"CREATE_DRAFT\"] as const),"
+    },
+    {
+      "id": "src/domain/xeroMutation.ts:44",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/domain/xeroMutation.ts",
+      "line": 44,
+      "snippet": "QUOTE: Object.freeze([\"CREATE_DRAFT\"] as const),"
+    },
+    {
+      "id": "src/domain/xeroMutation.ts:45",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/domain/xeroMutation.ts",
+      "line": 45,
+      "snippet": "PURCHASE_ORDER: Object.freeze([\"CREATE_DRAFT\"] as const),"
+    },
+    {
+      "id": "src/domain/xeroMutation.ts:46",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/domain/xeroMutation.ts",
+      "line": 46,
+      "snippet": "CREDIT_NOTE: Object.freeze([\"CREATE_DRAFT\"] as const),"
+    },
+    {
+      "id": "src/domain/xeroMutation.ts:47",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/domain/xeroMutation.ts",
+      "line": 47,
+      "snippet": "MANUAL_JOURNAL: Object.freeze([\"CREATE_DRAFT\"] as const),"
+    },
+    {
+      "id": "src/domain/xeroMutation.ts:48",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/domain/xeroMutation.ts",
+      "line": 48,
+      "snippet": "CONTACT: Object.freeze([\"CREATE\", \"UPDATE\"] as const),"
+    },
+    {
+      "id": "src/domain/xeroMutation.ts:49",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/domain/xeroMutation.ts",
+      "line": 49,
+      "snippet": "ITEM: Object.freeze([\"CREATE\", \"UPDATE\"] as const),"
+    },
+    {
+      "id": "src/domain/xeroMutation.ts:50",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/domain/xeroMutation.ts",
+      "line": 50,
+      "snippet": "ATTACHMENT: Object.freeze([\"UPLOAD\"] as const),"
+    },
+    {
+      "id": "src/governance/governanceAudit.ts:36",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/governance/governanceAudit.ts",
+      "line": 36,
+      "snippet": "] as const) {"
+    },
+    {
+      "id": "src/mcp/xeroAccountingCaseBusinessIntake.ts:326",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/mcp/xeroAccountingCaseBusinessIntake.ts",
+      "line": 326,
+      "snippet": "([\"email\", \"company_number\", \"account_number\"] as const).some((field) =>"
+    },
+    {
+      "id": "src/policy/xeroContactIdentity.ts:162",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/policy/xeroContactIdentity.ts",
+      "line": 162,
+      "snippet": "] as const) {"
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:1616#2",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 1616,
+      "snippet": "for (const field of [\"email\", \"companyNumber\", \"accountNumber\"] as const) {"
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:3078#2",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 3078,
+      "snippet": "for (const status of [\"ACTIVE\", \"ARCHIVED\", \"GDPRREQUEST\"] as const) {"
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:3325",
+      "kind": "C5_as_const_array_or_inline_iteration",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 3325,
+      "snippet": "const collisionFields = ([\"email\", \"companyNumber\", \"accountNumber\"] as const)"
+    },
+    {
+      "id": "migrations/001_init.sql:107",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/001_init.sql",
+      "line": 107,
+      "snippet": "result_status text NOT NULL CHECK (result_status IN ('SUCCEEDED', 'REJECTED', 'FAILED')),"
+    },
+    {
+      "id": "migrations/001_init.sql:53",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/001_init.sql",
+      "line": 53,
+      "snippet": "connection_status text NOT NULL CHECK (connection_status IN ('ACTIVE', 'TOKEN_REFRESH_FAILED', 'REVOKED')),"
+    },
+    {
+      "id": "migrations/001_init.sql:72",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/001_init.sql",
+      "line": 72,
+      "snippet": "state text NOT NULL CHECK (state IN ("
+    },
+    {
+      "id": "migrations/004_durable_audit_intent.sql:9",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/004_durable_audit_intent.sql",
+      "line": 9,
+      "snippet": "CHECK (result_status IN ('IN_PROGRESS', 'SUCCEEDED', 'REJECTED', 'FAILED'));"
+    },
+    {
+      "id": "migrations/005_oauth_identity_foundation.sql:106",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/005_oauth_identity_foundation.sql",
+      "line": 106,
+      "snippet": "CHECK (installation_status <> 'REVOKED' OR revoked_at IS NOT NULL)"
+    },
+    {
+      "id": "migrations/005_oauth_identity_foundation.sql:118",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/005_oauth_identity_foundation.sql",
+      "line": 118,
+      "snippet": "subject_type text NOT NULL CHECK (subject_type IN ('USER', 'TEAM')),"
+    },
+    {
+      "id": "migrations/005_oauth_identity_foundation.sql:123",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/005_oauth_identity_foundation.sql",
+      "line": 123,
+      "snippet": "binding_status text NOT NULL CHECK (binding_status IN ('ACTIVE', 'SUSPENDED', 'REVOKED')),"
+    },
+    {
+      "id": "migrations/005_oauth_identity_foundation.sql:134",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/005_oauth_identity_foundation.sql",
+      "line": 134,
+      "snippet": "CHECK (binding_status <> 'REVOKED' OR revoked_at IS NOT NULL)"
+    },
+    {
+      "id": "migrations/005_oauth_identity_foundation.sql:152",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/005_oauth_identity_foundation.sql",
+      "line": 152,
+      "snippet": "subject_type text NOT NULL CHECK (subject_type IN ('USER', 'TEAM')),"
+    },
+    {
+      "id": "migrations/005_oauth_identity_foundation.sql:15",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/005_oauth_identity_foundation.sql",
+      "line": 15,
+      "snippet": "authorization_status text NOT NULL CHECK ("
+    },
+    {
+      "id": "migrations/005_oauth_identity_foundation.sql:21",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/005_oauth_identity_foundation.sql",
+      "line": 21,
+      "snippet": "CHECK (authorization_status <> 'REVOKED' OR revoked_at IS NOT NULL)"
+    },
+    {
+      "id": "migrations/005_oauth_identity_foundation.sql:231",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/005_oauth_identity_foundation.sql",
+      "line": 231,
+      "snippet": "family_status text NOT NULL CHECK (family_status IN ('ACTIVE', 'REVOKED')),"
+    },
+    {
+      "id": "migrations/005_oauth_identity_foundation.sql:241",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/005_oauth_identity_foundation.sql",
+      "line": 241,
+      "snippet": "CHECK (family_status <> 'REVOKED' OR revoked_at IS NOT NULL)"
+    },
+    {
+      "id": "migrations/005_oauth_identity_foundation.sql:95",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/005_oauth_identity_foundation.sql",
+      "line": 95,
+      "snippet": "subject_type text NOT NULL CHECK (subject_type IN ('USER', 'TEAM')),"
+    },
+    {
+      "id": "migrations/005_oauth_identity_foundation.sql:99",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/005_oauth_identity_foundation.sql",
+      "line": 99,
+      "snippet": "installation_status text NOT NULL CHECK ("
+    },
+    {
+      "id": "migrations/008_xero_source_evidence_type.sql:17",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/008_xero_source_evidence_type.sql",
+      "line": 17,
+      "snippet": "CHECK (source_evidence_type IN ("
+    },
+    {
+      "id": "migrations/016_xero_document_type_duplicate_guards.sql:14",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/016_xero_document_type_duplicate_guards.sql",
+      "line": 14,
+      "snippet": "CHECK (document_type IN ('ACCPAY', 'ACCREC'));"
+    },
+    {
+      "id": "migrations/016_xero_document_type_duplicate_guards.sql:18",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/016_xero_document_type_duplicate_guards.sql",
+      "line": 18,
+      "snippet": "ADD CONSTRAINT posting_requests_state_check CHECK (state IN ("
+    },
+    {
+      "id": "migrations/017_xero_controlled_mutation_foundation.sql:112",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/017_xero_controlled_mutation_foundation.sql",
+      "line": 112,
+      "snippet": "source_evidence_type text NOT NULL CHECK (source_evidence_type IN ("
+    },
+    {
+      "id": "migrations/017_xero_controlled_mutation_foundation.sql:116",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/017_xero_controlled_mutation_foundation.sql",
+      "line": 116,
+      "snippet": "state text NOT NULL CHECK (state IN ("
+    },
+    {
+      "id": "migrations/017_xero_controlled_mutation_foundation.sql:121",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/017_xero_controlled_mutation_foundation.sql",
+      "line": 121,
+      "snippet": "write_receipt jsonb CHECK (write_receipt IS NULL OR jsonb_typeof(write_receipt) = 'object'),"
+    },
+    {
+      "id": "migrations/017_xero_controlled_mutation_foundation.sql:122",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/017_xero_controlled_mutation_foundation.sql",
+      "line": 122,
+      "snippet": "readback_snapshot jsonb CHECK (readback_snapshot IS NULL OR jsonb_typeof(readback_snapshot) = 'object'),"
+    },
+    {
+      "id": "migrations/017_xero_controlled_mutation_foundation.sql:132",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/017_xero_controlled_mutation_foundation.sql",
+      "line": 132,
+      "snippet": "readback_status text CHECK ("
+    },
+    {
+      "id": "migrations/017_xero_controlled_mutation_foundation.sql:15",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/017_xero_controlled_mutation_foundation.sql",
+      "line": 15,
+      "snippet": "object_type text NOT NULL CHECK (object_type IN ("
+    },
+    {
+      "id": "migrations/017_xero_controlled_mutation_foundation.sql:24",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/017_xero_controlled_mutation_foundation.sql",
+      "line": 24,
+      "snippet": "canonical_payload jsonb NOT NULL CHECK (jsonb_typeof(canonical_payload) = 'object'),"
+    },
+    {
+      "id": "migrations/017_xero_controlled_mutation_foundation.sql:38",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/017_xero_controlled_mutation_foundation.sql",
+      "line": 38,
+      "snippet": "source_evidence_type text NOT NULL CHECK (source_evidence_type IN ("
+    },
+    {
+      "id": "migrations/017_xero_controlled_mutation_foundation.sql:43",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/017_xero_controlled_mutation_foundation.sql",
+      "line": 43,
+      "snippet": "state text NOT NULL CHECK (state IN ('PREPARED', 'CONSUMED', 'EXPIRED')),"
+    },
+    {
+      "id": "migrations/017_xero_controlled_mutation_foundation.sql:89",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/017_xero_controlled_mutation_foundation.sql",
+      "line": 89,
+      "snippet": "object_type text NOT NULL CHECK (object_type IN ("
+    },
+    {
+      "id": "migrations/017_xero_controlled_mutation_foundation.sql:98",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/017_xero_controlled_mutation_foundation.sql",
+      "line": 98,
+      "snippet": "canonical_payload jsonb NOT NULL CHECK (jsonb_typeof(canonical_payload) = 'object'),"
+    },
+    {
+      "id": "migrations/018_xero_invoice_draft_one_time_confirmation.sql:11",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/018_xero_invoice_draft_one_time_confirmation.sql",
+      "line": 11,
+      "snippet": "ADD CONSTRAINT xero_mutation_preparations_object_type_check CHECK (object_type IN ("
+    },
+    {
+      "id": "migrations/018_xero_invoice_draft_one_time_confirmation.sql:32",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/018_xero_invoice_draft_one_time_confirmation.sql",
+      "line": 32,
+      "snippet": "ADD CONSTRAINT xero_mutation_requests_object_type_check CHECK (object_type IN ("
+    },
+    {
+      "id": "migrations/022_xero_organisation_switch.sql:38",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/022_xero_organisation_switch.sql",
+      "line": 38,
+      "snippet": "subject_type text NOT NULL CHECK (subject_type IN ('USER', 'TEAM')),"
+    },
+    {
+      "id": "migrations/023_governance_audit_events.sql:23",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/023_governance_audit_events.sql",
+      "line": 23,
+      "snippet": "disposition text NOT NULL CHECK (disposition IN ('NOT_EVALUATED','OBSERVE','AUTO_EXECUTE','ESCALATE','DENY')),"
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:192",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 192,
+      "snippet": "action_id text NOT NULL CHECK (action_id IN ("
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:196",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 196,
+      "snippet": "native_route text NOT NULL CHECK (native_route IN ("
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:201",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 201,
+      "snippet": "operation_json jsonb NOT NULL CHECK (jsonb_typeof(operation_json) = 'object'),"
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:202",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 202,
+      "snippet": "canonical_payload jsonb NOT NULL CHECK (jsonb_typeof(canonical_payload) = 'object'),"
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:205",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 205,
+      "snippet": "state text NOT NULL CHECK (state IN ("
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:30",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 30,
+      "snippet": "subject_type text NOT NULL CHECK (subject_type IN ('USER', 'TEAM')),"
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:80",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 80,
+      "snippet": "compiled_case jsonb NOT NULL CHECK (jsonb_typeof(compiled_case) = 'object'),"
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:83",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 83,
+      "snippet": "initial_state text NOT NULL CHECK (initial_state IN ("
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:87",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 87,
+      "snippet": "state text NOT NULL CHECK (state IN ("
+    },
+    {
+      "id": "migrations/029_accounting_case_evidence_linkage.sql:224",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/029_accounting_case_evidence_linkage.sql",
+      "line": 224,
+      "snippet": "ADD CONSTRAINT accounting_case_versions_state_check CHECK (state IN ("
+    },
+    {
+      "id": "migrations/029_accounting_case_evidence_linkage.sql:278",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/029_accounting_case_evidence_linkage.sql",
+      "line": 278,
+      "snippet": "ADD CONSTRAINT accounting_case_operations_state_check CHECK (state IN ("
+    },
+    {
+      "id": "migrations/034_accounting_case_continuation.sql:11",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/034_accounting_case_continuation.sql",
+      "line": 11,
+      "snippet": "ADD CONSTRAINT accounting_case_versions_state_check CHECK (state IN ("
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:117",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 117,
+      "snippet": "subject_type text NOT NULL CHECK (subject_type IN ('USER', 'TEAM')),"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:132",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 132,
+      "snippet": "state text NOT NULL CHECK (state IN ('ISSUED', 'CONSUMED')),"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:13",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 13,
+      "snippet": "ADD CONSTRAINT accounting_case_operations_state_check CHECK (state IN ("
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:143",
+      "kind": "C6_sql_check_constraint",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 143,
+      "snippet": "CONSTRAINT accounting_case_recovery_residual_grant_state_shape_check CHECK ("
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:689",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 689,
+      "snippet": "OR (NEW.action_id = 'contact.create_basic'"
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:691",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 691,
+      "snippet": "OR (NEW.action_id = 'customer_invoice.create_draft'"
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:693",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 693,
+      "snippet": "OR (NEW.action_id = 'supplier_bill.create_draft'"
+    },
+    {
+      "id": "migrations/027_accounting_case_foundation.sql:695",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/027_accounting_case_foundation.sql",
+      "line": 695,
+      "snippet": "OR (NEW.action_id = 'credit_note.create_draft'"
+    },
+    {
+      "id": "migrations/029_accounting_case_evidence_linkage.sql:658",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/029_accounting_case_evidence_linkage.sql",
+      "line": 658,
+      "snippet": "OR (NEW.action_id = 'contact.create_basic'"
+    },
+    {
+      "id": "migrations/029_accounting_case_evidence_linkage.sql:660",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/029_accounting_case_evidence_linkage.sql",
+      "line": 660,
+      "snippet": "OR (NEW.action_id = 'customer_invoice.create_draft'"
+    },
+    {
+      "id": "migrations/029_accounting_case_evidence_linkage.sql:662",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/029_accounting_case_evidence_linkage.sql",
+      "line": 662,
+      "snippet": "OR (NEW.action_id = 'supplier_bill.create_draft'"
+    },
+    {
+      "id": "migrations/029_accounting_case_evidence_linkage.sql:664",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/029_accounting_case_evidence_linkage.sql",
+      "line": 664,
+      "snippet": "OR (NEW.action_id = 'credit_note.create_draft'"
+    },
+    {
+      "id": "migrations/030_accounting_case_preflight_reseal.sql:401",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/030_accounting_case_preflight_reseal.sql",
+      "line": 401,
+      "snippet": "OR (operation_row.action_id = 'contact.create_basic'"
+    },
+    {
+      "id": "migrations/030_accounting_case_preflight_reseal.sql:403",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/030_accounting_case_preflight_reseal.sql",
+      "line": 403,
+      "snippet": "OR (operation_row.action_id = 'customer_invoice.create_draft'"
+    },
+    {
+      "id": "migrations/030_accounting_case_preflight_reseal.sql:406",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/030_accounting_case_preflight_reseal.sql",
+      "line": 406,
+      "snippet": "OR (operation_row.action_id = 'supplier_bill.create_draft'"
+    },
+    {
+      "id": "migrations/030_accounting_case_preflight_reseal.sql:409",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/030_accounting_case_preflight_reseal.sql",
+      "line": 409,
+      "snippet": "OR (operation_row.action_id = 'credit_note.create_draft'"
+    },
+    {
+      "id": "migrations/036_accounting_case_contact_bare_number_reservations.sql:114",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/036_accounting_case_contact_bare_number_reservations.sql",
+      "line": 114,
+      "snippet": "WHERE operation_row.action_id = 'contact.create_basic'"
+    },
+    {
+      "id": "migrations/036_accounting_case_contact_bare_number_reservations.sql:157",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/036_accounting_case_contact_bare_number_reservations.sql",
+      "line": 157,
+      "snippet": "IF NEW.action_id = 'contact.create_basic' THEN"
+    },
+    {
+      "id": "migrations/036_accounting_case_contact_bare_number_reservations.sql:200",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/036_accounting_case_contact_bare_number_reservations.sql",
+      "line": 200,
+      "snippet": "AND existing.action_id = 'contact.create_basic'"
+    },
+    {
+      "id": "migrations/036_accounting_case_contact_bare_number_reservations.sql:82",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/036_accounting_case_contact_bare_number_reservations.sql",
+      "line": 82,
+      "snippet": "WHERE operation_row.action_id = 'contact.create_basic'"
+    },
+    {
+      "id": "migrations/037_accounting_case_contact_prepared_reservation_recovery.sql:159",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/037_accounting_case_contact_prepared_reservation_recovery.sql",
+      "line": 159,
+      "snippet": "AND operation_row.action_id = 'contact.create_basic'"
+    },
+    {
+      "id": "migrations/037_accounting_case_contact_prepared_reservation_recovery.sql:397",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/037_accounting_case_contact_prepared_reservation_recovery.sql",
+      "line": 397,
+      "snippet": "IF NEW.action_id = 'contact.create_basic' THEN"
+    },
+    {
+      "id": "migrations/037_accounting_case_contact_prepared_reservation_recovery.sql:440",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/037_accounting_case_contact_prepared_reservation_recovery.sql",
+      "line": 440,
+      "snippet": "AND existing.action_id = 'contact.create_basic'"
+    },
+    {
+      "id": "migrations/038_accounting_case_mutation_projection_convergence.sql:129",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/038_accounting_case_mutation_projection_convergence.sql",
+      "line": 129,
+      "snippet": "OR (NEW.action_id = 'contact.create_basic'"
+    },
+    {
+      "id": "migrations/038_accounting_case_mutation_projection_convergence.sql:131",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/038_accounting_case_mutation_projection_convergence.sql",
+      "line": 131,
+      "snippet": "OR (NEW.action_id = 'customer_invoice.create_draft'"
+    },
+    {
+      "id": "migrations/038_accounting_case_mutation_projection_convergence.sql:133",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/038_accounting_case_mutation_projection_convergence.sql",
+      "line": 133,
+      "snippet": "OR (NEW.action_id = 'supplier_bill.create_draft'"
+    },
+    {
+      "id": "migrations/038_accounting_case_mutation_projection_convergence.sql:135",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/038_accounting_case_mutation_projection_convergence.sql",
+      "line": 135,
+      "snippet": "OR (NEW.action_id = 'credit_note.create_draft'"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:538",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 538,
+      "snippet": "OR (NEW.action_id = 'contact.create_basic'"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:540",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 540,
+      "snippet": "OR (NEW.action_id = 'customer_invoice.create_draft'"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:542",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 542,
+      "snippet": "OR (NEW.action_id = 'supplier_bill.create_draft'"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:544",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 544,
+      "snippet": "OR (NEW.action_id = 'credit_note.create_draft'"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:554",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 554,
+      "snippet": "IF NEW.action_id = 'contact.create_basic' THEN"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:591",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 591,
+      "snippet": "(NEW.action_id = 'customer_invoice.create_draft'"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:595",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 595,
+      "snippet": "OR (NEW.action_id = 'supplier_bill.create_draft'"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:599",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 599,
+      "snippet": "OR (NEW.action_id = 'credit_note.create_draft'"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:603",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 603,
+      "snippet": "OR (NEW.action_id = 'credit_note.create_draft'"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:904",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 904,
+      "snippet": "IF NEW.action_id = 'contact.create_basic' THEN"
+    },
+    {
+      "id": "migrations/039_accounting_case_expired_target_residual_continuation.sql:947",
+      "kind": "C7_sql_trigger_hardcoded_action_id_branch",
+      "file": "migrations/039_accounting_case_expired_target_residual_continuation.sql",
+      "line": 947,
+      "snippet": "AND existing.action_id = 'contact.create_basic'"
+    },
+    {
+      "id": "src/control-kernel/accountingCaseCompiler.ts:179",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/control-kernel/accountingCaseCompiler.ts",
+      "line": 179,
+      "snippet": "const businessReservation = projection.reservation.scope === \"DATED_OCCURRENCE\""
+    },
+    {
+      "id": "src/control-kernel/accountingCaseCompiler.ts:705",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/control-kernel/accountingCaseCompiler.ts",
+      "line": 705,
+      "snippet": "const actionId = fact.documentKind === \"QUOTE\""
+    },
+    {
+      "id": "src/db/inMemoryRepository.ts:4860",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/db/inMemoryRepository.ts",
+      "line": 4860,
+      "snippet": "const updated: AccountingCaseVersionRecord = record.state === \"RECOVERY_REQUIRED\""
+    },
+    {
+      "id": "src/db/postgresRepository.ts:5846",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/db/postgresRepository.ts",
+      "line": 5846,
+      "snippet": "const approvalRefHash = posting.state === \"APPROVED\""
+    },
+    {
+      "id": "src/domain/accountingCaseContinuation.ts:39",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/domain/accountingCaseContinuation.ts",
+      "line": 39,
+      "snippet": "const documentType = fact.documentKind === \"INVOICE\""
+    },
+    {
+      "id": "src/domain/xeroQuotePurchaseOrderDraft.ts:322",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/domain/xeroQuotePurchaseOrderDraft.ts",
+      "line": 322,
+      "snippet": "const startDate = canonicalPayload.objectType === \"QUOTE\""
+    },
+    {
+      "id": "src/oauth/brokerPages.ts:227",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/oauth/brokerPages.ts",
+      "line": 227,
+      "snippet": "const lead = options.status === \"SWITCHED\""
+    },
+    {
+      "id": "src/policy/xeroAccountingCaseReadbackProjection.ts:151",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/policy/xeroAccountingCaseReadbackProjection.ts",
+      "line": 151,
+      "snippet": "const expectation: AccountingCaseReadbackExpectation = operation.nativeRoute === \"CONTACT_CREATE\""
+    },
+    {
+      "id": "src/policy/xeroBusinessCoordinateAuthority.ts:34",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/policy/xeroBusinessCoordinateAuthority.ts",
+      "line": 34,
+      "snippet": "const authoritativeProviderField = route === \"SALES_INVOICE\""
+    },
+    {
+      "id": "src/policy/xeroEffectiveCapability.ts:173",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/policy/xeroEffectiveCapability.ts",
+      "line": 173,
+      "snippet": "const requiredXeroOAuthScopeAnyOf = policy.object === \"UNKNOWN\""
+    },
+    {
+      "id": "src/providers/xeroClientManager.ts:392",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/providers/xeroClientManager.ts",
+      "line": 392,
+      "snippet": "const mutexKey = initial.mode === \"OAUTH\""
+    },
+    {
+      "id": "src/providers/xeroClientManager.ts:593",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/providers/xeroClientManager.ts",
+      "line": 593,
+      "snippet": "const aad = resolved.mode === \"OAUTH\""
+    },
+    {
+      "id": "src/services/accountingService.ts:1038",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/accountingService.ts",
+      "line": 1038,
+      "snippet": "written = objectType === \"SUPPLIER_BILL\""
+    },
+    {
+      "id": "src/services/accountingService.ts:1156",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/accountingService.ts",
+      "line": 1156,
+      "snippet": "const expectedSourceHash = objectType === \"SUPPLIER_BILL\""
+    },
+    {
+      "id": "src/services/accountingService.ts:763",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/accountingService.ts",
+      "line": 763,
+      "snippet": "const sourceSha256 = proposal.source_evidence_type === \"SERVER_FINGERPRINTED_EXTRACTION\""
+    },
+    {
+      "id": "src/services/accountingService.ts:960",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/accountingService.ts",
+      "line": 960,
+      "snippet": "const actionId = objectType === \"SUPPLIER_BILL\""
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:1094",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 1094,
+      "snippet": "const reasonCodes = lookup.state === \"INCOMPLETE\""
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:1417",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 1417,
+      "snippet": "sourceCaseClaim = bound.outcome === \"BOUND_FIRST_USE\""
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:4086",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 4086,
+      "snippet": "const prepared = operation.nativeRoute === \"SUPPLIER_BILL\""
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:4151",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 4151,
+      "snippet": "const prepared = operation.nativeRoute === \"QUOTE\""
+    },
+    {
+      "id": "src/services/xeroAccountingCaseService.ts:931",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroAccountingCaseService.ts",
+      "line": 931,
+      "snippet": "const recurringAuthority = referenceKind === \"GENERIC_RECURRING_REFERENCE\""
+    },
+    {
+      "id": "src/services/xeroControlledMutationService.ts:226",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroControlledMutationService.ts",
+      "line": 226,
+      "snippet": "const expected = expectedObjectType === \"QUOTE\""
+    },
+    {
+      "id": "src/services/xeroControlledMutationService.ts:255",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroControlledMutationService.ts",
+      "line": 255,
+      "snippet": "created = expectedObjectType === \"QUOTE\""
+    },
+    {
+      "id": "src/services/xeroControlledMutationService.ts:333",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroControlledMutationService.ts",
+      "line": 333,
+      "snippet": "const verified = expectedObjectType === \"QUOTE\""
+    },
+    {
+      "id": "src/services/xeroCreditNoteManualJournalService.ts:165",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroCreditNoteManualJournalService.ts",
+      "line": 165,
+      "snippet": "const confirmationDetails = prepared.objectType === \"CREDIT_NOTE\""
+    },
+    {
+      "id": "src/services/xeroCreditNoteManualJournalService.ts:235",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroCreditNoteManualJournalService.ts",
+      "line": 235,
+      "snippet": "const expected = expectedObjectType === \"CREDIT_NOTE\""
+    },
+    {
+      "id": "src/services/xeroCreditNoteManualJournalService.ts:246",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroCreditNoteManualJournalService.ts",
+      "line": 246,
+      "snippet": "const actionId = expectedObjectType === \"CREDIT_NOTE\""
+    },
+    {
+      "id": "src/services/xeroCreditNoteManualJournalService.ts:305",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroCreditNoteManualJournalService.ts",
+      "line": 305,
+      "snippet": "const created = expectedObjectType === \"CREDIT_NOTE\""
+    },
+    {
+      "id": "src/services/xeroCreditNoteManualJournalService.ts:381",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroCreditNoteManualJournalService.ts",
+      "line": 381,
+      "snippet": "const verified = expectedObjectType === \"CREDIT_NOTE\""
+    },
+    {
+      "id": "src/services/xeroCreditNoteManualJournalService.ts:653",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroCreditNoteManualJournalService.ts",
+      "line": 653,
+      "snippet": "const hasObjectWriteScope = objectType === \"CREDIT_NOTE\""
+    },
+    {
+      "id": "src/services/xeroMutationService.ts:358",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroMutationService.ts",
+      "line": 358,
+      "snippet": "const sourceSha256 = input.sourceEvidenceType === \"SERVER_FINGERPRINTED_EXTRACTION\""
+    },
+    {
+      "id": "src/services/xeroMutationService.ts:601",
+      "kind": "C1_ternary_fallback_candidate",
+      "file": "src/services/xeroMutationService.ts",
+      "line": 601,
+      "snippet": "const legacyDocumentType = request.objectType === \"SUPPLIER_BILL\""
+    }
+  ]
+}
