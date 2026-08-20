@@ -50,11 +50,22 @@ function fixed(value: unknown, reasonCode: string): string {
   }
 }
 
-function normalizedLineAmountType(value: unknown): "EXCLUSIVE" | "NO_TAX" {
+/**
+ * `INCLUSIVE` is accepted here and carried through full line and document
+ * verification below -- it is not rejected at the gate the way an unknown
+ * value still is. It cannot currently be sealed into an
+ * `OriginalTransactionEvidenceFact`: that type (src/domain/accountingCase.ts)
+ * declares `lineAmountType: "EXCLUSIVE" | "NO_TAX"` and has no member for it.
+ * See the check right before `withoutHash` is built below, which fails
+ * closed on that gap only *after* an inclusive original has been proven
+ * exact, instead of refusing it unexamined.
+ */
+function normalizedLineAmountType(value: unknown): "EXCLUSIVE" | "NO_TAX" | "INCLUSIVE" {
   if (typeof value !== "string") fail("ORIGINAL_LINE_AMOUNT_TYPE_MISSING");
   const normalized = value.replace(/[^A-Za-z]/gu, "").toLocaleUpperCase("en");
   if (normalized === "EXCLUSIVE") return "EXCLUSIVE";
   if (normalized === "NOTAX") return "NO_TAX";
+  if (normalized === "INCLUSIVE") return "INCLUSIVE";
   return fail("ORIGINAL_LINE_AMOUNT_TYPE_UNSUPPORTED");
 }
 
@@ -178,14 +189,26 @@ export function createXeroOriginalTransactionEvidence(input: {
     const effectiveTaxRateBps = taxRate.effectiveTaxRateBps;
     const quantity = fixed(line.quantity, "ORIGINAL_LINE_QUANTITY_INVALID");
     const unitAmount = fixed(line.unitAmount, "ORIGINAL_LINE_UNIT_AMOUNT_INVALID");
-    const expectedNet = formatAccountingFixedFour(quantizeAccountingLineNet(
+    // quantity x unitAmount is NET for an exclusive/no-tax line (unitAmount
+    // excludes tax) but GROSS for an inclusive line (unitAmount includes
+    // tax). Quantizing the raw product is the same operation either way;
+    // only which stored amount it is compared against below differs.
+    const quantityTimesUnitAmount = formatAccountingFixedFour(quantizeAccountingLineNet(
       parseAccountingFixedDecimal(quantity),
       parseAccountingFixedDecimal(unitAmount),
       input.monetaryRule,
     ));
     const net = fixed(line.lineAmount, "ORIGINAL_LINE_NET_MISSING_OR_INVALID");
     const tax = fixed(line.taxAmount, "ORIGINAL_LINE_TAX_MISSING_OR_INVALID");
-    if (net !== expectedNet) fail("ORIGINAL_LINE_NET_MISMATCH");
+    if (lineAmountType === "INCLUSIVE") {
+      // Inclusive's own exact identity: net + tax == quantity x unitAmount.
+      if (parseAccountingFixedDecimal(net) + parseAccountingFixedDecimal(tax) !==
+          parseAccountingFixedDecimal(quantityTimesUnitAmount)) {
+        fail("ORIGINAL_LINE_INCLUSIVE_GROSS_MISMATCH");
+      }
+    } else if (net !== quantityTimesUnitAmount) {
+      fail("ORIGINAL_LINE_NET_MISMATCH");
+    }
     const expectedTax = formatAccountingFixedFour(quantizeAccountingLineTax(
       parseAccountingFixedDecimal(net),
       effectiveTaxRateBps,
@@ -233,6 +256,18 @@ export function createXeroOriginalTransactionEvidence(input: {
     lineTax !== parseAccountingFixedDecimal(tax) ||
     lineNet + lineTax !== parseAccountingFixedDecimal(gross)
   ) fail("ORIGINAL_DOCUMENT_TOTALS_MISMATCH");
+
+  // Every per-line and document-level identity above is now proven exact for
+  // this inclusive original -- the arithmetic gap this function used to fail
+  // on is closed. What is left is that OriginalTransactionEvidenceFact
+  // (src/domain/accountingCase.ts) types lineAmountType as
+  // "EXCLUSIVE" | "NO_TAX" only, so a verified INCLUSIVE original still has
+  // no honest value to seal into the evidence contract. Recording it as
+  // "EXCLUSIVE" would misstate unitAmount (tax-inclusive here, not
+  // net-per-unit) to every downstream reader of the sealed fact, so this
+  // fails closed on the type gap instead of writing a fact whose own field
+  // misrepresents what Xero recorded.
+  if (lineAmountType === "INCLUSIVE") fail("ORIGINAL_LINE_AMOUNT_TYPE_INCLUSIVE_UNREPRESENTABLE");
 
   const sourceSnapshotSealHash = xeroOriginalTransactionProviderSnapshotSealHash(snapshot);
   const withoutHash: Omit<OriginalTransactionEvidenceFact, "evidenceHash"> = {

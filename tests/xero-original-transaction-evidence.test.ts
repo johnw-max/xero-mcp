@@ -10,7 +10,11 @@ import {
 import { createXeroDeclaredLedgerPolicy } from "../src/policy/xeroDeclaredLedgerPolicy.js";
 import { bindXeroDeclaredLedger, type XeroDeclaredLedgerBinding } from "../src/policy/xeroDeclaredLedgerBinding.js";
 import { lookupXeroOriginalTransaction } from "../src/services/xeroBusinessCoordinateHistory.js";
-import type { AccountSummary, InvoiceSnapshot, TaxRateSummary } from "../src/providers/types.js";
+import type { AccountSummary, InvoiceLineSnapshot, InvoiceSnapshot, TaxRateSummary } from "../src/providers/types.js";
+import type { AccountingRepository } from "../src/db/repository.js";
+import { XeroClientManager } from "../src/providers/xeroClientManager.js";
+import { XeroAccountingProvider } from "../src/providers/xeroProvider.js";
+import { loadXeroResponse } from "./fixtures/xero-provider-responses/index.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const contactId = "22222222-2222-4222-8222-222222222222";
@@ -442,5 +446,206 @@ describe("Xero historical original-transaction evidence", () => {
       documentDate: "2026-07-01",
     })).resolves.toMatchObject({ state });
     expect(reader.getInvoice).not.toHaveBeenCalled();
+  });
+});
+
+// The live Demo Company tenant showed 6 of 10 authorised sales invoices are
+// tax-inclusive; crediting any of them failed at the gate below with
+// ORIGINAL_LINE_AMOUNT_TYPE_UNSUPPORTED before any arithmetic ran. These
+// tests build their InvoiceSnapshot from the real `invoice_accpay` response
+// captured from that tenant (tests/fixtures/xero-provider-responses/), read
+// back through the actual provider mapper (XeroAccountingProvider#getInvoice)
+// the way tests/provider-invoice-read.test.ts does -- not a hand-built body.
+// It is re-coded onto this file's own taxed ledger fixtures (accountCode
+// "453" / taxType INPUTY24) because the captured line itself is 0-rated
+// (taxType "NONE"), which would make Exclusive and Inclusive indistinguishable.
+describe("Xero historical original-transaction evidence — INCLUSIVE line amount type", () => {
+  const CAPTURED_INVOICE_ID = "483e4412-488a-405c-9115-0a6f3aacf6a6";
+  const CAPTURED_CONNECTION = {
+    connectionId: "captured-conn",
+    actorId: "captured-actor",
+    provider: "xero" as const,
+    tenantId: "99999999-9999-4999-8999-999999999999",
+    tenantName: "Captured Tenant",
+    grantedScopes: ["accounting.invoices"],
+    tokenCiphertext: "test-only",
+    tokenExpiresAt: new Date("2026-08-05T13:00:00Z"),
+    refreshVersion: 0,
+    status: "ACTIVE" as const,
+    createdAt: new Date("2026-08-05T12:00:00Z"),
+    updatedAt: new Date("2026-08-05T12:00:00Z"),
+  };
+
+  function capturedProviderWithClient(client: unknown): XeroAccountingProvider {
+    const manager = {
+      withClient: async <T>(
+        _actorId: string,
+        action: (clientValue: unknown, connectionValue: typeof CAPTURED_CONNECTION) => Promise<T>,
+      ): Promise<T> => action(client, CAPTURED_CONNECTION),
+    } as unknown as XeroClientManager;
+    return new XeroAccountingProvider({} as AccountingRepository, manager);
+  }
+
+  /**
+   * The real captured `invoice_accpay` AP invoice, read back through the
+   * actual provider mapping code -- never a hand-built Xero body. `overrides`
+   * land on the mapped document; `lineOverrides` replace its one line, the
+   * same way `original(overrides)` above adapts its (hand-built) base.
+   * Forced to AUTHORISED because the capture itself is a DRAFT.
+   */
+  async function capturedOriginalBill(
+    overrides: Partial<InvoiceSnapshot> = {},
+    lineOverrides: Partial<InvoiceLineSnapshot> = {},
+  ): Promise<InvoiceSnapshot> {
+    const [invoice] = loadXeroResponse("invoice_accpay").invoices as Array<Record<string, unknown>>;
+    const getInvoices = vi.fn().mockResolvedValue({ body: { invoices: [invoice] }, response: { headers: {} } });
+    const provider = capturedProviderWithClient({ accountingApi: { getInvoices } });
+    const mapped = await provider.getInvoice("captured-actor", CAPTURED_INVOICE_ID, "ACCPAY");
+    return {
+      ...mapped,
+      status: "AUTHORISED",
+      ...overrides,
+      lines: [{ ...mapped.lines[0]!, ...lineOverrides }],
+    };
+  }
+
+  function capturedSupplierCredit(snapshot: InvoiceSnapshot): NativeDocumentFact {
+    const line = snapshot.lines[0]!;
+    return {
+      factId: "captured-credit-fact",
+      lineageKey: "captured-credit-lineage",
+      eventKey: "captured-credit-event",
+      sourceUnitIds: ["captured-credit-unit"],
+      origin: "MODEL_EXTRACTED",
+      revision: 1,
+      kind: "NATIVE_DOCUMENT",
+      documentKind: "CREDIT_NOTE",
+      counterpartyRole: "SUPPLIER",
+      reference: "SCN-CAPTURED-001",
+      referenceKind: "FORMAL_DOCUMENT_NUMBER",
+      documentDate: "2027-01-15",
+      currency: snapshot.currency!,
+      contactName: snapshot.contact.name!,
+      taxPolicyBasis: "ORIGINAL_TRANSACTION",
+      originalDocumentReference: snapshot.invoiceNumber!,
+      originalDocumentReferenceKind: "FORMAL_DOCUMENT_NUMBER",
+      originalDocumentDate: snapshot.invoiceDate!,
+      lineAmountType: "EXCLUSIVE",
+      lines: [{
+        lineId: "captured-credit-line-1",
+        description: line.description,
+        quantity: line.quantity,
+        unitAmount: line.unitAmount,
+        sourceTax: line.taxAmount ?? "0.0000",
+        accountCode: line.accountCode,
+        taxType: line.taxType,
+      }],
+      declaredNet: snapshot.subTotal!,
+      declaredTax: snapshot.totalTax!,
+      declaredGross: snapshot.total!,
+      allocationStatus: "UNALLOCATED",
+      documentValidity: "VALID_FOR_LIVE_BOOKS",
+    };
+  }
+
+  /** Resolves evidence for a captured-and-adapted snapshot against its own tenant/contact. */
+  function resolveCapturedEvidence(snapshot: InvoiceSnapshot) {
+    const accountingPolicy = createXeroDeclaredLedgerPolicy({
+      jurisdiction: "SG",
+      paysTax: true,
+      ledgerBinding: testLedgerBinding(snapshot.tenantId),
+    });
+    const rawCredit = capturedSupplierCredit(snapshot);
+    const monetary = resolveSupportedAccountingMonetaryRule(accountingPolicy, rawCredit.currency);
+    if (!monetary.rule) throw new Error("test monetary rule missing");
+    return createXeroOriginalTransactionEvidence({
+      credit: rawCredit,
+      snapshot,
+      expectedTenantId: snapshot.tenantId,
+      expectedContactId: snapshot.contact.contactId,
+      checkedObjectCount: 1,
+      accounts: TEST_LEDGER_ACCOUNTS,
+      taxRates: TEST_LEDGER_TAX_RATES,
+      monetaryRule: monetary.rule,
+    });
+  }
+
+  it("keeps resolving the real captured original re-coded onto a taxed account under EXCLUSIVE, unchanged", async () => {
+    // proves: the exclusive path (and the real-fixture harness itself) is not loosened by this change.
+    const exclusive = await capturedOriginalBill(
+      { totalTax: "216.0000", total: "2616.0000" },
+      {
+        accountId: "33333333-3333-4333-8333-333333333353", accountCode: "453", taxType: "INPUTY24",
+        taxAmount: "216.0000",
+      },
+    );
+    expect(exclusive.lineAmountType).toBe("Exclusive");
+    expect(() => resolveCapturedEvidence(exclusive)).not.toThrow();
+  });
+
+  it("flips: the same original's inclusive equivalent no longer fails at the type gate; fully verified, it fails later, on the domain-contract gap instead", async () => {
+    // proves: requirement 1's before/after. Only lineAmountType and unitAmount
+    // change from the passing exclusive case above -- net (2400), tax (216),
+    // subTotal, totalTax and total are untouched, because Xero reports those
+    // in net/tax terms regardless of LineAmountTypes.
+    const inclusive = await capturedOriginalBill(
+      { lineAmountType: "Inclusive", totalTax: "216.0000", total: "2616.0000" },
+      {
+        accountId: "33333333-3333-4333-8333-333333333353", accountCode: "453", taxType: "INPUTY24",
+        unitAmount: "2616.0000", taxAmount: "216.0000",
+      },
+    );
+    // Today (before this change), normalizedLineAmountType rejects "Inclusive"
+    // immediately: every one of these fixtures throws only
+    // ORIGINAL_LINE_AMOUNT_TYPE_UNSUPPORTED, with no arithmetic examined.
+    // After this change, that reason can never fire for INCLUSIVE -- this
+    // fixture instead survives the per-line gross identity, the per-line tax
+    // check and the document-totals check, and fails only on the last line:
+    // OriginalTransactionEvidenceFact.lineAmountType has no INCLUSIVE member
+    // to seal a verified result into (see the comment in the source).
+    expect(() => resolveCapturedEvidence(inclusive)).toThrow(expect.objectContaining({
+      reasonCodes: ["ORIGINAL_LINE_AMOUNT_TYPE_INCLUSIVE_UNREPRESENTABLE"],
+    }));
+  });
+
+  it("verifies an inclusive line by its own identity using the file's normal HALF_UP rounding, not a tolerant or unrounded comparison", async () => {
+    // proves: requirement 2's rounding fidelity. quantity(3) x unitAmount
+    // (36.3333) does not divide evenly -- the raw product is 108.9999, and
+    // only HALF_UP rounding to USD's 2 minor units (quantizeAccountingLineNet,
+    // the same function the exclusive path already used) reaches 109.0000.
+    // net(100)+tax(9) equals that rounded figure exactly, so this reaches the
+    // same terminal, fully-verified state as the flip test above rather than
+    // failing on the gross identity the way the mismatch test below does --
+    // an unrounded comparison against the raw 108.9999 would wrongly reject it.
+    const rounded = await capturedOriginalBill(
+      { lineAmountType: "Inclusive", subTotal: "100.0000", totalTax: "9.0000", total: "109.0000" },
+      {
+        accountId: "33333333-3333-4333-8333-333333333353", accountCode: "453", taxType: "INPUTY24",
+        quantity: "3.0000", unitAmount: "36.3333", lineAmount: "100.0000", taxAmount: "9.0000",
+      },
+    );
+    expect(() => resolveCapturedEvidence(rounded)).toThrow(expect.objectContaining({
+      reasonCodes: ["ORIGINAL_LINE_AMOUNT_TYPE_INCLUSIVE_UNREPRESENTABLE"],
+    }));
+  });
+
+  it("still rejects an inclusive line whose stored net and tax do not satisfy the identity", async () => {
+    // proves: requirement 3. taxAmount is corrupted from 216.0000 to
+    // 215.0000: net(2400) + tax(215) = 2615, but quantity(1) x
+    // unitAmount(2616) = 2616. The two differ by a single dollar (any
+    // difference, half a cent included, must be caught, per the monetary
+    // rule this file already enforces elsewhere) and this is caught before
+    // the also-failing tax-rate check and before the terminal
+    // "verified but unrepresentable" state either -- it never proves exact.
+    const corrupted = await capturedOriginalBill(
+      { lineAmountType: "Inclusive", totalTax: "215.0000", total: "2615.0000" },
+      {
+        accountId: "33333333-3333-4333-8333-333333333353", accountCode: "453", taxType: "INPUTY24",
+        unitAmount: "2616.0000", taxAmount: "215.0000",
+      },
+    );
+    expect(() => resolveCapturedEvidence(corrupted)).toThrow(expect.objectContaining({
+      reasonCodes: ["ORIGINAL_LINE_INCLUSIVE_GROSS_MISMATCH"],
+    }));
   });
 });
