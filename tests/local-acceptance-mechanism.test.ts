@@ -362,7 +362,6 @@ function plan() {
     evidenceDirectory: "/tmp/local-acceptance-test",
     localAgentEvidencePath: "/tmp/local-agent-run.json",
     processCrashRestartEvidencePath: "/tmp/process-crash-restart.json",
-    approvedControlCatalogSha256: "a".repeat(64),
     approvedReviewCodexSha256: "b".repeat(64),
     approvedReviewRuntimeSha256: "c".repeat(64),
     expectedSourceFingerprint: "d".repeat(64),
@@ -624,6 +623,7 @@ describe("fail-closed local acceptance mechanism", () => {
     )).toBe(true);
     expect(plan().find((step) => step.id === "full-regression")?.env).toEqual({
       TEST_HTTP_LOOPBACK: "true",
+      TEST_DATABASE_URL: "",
     });
   });
 

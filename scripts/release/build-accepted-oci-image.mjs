@@ -25,7 +25,6 @@ function parseArguments(argv) {
     output: undefined,
     metadata: undefined,
     receipt: undefined,
-    approvedControlCatalogSha256: undefined,
     artifactStreamFd: undefined,
   };
   for (let index = 0; index < argv.length; index += 2) {
@@ -36,15 +35,13 @@ function parseArguments(argv) {
     else if (flag === "--output") options.output = resolve(value);
     else if (flag === "--metadata") options.metadata = resolve(value);
     else if (flag === "--receipt") options.receipt = resolve(value);
-    else if (flag === "--approved-control-catalog-sha256") options.approvedControlCatalogSha256 = value;
     else if (flag === "--artifact-stream-fd" && /^\d+$/u.test(value) && Number.parseInt(value, 10) >= 3) {
       options.artifactStreamFd = Number.parseInt(value, 10);
     }
     else throw new Error(`Unknown argument: ${flag}`);
   }
-  if (!options.context || !options.output || !options.metadata || !options.receipt ||
-      !/^[a-f0-9]{64}$/u.test(options.approvedControlCatalogSha256 ?? "")) {
-    throw new Error("--context, --output, --metadata, --receipt, and --approved-control-catalog-sha256 are required");
+  if (!options.context || !options.output || !options.metadata || !options.receipt) {
+    throw new Error("--context, --output, --metadata, and --receipt are required");
   }
   return options;
 }
@@ -103,7 +100,6 @@ async function main() {
   const options = parseArguments(process.argv.slice(2));
   const verified = await sealAcceptedBuildContext({
     root: options.context,
-    expectedApprovedControlCatalogSha256: options.approvedControlCatalogSha256,
   });
   const buildContextTar = createDeterministicTar(verified.sealedEntries, { sourceDateEpoch: 0 });
   const sealedByPath = new Map(verified.sealedEntries.map((entry) => [entry.path, entry.content]));
@@ -128,7 +124,6 @@ async function main() {
       "--build-arg", `XERO_BUILD_IDENTITY_HASH=${verified.semanticBuildIdentityHash}`,
       "--build-arg", `XERO_ACCEPTANCE_SOURCE_SHA256=${verified.acceptanceSourceSha256}`,
       "--build-arg", `XERO_SOURCE_ARCHIVE_SHA256=${verified.sourceArchiveSha256}`,
-      "--build-arg", `XERO_APPROVED_CONTROL_CATALOG_SHA256=${verified.approvedControlCatalogSha256}`,
       "--output", "type=oci,dest=-,tar=true,name=zcloak/xero-accounting-mcp:accepted",
       "--no-cache",
       "-f", "deploy/Dockerfile",
@@ -151,7 +146,6 @@ async function main() {
     semanticBuildIdentityHash: verified.semanticBuildIdentityHash,
     acceptanceSourceSha256: verified.acceptanceSourceSha256,
     sourceArchiveSha256: verified.sourceArchiveSha256,
-    approvedControlCatalogSha256: verified.approvedControlCatalogSha256,
   });
   const metadataRaw = `${JSON.stringify({
     schemaVersion: "xero-captured-oci-build-metadata:v1",
@@ -170,7 +164,6 @@ async function main() {
     semanticBuildIdentityHash: verified.semanticBuildIdentityHash,
     acceptanceSourceSha256: verified.acceptanceSourceSha256,
     sourceArchiveSha256: verified.sourceArchiveSha256,
-    approvedControlCatalogSha256: verified.approvedControlCatalogSha256,
     sourceBundleManifestSha256: verified.sourceBundleManifestSha256,
     releaseSourceManifestSha256: verified.releaseSourceManifestSha256,
     buildContextTarSha256: sha256(buildContextTar),

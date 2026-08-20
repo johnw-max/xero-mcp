@@ -2883,7 +2883,7 @@ describe("InMemory Accounting Case repository concurrency and state consistency"
       writeReceipt: { providerRequestId: "provider-update-target" },
     })).rejects.toMatchObject({
       code: "CONFLICT",
-      message: "UPDATE result does not match its immutable Xero target.",
+      message: "Mutation result does not match its immutable Xero target.",
     });
   });
 

@@ -2,8 +2,9 @@
  * Current 0.4.0-rc.1 deterministic controlled-write release gate.
  *
  * The runner exercises only the Agent-facing Accounting Case public contract:
- * exact 28-tool surface, prepare-without-write, identity-only execute under
- * standing delegation, provider receipt plus exact readback, and idempotent
+ * manifest-derived public surface, prepare-without-write, identity-only execute
+ * under the pinned OAuth target, released typed Case action and write gate,
+ * provider receipt plus exact readback, and idempotent
  * terminal replay. Object-level mutation tools are probed only to prove that
  * they are absent and cannot bypass the Case.
  */
@@ -61,8 +62,8 @@ const TENANT_ID = "11111111-1111-4111-8111-111111111111";
 const CONTACT_ID = "22222222-2222-4222-8222-222222222222";
 const INVOICE_ID = "44444444-4444-4444-8444-444444444444";
 const SUPPLIER_BILL_ID = "55555555-5555-4555-8555-555555555555";
-const AUTHORIZATION_ID = "p0-accounting-case-delegation";
-const POLICY_ID = "standing-delegation-v7";
+const AUTHORIZATION_ID = "p0-accounting-case-oauth-binding";
+const POLICY_ID = "typed-case-write-gate-v1";
 const LEGACY_OBJECT_WRITE_TOOL = "xero_create_draft_supplier_bill";
 const CONTROLLED_WRITE_CONTINUATION_SECRET = Buffer.from(
   "p0-controlled-write-continuation-secret-v1",
@@ -122,7 +123,7 @@ interface RuntimeCounters {
   casePrepareCalls: number;
   caseExecuteCalls: number;
   caseStatusCalls: number;
-  standingDelegationPreflights: string[][];
+  writeGatePreflights: string[][];
   providerWriteAttempts: number;
   providerRecords: ProviderRecord[];
   auditTools: string[];
@@ -214,7 +215,7 @@ export interface ExecuteP0AccountingCaseResult {
   evidence: EvidenceRecord[];
   providerWriteAttempts: number;
   providerRecords: ProviderRecord[];
-  standingDelegationPreflights: string[][];
+  writeGatePreflights: string[][];
   toolCalls: Array<{ case_id: string; tool: string; input: JsonObject }>;
   finalCaseState?: string;
   finalOperationStates: string[];
@@ -523,6 +524,16 @@ class P0XeroProviderFake implements AccountingProvider {
     }
     return structuredClone(this.#bill);
   };
+  readonly listJournals: AccountingProvider["listJournals"] = async () => this.#unexpected("listJournals");
+  readonly getProfitAndLoss: AccountingProvider["getProfitAndLoss"] = async () => this.#unexpected("getProfitAndLoss");
+  readonly getBalanceSheet: AccountingProvider["getBalanceSheet"] = async () => this.#unexpected("getBalanceSheet");
+  readonly getAgedReceivables: AccountingProvider["getAgedReceivables"] = async () => this.#unexpected("getAgedReceivables");
+  readonly getAgedPayables: AccountingProvider["getAgedPayables"] = async () => this.#unexpected("getAgedPayables");
+  readonly getPayment: AccountingProvider["getPayment"] = async () => this.#unexpected("getPayment");
+  readonly listTrackingCategories: AccountingProvider["listTrackingCategories"] = async () =>
+    this.#unexpected("listTrackingCategories");
+  readonly listContactGroups: AccountingProvider["listContactGroups"] = async () =>
+    this.#unexpected("listContactGroups");
 
   readonly createDraftSupplierBill: AccountingProvider["createDraftSupplierBill"] = async (
     principal,
@@ -645,7 +656,7 @@ class ObservedXeroMutationService extends XeroMutationService {
   override async preflightAutonomousActions(
     ...args: Parameters<XeroMutationService["preflightAutonomousActions"]>
   ) {
-    this.counters.standingDelegationPreflights.push([...args[1]]);
+    this.counters.writeGatePreflights.push([...args[1]]);
     return super.preflightAutonomousActions(...args);
   }
 }
@@ -859,9 +870,9 @@ function summaryMarkdown(report: OracleRunResult, counters: RuntimeCounters): st
     `- Public tools: ${TOOL_ALLOWLIST.length}`,
     `- Provider write attempts: ${counters.providerWriteAttempts}`,
     `- Provider records with receipt/readback: ${counters.providerRecords.length}`,
-    `- Standing Delegation preflights: ${counters.standingDelegationPreflights.length}`,
+    `- Write-gate preflights: ${counters.writeGatePreflights.length}`,
     "- Execute contract: case_id + case_version + request_id only",
-    "- Authorise/payment operations: 0",
+    "- Unreleased state/payment operations in this draft-only scenario: 0",
     "- Write gate end: CLOSED",
     "",
   ].join("\n");
@@ -876,7 +887,7 @@ export async function executeP0AccountingCaseSuite(
   const byId = new Map(manifest.cases.map((scenario) => [scenario.id, scenario]));
   const surfaceScenario = byId.get("AC-SURFACE-001");
   const prepareScenario = byId.get("AC-CASE-PREPARE-002");
-  const executeScenario = byId.get("AC-DELEGATION-003");
+  const executeScenario = byId.get("AC-WRITE-GATE-003");
   if (!surfaceScenario || !prepareScenario || !executeScenario) {
     throw new Error("Current Accounting Case deterministic manifest is incomplete.");
   }
@@ -889,7 +900,7 @@ export async function executeP0AccountingCaseSuite(
     casePrepareCalls: 0,
     caseExecuteCalls: 0,
     caseStatusCalls: 0,
-    standingDelegationPreflights: [],
+    writeGatePreflights: [],
     providerWriteAttempts: 0,
     providerRecords: [],
     auditTools: [],
@@ -983,22 +994,12 @@ export async function executeP0AccountingCaseSuite(
     providerId: "xero",
     revision: 1,
     writeKillSwitchEnabled: true,
-    standingDelegations: [{
-      delegationId: "p0-standing-delegation",
-      revision: 1,
-      status: "ACTIVE",
-      providerId: "xero",
-      workspaceId: binding.workspaceId,
-      agentId: binding.agentId,
-      installationId: binding.installationId,
-      tenantIds: [TENANT_ID],
-      actionIds: ["customer_invoice.create_draft", "supplier_bill.create_draft"],
-      expiresAt: TARGET_SESSION_EXPIRES_AT,
-    }],
+    standingDelegations: [],
     publishedAt: new Date(RUN_CLOCK_ANCHOR),
   });
   const mutations = new ObservedXeroMutationService(repository, {
     confirmationSecret: "p0-accounting-case-confirmation-secret-at-least-32-bytes",
+    writeEnabled: true,
     authoritySnapshotResolver: new RepositoryLedgerAuthoritySnapshotResolver(repository),
     now: () => new Date(RUN_CLOCK_ANCHOR),
     providerCapabilityEvaluator: {
@@ -1197,13 +1198,13 @@ export async function executeP0AccountingCaseSuite(
     });
     const providerRef = collector.add(executeScenario.id, "PROVIDER_CALL", "provider-write-attempts", {
       count: counters.providerWriteAttempts,
-      authoriseAttempts: 0,
+      unreleasedStateActionAttempts: 0,
       paymentAttempts: 0,
     });
     const providerRecordRef = collector.add(executeScenario.id, "PROVIDER_RECORD", "provider-receipt-and-exact-readback", {
       records: counters.providerRecords,
     });
-    const preflightsAfterInitialExecute = structuredClone(counters.standingDelegationPreflights);
+    const preflightsAfterInitialExecute = structuredClone(counters.writeGatePreflights);
     const replay = await callTool(client, collector, toolCalls, executeScenario.id, "xero_execute_accounting_case", executeInput);
     const status = await callTool(client, collector, toolCalls, executeScenario.id, "xero_get_accounting_case_status", {
       case_id: caseId,
@@ -1238,15 +1239,15 @@ export async function executeP0AccountingCaseSuite(
       oracle("execute_identity_only", Object.keys(executeInput).sort().join(",") === "case_id,case_version,request_id", {
         keys: Object.keys(executeInput).sort(),
       }, executed.evidenceRefs, "Execute must receive only immutable Case and idempotent request identity."),
-      oracle("standing_delegation_preflight", preflightsAfterInitialExecute.length === 1 &&
+      oracle("write_gate_preflight", preflightsAfterInitialExecute.length === 1 &&
         preflightsAfterInitialExecute[0]?.includes("customer_invoice.create_draft") === true &&
         durableAfterExecute?.preflightReceiptHash?.length === 64 &&
         (durableAfterExecute.preflightReceipt?.authorityReceipt as JsonObject | undefined)?.bindingRevision === 1, {
         preflights: preflightsAfterInitialExecute,
         durableReceiptHash: durableAfterExecute?.preflightReceiptHash ?? null,
-        delegationBindingRevision:
+        bindingRevision:
           (durableAfterExecute?.preflightReceipt?.authorityReceipt as JsonObject | undefined)?.bindingRevision ?? null,
-      }, [durablePreflightRef, providerRef], "The full stored plan must persist its Standing Delegation preflight receipt before writing."),
+      }, [durablePreflightRef, providerRef], "The full stored plan must persist the OAuth target, released typed action and write-gate preflight receipt before writing."),
       oracle("durable_mutation_projection", durableMutationLinked, {
         linked: durableMutationLinked,
         operationState: durableOperation?.state ?? null,
@@ -1307,7 +1308,7 @@ export async function executeP0AccountingCaseSuite(
     evidence: collector.records,
     providerWriteAttempts: counters.providerWriteAttempts,
     providerRecords: counters.providerRecords,
-    standingDelegationPreflights: counters.standingDelegationPreflights,
+    writeGatePreflights: counters.writeGatePreflights,
     toolCalls,
     ...(finalCaseState ? { finalCaseState } : {}),
     finalOperationStates,
@@ -1356,7 +1357,7 @@ type LocalAgentDurableEvidence = {
  * Starts the current Accounting Case stack over a real MCP STDIO transport for
  * a local Codex Agent acceptance run. The only fake is P0XeroProviderFake at
  * the AccountingProvider/Xero SDK boundary; the Case, Accounting and Mutation
- * services, durable projections, standing-delegation preflight and one-shot
+ * services, durable projections, OAuth-target/write-gate preflight and one-shot
  * provider permit are the production implementations.
  */
 export async function startLocalAgentAccountingCaseMcp(
@@ -1367,7 +1368,7 @@ export async function startLocalAgentAccountingCaseMcp(
     casePrepareCalls: 0,
     caseExecuteCalls: 0,
     caseStatusCalls: 0,
-    standingDelegationPreflights: [],
+    writeGatePreflights: [],
     providerWriteAttempts: 0,
     providerRecords: [],
     auditTools: [],
@@ -1444,18 +1445,7 @@ export async function startLocalAgentAccountingCaseMcp(
     providerId: "xero",
     revision: 1,
     writeKillSwitchEnabled: true,
-    standingDelegations: [{
-      delegationId: "local-agent-evidence-standing-delegation",
-      revision: 1,
-      status: "ACTIVE",
-      providerId: "xero",
-      workspaceId: identity.workspaceId,
-      agentId: identity.agentId,
-      installationId: identity.installationId,
-      tenantIds: [TENANT_ID],
-      actionIds: ["customer_invoice.create_draft", "supplier_bill.create_draft"],
-      expiresAt: TARGET_SESSION_EXPIRES_AT,
-    }],
+    standingDelegations: [],
     publishedAt: new Date(RUN_CLOCK_ANCHOR),
   });
   // Real evidence, not a plausible fake: the in-memory repository computes
@@ -1467,6 +1457,7 @@ export async function startLocalAgentAccountingCaseMcp(
   const provider = new P0XeroProviderFake(counters, "not-prepared", () => writeGateOpen, "NONE");
   const mutations = new ObservedXeroMutationService(repository, {
     confirmationSecret: "local-agent-evidence-confirmation-secret-at-least-32-bytes",
+    writeEnabled: true,
     authoritySnapshotResolver: new RepositoryLedgerAuthoritySnapshotResolver(repository),
     now: () => new Date(RUN_CLOCK_ANCHOR),
     providerCapabilityEvaluator: {
@@ -1535,7 +1526,7 @@ export async function startLocalAgentAccountingCaseMcp(
     };
     provider_write_count: number;
     provider_records: ProviderRecord[];
-    standing_delegation_preflights: string[][];
+    write_gate_preflights: string[][];
     release_attestation: typeof XERO_RELEASE_ATTESTATION;
     release_attestation_hash: string;
     runtime_attestation: ReturnType<typeof createXeroRuntimeAttestation>;
@@ -1564,24 +1555,15 @@ export async function startLocalAgentAccountingCaseMcp(
     },
     provider_write_count: 0,
     provider_records: [],
-    standing_delegation_preflights: [],
+    write_gate_preflights: [],
     release_attestation: XERO_RELEASE_ATTESTATION,
     release_attestation_hash: hashObject(XERO_RELEASE_ATTESTATION),
     runtime_attestation: createXeroRuntimeAttestation({
       buildIdentityHash: null,
       acceptanceSourceSha256: null,
       sourceArchiveSha256: null,
-      approvedControlCatalogSha256: null,
       writeMode: "WRITE_ENABLED",
       processWriteGateEnabled: true,
-      // This harness publishes the one authority snapshot it runs against
-      // (above) and treats it as authoritative; there is no separate
-      // deployment-config revision to drift from it.
-      configuredAuthorityRevision: authorityPublication.snapshot.revision,
-      // No standing-delegations config file backs this in-process harness,
-      // matching the null buildIdentityHash/acceptanceSourceSha256/
-      // sourceArchiveSha256/approvedControlCatalogSha256 above.
-      standingDelegationsConfigSha256: null,
       authoritySnapshotRevision: authorityPublication.snapshot.revision,
       authoritySnapshotHash: authorityPublication.snapshot.snapshotHash,
       authorityWriteKillSwitchEnabled: authorityPublication.snapshot.writeKillSwitchEnabled,
@@ -1591,7 +1573,6 @@ export async function startLocalAgentAccountingCaseMcp(
       requiredMigrationStatus: "NOT_APPLICABLE",
       migrationHead: null,
       activeAccountingCaseRecoveryProjection: attestationReadiness.activeAccountingCaseRecoveryProjection,
-      firmGovernance: attestationReadiness.firmGovernance,
     }),
     runtime_attestation_hash: "",
   };
@@ -1642,7 +1623,7 @@ export async function startLocalAgentAccountingCaseMcp(
   async function persistAudit(): Promise<void> {
     audit.provider_write_count = counters.providerWriteAttempts;
     audit.provider_records = structuredClone(counters.providerRecords);
-    audit.standing_delegation_preflights = structuredClone(counters.standingDelegationPreflights);
+    audit.write_gate_preflights = structuredClone(counters.writeGatePreflights);
     await mkdir(dirname(options.auditPath), { recursive: true });
     await writeFile(options.auditPath, `${JSON.stringify(audit, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   }

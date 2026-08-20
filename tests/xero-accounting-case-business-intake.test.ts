@@ -82,6 +82,494 @@ function compileBusinessFixture(relativePath: string) {
 }
 
 describe("Xero Accounting Case business intake", () => {
+  it("normalizes the five Payment/Bank actions into one closed Case route", () => {
+    const common = { type: "SPEND", contact_id: "11111111-1111-4111-8111-111111111111",
+      bank_account_id: "22222222-2222-4222-8222-222222222222", transaction_date: "2026-08-20",
+      reference: "BANK-1", line_amount_type: "NO_TAX", lines: [{ description: "Fee", quantity: "1",
+        unit_amount: "10", account_code: "453",
+        tax_type: "NONE", tracking_option_ids: [] }] };
+    const normalized = normalizeXeroAccountingCaseBusinessIntake(xeroAccountingCaseBusinessIntakeSchema.parse({
+      case_id: "case-payment-bank", expected_version: 0, source_label: "Payment Bank", source_set_complete: true, documents: [],
+      payment_bank_ledger: [
+        { action: "payment.create", invoice_id: "44444444-4444-4444-8444-444444444444", invoice_type: "ACCREC",
+          bank_account_id: common.bank_account_id, payment_date: "2026-08-20", amount: "10" },
+        { action: "payment.reverse", payment_id: "55555555-5555-4555-8555-555555555555" },
+        { action: "bank_transaction.create", ...common },
+        { action: "bank_transaction.update", bank_transaction_id: "66666666-6666-4666-8666-666666666666",
+          expected_updated_at: "2026-08-20T10:00:00+08:00", ...common },
+        { action: "bank_transaction.reverse", bank_transaction_id: "77777777-7777-4777-8777-777777777777" },
+      ],
+    }));
+    const compiled = compileAccountingCase({ caseId: normalized.case_id, expectedVersion: 0,
+      target: { tenantId: TEST_TENANT_ID, environment: "TEST", baseCurrency: "SGD", taxJurisdiction: "SG", organisationStatus: "ACTIVE" },
+      sources: normalized.sources, facts: normalized.facts },
+    createXeroDeclaredLedgerPolicy({ jurisdiction: "SG", paysTax: true, ledgerBinding: testLedgerBinding() }),
+    createXeroAccountingCaseProviderContract(new Map(), testLedgerBinding()));
+    const bankFact = normalized.facts.find((fact) => fact.kind === "PAYMENT_BANK_LEDGER" && fact.actionId === "bank_transaction.create");
+    expect(bankFact && "lines" in bankFact.payload ? bankFact.payload.lines[0] : undefined).not.toHaveProperty("accountId");
+    expect(compiled.operations).toHaveLength(5);
+    expect(compiled.operations.every((operation) => operation.nativeRoute === "PAYMENT_BANK_LEDGER")).toBe(true);
+  });
+
+  it("normalizes all eight exact-target ledger adjustments into one closed Case route", () => {
+    const adjustments = [
+      { action: "customer_invoice.void", invoice_id: "11111111-1111-4111-8111-111111111111" },
+      { action: "supplier_bill.void", invoice_id: "22222222-2222-4222-8222-222222222222" },
+      { action: "credit_note.authorise", credit_note_id: "33333333-3333-4333-8333-333333333333", credit_note_type: "ACCRECCREDIT" },
+      {
+        action: "credit_note.allocate", credit_note_id: "44444444-4444-4444-8444-444444444444",
+        credit_note_type: "ACCRECCREDIT", target_invoice_id: "55555555-5555-4555-8555-555555555555",
+        target_invoice_type: "ACCREC", amount: "10.0000", allocation_date: "2026-08-20",
+      },
+      {
+        action: "credit_note.unallocate", credit_note_id: "44444444-4444-4444-8444-444444444444",
+        allocation_id: "55555555-5555-4555-8555-555555555555",
+      },
+      {
+        action: "credit_note.refund", credit_note_id: "66666666-6666-4666-8666-666666666666",
+        credit_note_type: "ACCPAYCREDIT", bank_account_id: "77777777-7777-4777-8777-777777777777",
+        amount: "5.0000", refund_date: "2026-08-20",
+      },
+      { action: "credit_note.void", credit_note_id: "88888888-8888-4888-8888-888888888888", credit_note_type: "ACCPAYCREDIT" },
+      { action: "manual_journal.void", manual_journal_id: "99999999-9999-4999-8999-999999999999" },
+    ];
+    const normalized = normalizeXeroAccountingCaseBusinessIntake(xeroAccountingCaseBusinessIntakeSchema.parse({
+      case_id: "case-ledger-adjustments",
+      expected_version: 0,
+      source_label: "Exact ledger adjustments",
+      source_set_complete: true,
+      documents: [],
+      ledger_adjustments: adjustments,
+    }));
+    const compiled = compileAccountingCase({
+      caseId: normalized.case_id,
+      expectedVersion: normalized.expected_version,
+      target: {
+        tenantId: TEST_TENANT_ID,
+        environment: "TEST",
+        baseCurrency: "SGD",
+        taxJurisdiction: "SG",
+        organisationStatus: "ACTIVE",
+      },
+      sources: normalized.sources,
+      facts: normalized.facts,
+    }, createXeroDeclaredLedgerPolicy({ jurisdiction: "SG", paysTax: true, ledgerBinding: testLedgerBinding() }),
+    createXeroAccountingCaseProviderContract(new Map(), testLedgerBinding()));
+    expect(normalized.facts.every((fact) => fact.kind === "LEDGER_ADJUSTMENT")).toBe(true);
+    expect(compiled.events.every((event) => event.route === "LEDGER_ADJUSTMENT")).toBe(true);
+    expect(compiled.operations.map((operation) => operation.actionId).sort())
+      .toEqual(adjustments.map((adjustment) => adjustment.action).sort());
+    expect(compiled.operations.every((operation) => operation.nativeRoute === "LEDGER_ADJUSTMENT")).toBe(true);
+  });
+
+  it("normalizes all six exact-target full DRAFT replacements into one closed Case route", () => {
+    const contact = { name: "Exact Counterparty" };
+    const nativeReplacement = (document_type: "CUSTOMER_INVOICE" | "SUPPLIER_BILL") => ({
+      document_type,
+      status: "DRAFT",
+      reference: `${document_type}-UPDATE-1`,
+      reference_kind: "FORMAL_DOCUMENT_NUMBER",
+      document_date: "2026-08-20",
+      due_date: "2026-09-20",
+      currency: "SGD",
+      contact,
+      declared_net: "100.00",
+      declared_tax: "0",
+      declared_gross: "100.00",
+      lines: [{
+        description: "Complete replacement line",
+        quantity: "1",
+        unit_amount_excluding_tax: "100.00",
+        source_tax_amount: "0",
+        account_code: document_type === "CUSTOMER_INVOICE" ? "200" : "453",
+        tax_type: "NONE",
+      }],
+      document_validity: "TEST_OR_NOT_VALID",
+    });
+    const updates = [
+      {
+        action: "customer_invoice.update_draft",
+        target_xero_object_id: "11111111-1111-4111-8111-111111111111",
+        expected_updated_at: "2026-08-20T10:00:00+08:00",
+        replacement: nativeReplacement("CUSTOMER_INVOICE"),
+      },
+      {
+        action: "supplier_bill.update_draft",
+        target_xero_object_id: "22222222-2222-4222-8222-222222222222",
+        expected_updated_at: "2026-08-20T10:00:01+08:00",
+        replacement: nativeReplacement("SUPPLIER_BILL"),
+      },
+      {
+        action: "credit_note.update_draft",
+        target_xero_object_id: "33333333-3333-4333-8333-333333333333",
+        expected_updated_at: "2026-08-20T10:00:02+08:00",
+        replacement: {
+          ...nativeReplacement("CUSTOMER_INVOICE"),
+          document_type: "CUSTOMER_CREDIT_NOTE",
+          due_date: undefined,
+          reference: "CN-UPDATE-1",
+          original_document: {
+            reference: "INV-ORIGINAL-1",
+            reference_kind: "FORMAL_DOCUMENT_NUMBER",
+            document_date: "2026-08-01",
+          },
+        },
+      },
+      {
+        action: "quote.update_draft",
+        target_xero_object_id: "44444444-4444-4444-8444-444444444444",
+        expected_updated_at: "2026-08-20T10:00:03+08:00",
+        replacement: {
+          document_type: "QUOTE",
+          status: "DRAFT",
+          reference: "QUOTE-UPDATE-1",
+          document_date: "2026-08-20",
+          expiry_date: "2026-09-20",
+          currency: "SGD",
+          contact,
+          line_amount_type: "EXCLUSIVE",
+          lines: [{ description: "Quote replacement", quantity: "1", unit_amount: "10", account_code: "200", tax_type: "NONE" }],
+          document_validity: "TEST_OR_NOT_VALID",
+        },
+      },
+      {
+        action: "purchase_order.update_draft",
+        target_xero_object_id: "55555555-5555-4555-8555-555555555555",
+        expected_updated_at: "2026-08-20T10:00:04+08:00",
+        replacement: {
+          document_type: "PURCHASE_ORDER",
+          status: "DRAFT",
+          reference: "PO-UPDATE-1",
+          document_date: "2026-08-20",
+          expected_arrival_date: "2026-08-25",
+          currency: "SGD",
+          contact,
+          line_amount_type: "EXCLUSIVE",
+          lines: [{ description: "PO replacement", quantity: "1", unit_amount: "10", account_code: "453", tax_type: "NONE" }],
+          document_validity: "TEST_OR_NOT_VALID",
+        },
+      },
+      {
+        action: "manual_journal.update_draft",
+        target_xero_object_id: "66666666-6666-4666-8666-666666666666",
+        expected_updated_at: "2026-08-20T10:00:05+08:00",
+        replacement: {
+          status: "DRAFT",
+          narration: "Updated accrual",
+          journal_date: "2026-08-20",
+          lines: [
+            { description: "Debit", account_code: "453", tax_type: "NONE", debit: "10" },
+            { description: "Credit", account_code: "485", tax_type: "NONE", credit: "10" },
+          ],
+          document_validity: "TEST_OR_NOT_VALID",
+        },
+      },
+    ];
+    const parsed = xeroAccountingCaseBusinessIntakeSchema.parse({
+      case_id: "case-six-draft-updates",
+      expected_version: 0,
+      source_label: "Complete reviewed replacements",
+      source_set_complete: true,
+      documents: [],
+      draft_document_updates: updates,
+    });
+    const normalized = normalizeXeroAccountingCaseBusinessIntake(parsed);
+    expect(() => prepareAccountingCasePublicSchema.parse(normalized)).not.toThrow();
+    const updateFacts = normalized.facts.filter((fact) => fact.kind === "DRAFT_DOCUMENT_UPDATE");
+    expect(updateFacts).toHaveLength(6);
+    expect(updateFacts.every((fact) => fact.replacement.provenance === fact.provenance)).toBe(true);
+    const contactBindings = new Map(updateFacts.flatMap((fact, index) =>
+      fact.replacement.kind === "BALANCED_JOURNAL" ? [] : [[fact.factId, {
+        contactId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      }] as const]));
+    const compiled = compileAccountingCase({
+      caseId: normalized.case_id,
+      expectedVersion: normalized.expected_version,
+      target: {
+        tenantId: TEST_TENANT_ID,
+        environment: "TEST",
+        baseCurrency: "SGD",
+        taxJurisdiction: "SG",
+        organisationStatus: "ACTIVE",
+      },
+      sources: normalized.sources,
+      facts: normalized.facts,
+    }, createXeroDeclaredLedgerPolicy({
+      jurisdiction: "SG",
+      paysTax: true,
+      ledgerBinding: testLedgerBinding(),
+    }), createXeroAccountingCaseProviderContract(contactBindings, testLedgerBinding()), contactBindings);
+    // The service injects exact provider original-transaction evidence before
+    // compiling a credit-note replacement. This pure compiler test has no
+    // provider reader, so that one event remains correctly blocked here.
+    expect(compiled.operations.map((operation) => operation.actionId).sort()).toEqual(
+      updates.map((update) => update.action).filter((action) => action !== "credit_note.update_draft").sort(),
+    );
+    expect(compiled.operations).toHaveLength(5);
+    expect(compiled.operations.every((operation) => operation.nativeRoute === "DRAFT_DOCUMENT_UPDATE")).toBe(true);
+    for (const operation of compiled.operations) {
+      expect(operation.canonicalPayload).toMatchObject({
+        targetXeroObjectId: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+        expectedUpdatedAt: expect.stringMatching(/(?:Z|[+-]\d{2}:\d{2})$/u),
+        replacement: expect.objectContaining({ status: "DRAFT" }),
+      });
+    }
+    expect(compiled.events).toEqual(expect.arrayContaining([expect.objectContaining({
+      route: "DRAFT_DOCUMENT_UPDATE",
+      disposition: "BLOCKED_VALIDATION",
+      reasonCodes: expect.arrayContaining(["CREDIT_ORIGINAL_TRANSACTION_NOT_FOUND"]),
+    })]));
+
+    for (const invalid of [
+      { ...updates[0], target_xero_object_id: "not-a-uuid" },
+      { ...updates[0], expected_updated_at: "2026-08-20T10:00:00" },
+      { ...updates[0], replacement: { ...updates[0]!.replacement, status: "AUTHORISED" } },
+      { ...updates[0], replacement: { status: "DRAFT" } },
+      { ...updates[0], patch: { reference: "PATCH-NOT-ALLOWED" } },
+    ]) {
+      expect(xeroAccountingCaseBusinessIntakeSchema.safeParse({
+        case_id: "case-invalid-draft-update",
+        expected_version: 0,
+        source_label: "Invalid replacement",
+        source_set_complete: true,
+        documents: [],
+        draft_document_updates: [invalid],
+      }).success).toBe(false);
+    }
+  });
+
+  it("normalizes only the three closed exact-UUID ledger-state transitions", () => {
+    const transitions = [
+      { action: "customer_invoice.authorise", invoice_id: "44444444-4444-4444-8444-444444444444" },
+      { action: "supplier_bill.authorise", invoice_id: "55555555-5555-4555-8555-555555555555" },
+      { action: "manual_journal.post", manual_journal_id: "66666666-6666-4666-8666-666666666666" },
+    ] as const;
+    const parsed = xeroAccountingCaseBusinessIntakeSchema.parse({
+      case_id: "case-ledger-transitions",
+      expected_version: 0,
+      source_label: "Existing Xero drafts",
+      source_set_complete: true,
+      documents: [],
+      ledger_state_transitions: transitions,
+    });
+    const normalized = normalizeXeroAccountingCaseBusinessIntake(parsed);
+    expect(normalized.facts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "LEDGER_STATE_TRANSITION",
+        actionId: "customer_invoice.authorise",
+        targetXeroObjectId: transitions[0].invoice_id,
+      }),
+      expect.objectContaining({
+        kind: "LEDGER_STATE_TRANSITION",
+        actionId: "supplier_bill.authorise",
+        targetXeroObjectId: transitions[1].invoice_id,
+      }),
+      expect.objectContaining({
+        kind: "LEDGER_STATE_TRANSITION",
+        actionId: "manual_journal.post",
+        targetXeroObjectId: transitions[2].manual_journal_id,
+      }),
+    ]));
+    const compiled = compileAccountingCase({
+      caseId: normalized.case_id,
+      expectedVersion: normalized.expected_version,
+      target: {
+        tenantId: TEST_TENANT_ID,
+        environment: "TEST",
+        baseCurrency: "SGD",
+        taxJurisdiction: "SG",
+        organisationStatus: "ACTIVE",
+      },
+      sources: normalized.sources,
+      facts: normalized.facts,
+    }, createXeroDeclaredLedgerPolicy({
+      jurisdiction: "SG",
+      paysTax: true,
+      ledgerBinding: testLedgerBinding(),
+    }), createXeroAccountingCaseProviderContract(new Map(), testLedgerBinding()));
+    expect(compiled.operations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        actionId: "customer_invoice.authorise",
+        nativeRoute: "LEDGER_STATE_TRANSITION",
+        canonicalPayload: {
+          invoiceId: transitions[0].invoice_id,
+          invoiceType: "ACCREC",
+          expectedStatus: "DRAFT",
+        },
+      }),
+      expect.objectContaining({
+        actionId: "supplier_bill.authorise",
+        nativeRoute: "LEDGER_STATE_TRANSITION",
+        canonicalPayload: {
+          invoiceId: transitions[1].invoice_id,
+          invoiceType: "ACCPAY",
+          expectedStatus: "DRAFT",
+        },
+      }),
+      expect.objectContaining({
+        actionId: "manual_journal.post",
+        nativeRoute: "LEDGER_STATE_TRANSITION",
+        canonicalPayload: {
+          manualJournalId: transitions[2].manual_journal_id,
+          expectedStatus: "DRAFT",
+        },
+      }),
+    ]));
+
+    for (const invalid of [
+      { action: "customer_invoice.authorise", invoice_id: "not-a-uuid" },
+      { action: "manual_journal.post", invoice_id: transitions[2].manual_journal_id },
+      { action: "customer_invoice.void", invoice_id: transitions[0].invoice_id },
+      { action: "supplier_bill.authorise", invoice_id: transitions[1].invoice_id, status: "AUTHORISED" },
+      { action: "manual_journal.post", manual_journal_id: transitions[2].manual_journal_id, tenant_id: "injected" },
+    ]) {
+      expect(xeroAccountingCaseBusinessIntakeSchema.safeParse({
+        case_id: "case-ledger-transition-invalid",
+        expected_version: 0,
+        source_label: "Existing Xero draft",
+        source_set_complete: true,
+        documents: [],
+        ledger_state_transitions: [invalid],
+      }).success).toBe(false);
+    }
+  });
+  it("normalizes quote, purchase-order, and balanced manual-journal DRAFT inputs into executable Case actions", () => {
+    const intake = xeroAccountingCaseBusinessIntakeSchema.parse({
+      case_id: "case-public-commercial-and-journal-drafts",
+      expected_version: 0,
+      source_label: "Signed commercial source batch",
+      source_set_complete: true,
+      documents: [],
+      commercial_documents: [{
+        document_type: "QUOTE",
+        reference: "QUOTE-2026-001",
+        document_date: "2026-08-20",
+        expiry_date: "2026-09-19",
+        currency: "SGD",
+        contact: { name: "Exact Customer" },
+        line_amount_type: "EXCLUSIVE",
+        lines: [{
+          description: "Advisory services",
+          quantity: "1",
+          unit_amount: "100.00",
+          account_code: "200",
+          tax_type: "OUTPUTY24",
+        }],
+        document_validity: "TEST_OR_NOT_VALID",
+      }, {
+        document_type: "PURCHASE_ORDER",
+        reference: "PO-2026-001",
+        document_date: "2026-08-20",
+        expected_arrival_date: "2026-08-25",
+        currency: "SGD",
+        contact: { name: "Exact Supplier" },
+        line_amount_type: "EXCLUSIVE",
+        lines: [{
+          description: "Cloud service",
+          quantity: "1",
+          unit_amount: "100.00",
+          account_code: "453",
+          tax_type: "INPUTY24",
+        }],
+        document_validity: "TEST_OR_NOT_VALID",
+      }],
+      manual_journals: [{
+        narration: "Month-end accrual",
+        journal_date: "2026-08-20",
+        lines: [{
+          description: "Accrued expense",
+          account_code: "453",
+          tax_type: "NONE",
+          debit: "100.00",
+        }, {
+          description: "Accrual liability",
+          account_code: "485",
+          tax_type: "NONE",
+          credit: "100.00",
+        }],
+        document_validity: "TEST_OR_NOT_VALID",
+      }],
+    });
+    const normalized = normalizeXeroAccountingCaseBusinessIntake(intake);
+    expect(() => prepareAccountingCasePublicSchema.parse(normalized)).not.toThrow();
+    const commercialFacts = normalized.facts.filter((fact) => fact.kind === "COMMERCIAL_DOCUMENT");
+    const compiled = compileAccountingCase({
+      caseId: normalized.case_id,
+      expectedVersion: normalized.expected_version,
+      target: {
+        tenantId: TEST_TENANT_ID,
+        environment: "TEST",
+        baseCurrency: "SGD",
+        taxJurisdiction: "SG",
+        organisationStatus: "ACTIVE",
+      },
+      sources: normalized.sources,
+      facts: normalized.facts,
+    }, createXeroDeclaredLedgerPolicy({
+      jurisdiction: "SG",
+      paysTax: true,
+      ledgerBinding: testLedgerBinding(),
+    }), createXeroAccountingCaseProviderContract(new Map(), testLedgerBinding()), new Map(
+      commercialFacts.map((fact, index) => [fact.factId, {
+        contactId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      }]),
+    ));
+    expect(compiled.operations.map((operation) => operation.actionId).sort()).toEqual([
+      "manual_journal.create_draft",
+      "purchase_order.create_draft",
+      "quote.create_draft",
+    ]);
+  });
+
+  it("normalizes the three safe Contact/Item maintenance actions into the same typed Case action union", () => {
+    const intake = xeroAccountingCaseBusinessIntakeSchema.parse({
+      case_id: "case-public-reference-data-actions",
+      expected_version: 0,
+      source_label: "Reviewed master-data source batch",
+      source_set_complete: true,
+      documents: [],
+      contact_basic_updates: [{
+        contact_id: "11111111-1111-4111-8111-111111111111",
+        patch: { email: "updated@example.com" },
+      }],
+      item_basic_creates: [{
+        code: "CONSULT-2026",
+        name: "Consulting service",
+        is_sold: true,
+        is_purchased: false,
+      }],
+      item_basic_updates: [{
+        item_id: "22222222-2222-4222-8222-222222222222",
+        patch: { name: "Renamed consulting service" },
+      }],
+    });
+    const normalized = normalizeXeroAccountingCaseBusinessIntake(intake);
+    expect(() => prepareAccountingCasePublicSchema.parse(normalized)).not.toThrow();
+    const compiled = compileAccountingCase({
+      caseId: normalized.case_id,
+      expectedVersion: normalized.expected_version,
+      target: {
+        tenantId: TEST_TENANT_ID,
+        environment: "TEST",
+        baseCurrency: "SGD",
+        taxJurisdiction: "SG",
+        organisationStatus: "ACTIVE",
+      },
+      sources: normalized.sources,
+      facts: normalized.facts,
+    }, createXeroDeclaredLedgerPolicy({
+      jurisdiction: "SG",
+      paysTax: true,
+      ledgerBinding: testLedgerBinding(),
+    }), createXeroAccountingCaseProviderContract(new Map(), testLedgerBinding()));
+    expect(compiled.operations.map((operation) => operation.actionId).sort()).toEqual([
+      "contact.update_basic",
+      "item.create_basic_untracked",
+      "item.update_basic_untracked",
+    ]);
+    expect(compiled.operations.every((operation) => operation.terminalState === "ELIGIBLE_FOR_PREFLIGHT")).toBe(true);
+  });
+
   it("normalizes a contact-only recovery successor without manufacturing an empty document source", () => {
     const contactOnly = xeroAccountingCaseBusinessIntakeSchema.parse({
       case_id: `recovery-${"c".repeat(64)}`,

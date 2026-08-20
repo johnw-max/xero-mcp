@@ -125,6 +125,29 @@ describe("effective Xero capability evaluator", () => {
     });
   });
 
+  it.each([
+    ["journal.read_prepare", "accounting.journals.read"],
+    ["report.trial_balance_read", "accounting.reports.trialbalance.read"],
+    ["report.profit_and_loss_read", "accounting.reports.profitandloss.read"],
+    ["report.balance_sheet_read", "accounting.reports.balancesheet.read"],
+    ["report.aged_receivables_read", "accounting.reports.aged.read"],
+    ["report.aged_payables_read", "accounting.reports.aged.read"],
+  ])("requires the exact granular OAuth scope for %s", (actionId, scope) => {
+    const result = evaluateEffectiveXeroCapability(actionId, {
+      ...BASE_READ_CONTEXT,
+      grantedXeroOAuthScopes: [scope],
+    });
+    expect(result.allowed).toBe(true);
+    expect(result.requiredXeroOAuthScopeAnyOf[0]).toContain(scope);
+  });
+
+  it("does not treat transactions.read as journal permission", () => {
+    expect(evaluateEffectiveXeroCapability("journal.read_prepare", {
+      ...BASE_READ_CONTEXT,
+      grantedXeroOAuthScopes: ["accounting.transactions.read"],
+    }).denyReasons).toContain("MISSING_XERO_OAUTH_SCOPE");
+  });
+
   it("accepts granular invoice scopes for quote and purchase-order reads and drafts", () => {
     expect(evaluateEffectiveXeroCapability("quote.read_prepare", {
       ...BASE_READ_CONTEXT,

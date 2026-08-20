@@ -480,6 +480,7 @@ async function apKernelHarness(kind: ApCaseKind) {
   });
   const mutations = new XeroMutationService(repository, {
     confirmationSecret: "case-ap-e2e-confirmation-secret-at-least-32-bytes",
+    writeEnabled: true,
     authoritySnapshotResolver: new RepositoryLedgerAuthoritySnapshotResolver(repository),
     now: () => new Date(fixedNow),
     providerCapabilityEvaluator: {
@@ -532,6 +533,7 @@ async function apKernelHarness(kind: ApCaseKind) {
   return {
     client,
     server,
+    repository,
     authoriseAutonomous,
     supplierBillCreateCount: () => supplierBillCreateCount,
     supplierBillProviderIdempotencyKey: () => supplierBillProviderIdempotencyKey,
@@ -563,6 +565,24 @@ describe("public Accounting Case AP kernel E2E", () => {
     );
     expect(prepared.operations).toEqual([expect.objectContaining({ action_id: "supplier_bill.create_draft" })]);
 
+    const originalBoundLookup = harness.repository.getBoundAccountingCase.bind(harness.repository);
+    const originalAccessibleLookup = harness.repository.getAccessibleAccountingCase.bind(harness.repository);
+    let transientMisses = 4;
+    vi.spyOn(harness.repository, "getBoundAccountingCase").mockImplementation(async (input) => {
+      if (transientMisses > 0) {
+        transientMisses -= 1;
+        return undefined;
+      }
+      return originalBoundLookup(input);
+    });
+    vi.spyOn(harness.repository, "getAccessibleAccountingCase").mockImplementation(async (input) => {
+      if (transientMisses > 0) {
+        transientMisses -= 1;
+        return undefined;
+      }
+      return originalAccessibleLookup(input);
+    });
+
     const execution = {
       case_id: prepared.case_id,
       case_version: prepared.case_version,
@@ -574,6 +594,7 @@ describe("public Accounting Case AP kernel E2E", () => {
     });
     expect(executedResponse.isError).not.toBe(true);
     expect(harness.supplierBillCreateCount()).toBe(1);
+    expect(transientMisses).toBe(0);
     expect(harness.supplierBillProviderIdempotencyKey()).toBe(harness.supplierBillMutationRequestId());
     expect(harness.createOrGetPosting.mock.calls[0]?.[0].createIdempotencyKey)
       .toBe(harness.supplierBillMutationRequestId());

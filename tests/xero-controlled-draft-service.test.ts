@@ -12,12 +12,6 @@ import { hashObject } from "../src/security/hash.js";
 import { XeroControlledMutationService } from "../src/services/xeroControlledMutationService.js";
 import { XeroMutationService } from "../src/services/xeroMutationService.js";
 import { AppError } from "../src/errors.js";
-import { XERO_AUTONOMOUS_WRITE_ACTIONS } from "../src/policy/xeroAutonomousActions.js";
-import {
-  MutableTestLedgerAuthoritySnapshotResolver,
-  RepositoryLedgerAuthoritySnapshotResolver,
-  type LedgerAuthoritySnapshotResolver,
-} from "../src/domain/ledgerAuthority.js";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const contactId = "22222222-2222-4222-8222-222222222222";
@@ -52,7 +46,14 @@ function harness(options: {
   oauthBound?: boolean;
   targetBound?: boolean;
   omitAllowedTenantId?: boolean;
-  authorityResolverFactory?: (repository: InMemoryAccountingRepository) => LedgerAuthoritySnapshotResolver;
+  /**
+   * Controls the REVENUE-class applicability flag Xero reports on the
+   * "OUTPUT" tax rate used by `quoteInput`'s single line. Defaults to `true`
+   * (today's normal, unambiguous case). "OMIT" leaves the field off the
+   * stubbed TaxRateSummary entirely, reproducing Xero's genuinely optional
+   * `CanApplyToRevenue` -- the exact shape SR-04 is about.
+   */
+  taxRateCanApplyToRevenue?: boolean | "OMIT";
 } = {}) {
   const repository = new InMemoryAccountingRepository();
   const executionEvents: string[] = [];
@@ -140,21 +141,7 @@ function harness(options: {
   }
   const mutations = new XeroMutationService(repository, {
     confirmationSecret: "test-confirmation-secret-that-is-at-least-32-bytes",
-    ...(options.authorityResolverFactory
-      ? { authoritySnapshotResolver: options.authorityResolverFactory(repository) }
-      : {}),
-    writeKillSwitchEnabled: options.writeEnabled ?? true,
-    standingDelegations: [{
-      delegationId: "test-xero-standing-delegation",
-      revision: 1,
-      status: "ACTIVE",
-      providerId: "xero",
-      workspaceId: "workspace-test",
-      agentId: "agent-test",
-      installationId: "installation-test",
-      tenantIds: [tenantId],
-      actionIds: XERO_AUTONOMOUS_WRITE_ACTIONS,
-    }],
+    writeEnabled: options.writeEnabled ?? true,
     providerCapabilityEvaluator: {
       evaluate: async () => ({ allowed: true, denyReasons: [], receiptHash: "e".repeat(64) }),
     },
@@ -196,7 +183,9 @@ function harness(options: {
       name: "Output tax",
       taxType: "OUTPUT",
       status: "ACTIVE",
-      canApplyToRevenue: true,
+      ...(options.taxRateCanApplyToRevenue === "OMIT"
+        ? {}
+        : { canApplyToRevenue: options.taxRateCanApplyToRevenue ?? true }),
     }]),
   } as unknown as AccountingProvider;
   const createQuoteDraft = vi.fn(async (_context, payload) => {
@@ -279,144 +268,42 @@ function harness(options: {
 }
 
 describe("XeroControlledMutationService quote/PO execution", () => {
-  it("binds receipts to rev1 and an old service observes a durable rev2 revocation without restart", async () => {
-    const old = harness({
-      authorityResolverFactory: (repository) => new RepositoryLedgerAuthoritySnapshotResolver(repository),
-    });
-    await old.repository.publishLedgerAuthoritySnapshot({
+  it("does not make current Case execution depend on historical authority snapshot rows", async () => {
+    const current = harness();
+    await current.repository.publishLedgerAuthoritySnapshot({
       providerId: "xero",
       revision: 1,
-      writeKillSwitchEnabled: true,
-      standingDelegations: [{
-        delegationId: "dynamic-authority-delegation",
-        revision: 1,
-        status: "ACTIVE",
-        providerId: "xero",
-        workspaceId: "workspace-test",
-        agentId: "agent-test",
-        installationId: "installation-test",
-        tenantIds: [tenantId],
-        actionIds: XERO_AUTONOMOUS_WRITE_ACTIONS,
-      }],
-      publishedAt: new Date("2026-08-13T00:00:00.000Z"),
-    });
-    const active = await old.service.prepareQuoteDraft(old.context, {
-      ...quoteInput,
-      source_ref: "work-material:authority-active",
-      source_unit_key: "document:authority-active",
-    });
-    await old.service.createQuoteDraft(old.context, {
-      preparation_id: active.preparation_id,
-      request_id: "authority-active",
-    });
-    const activeRequest = await old.repository.getXeroMutationRequest(
-      `xmr_${hashObject({ preparationId: active.preparation_id }).slice(0, 32)}`,
-    );
-    expect(activeRequest?.authorizationReceipt).toMatchObject({
-      authoritySnapshotRevision: 1,
-      authoritySnapshotHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
-    });
-
-    await old.repository.publishLedgerAuthoritySnapshot({
-      providerId: "xero",
-      revision: 2,
       writeKillSwitchEnabled: false,
       standingDelegations: [],
-      publishedAt: new Date("2026-08-13T00:01:00.000Z"),
+      publishedAt: new Date("2026-08-13T00:00:00.000Z"),
     });
-    await expect(old.mutations.preflightAutonomousActions(
-      old.context,
+    const prepared = await current.service.prepareQuoteDraft(current.context, {
+      ...quoteInput,
+      source_ref: "work-material:current-write-gate",
+      source_unit_key: "document:current-write-gate",
+    });
+    await expect(current.service.createQuoteDraft(current.context, {
+      preparation_id: prepared.preparation_id,
+      request_id: "current-write-gate",
+    })).resolves.toMatchObject({ state: "DRAFT_READBACK_VERIFIED" });
+    expect(current.createQuoteDraft).toHaveBeenCalledOnce();
+  });
+
+  it("uses XERO_WRITE_ENABLED as the current process gate", async () => {
+    const disabled = harness({ writeEnabled: false });
+    await expect(disabled.mutations.preflightAutonomousActions(
+      disabled.context,
       ["quote.create_draft"],
     )).rejects.toMatchObject({ code: "WRITE_GATE_DISABLED" });
-    const revoked = await old.service.prepareQuoteDraft(old.context, {
-      ...quoteInput,
-      source_ref: "work-material:authority-revoked",
-      source_unit_key: "document:authority-revoked",
-    });
-    await expect(old.service.createQuoteDraft(old.context, {
-      preparation_id: revoked.preparation_id,
-      request_id: "authority-revoked",
-    })).rejects.toMatchObject({ code: "WRITE_GATE_DISABLED" });
-    expect(old.createQuoteDraft).toHaveBeenCalledTimes(1);
+    expect(disabled.createQuoteDraft).not.toHaveBeenCalled();
   });
 
-  it("fails a resolve-to-claim race before permit issuance or Provider I/O", async () => {
-    const mutable = new MutableTestLedgerAuthoritySnapshotResolver({
-      providerId: "xero",
-      revision: 1,
-      writeKillSwitchEnabled: true,
-      standingDelegations: [{
-        delegationId: "racing-authority-delegation",
-        revision: 1,
-        status: "ACTIVE",
-        providerId: "xero",
-        workspaceId: "workspace-test",
-        agentId: "agent-test",
-        installationId: "installation-test",
-        tenantIds: [tenantId],
-        actionIds: XERO_AUTONOMOUS_WRITE_ACTIONS,
-      }],
-      publishedAt: new Date("2026-08-13T00:00:00.000Z"),
-    });
-    let resolves = 0;
-    const racingResolver: LedgerAuthoritySnapshotResolver = {
-      claimConsistency: "TEST_RESOLVER_GUARDED",
-      resolveCurrent: async () => {
-        resolves += 1;
-        if (resolves === 2) {
-          mutable.publish({
-            providerId: "xero",
-            revision: 2,
-            writeKillSwitchEnabled: false,
-            standingDelegations: [],
-            publishedAt: new Date("2026-08-13T00:00:01.000Z"),
-          });
-        }
-        return mutable.resolveCurrent();
-      },
-    };
-    const race = harness({ authorityResolverFactory: () => racingResolver });
+  it("keeps the claim bound to the sealed Case even if legacy snapshot storage changes", async () => {
+    const race = harness();
     const prepared = await race.service.prepareQuoteDraft(race.context, {
       ...quoteInput,
-      source_ref: "work-material:authority-race",
-      source_unit_key: "document:authority-race",
-    });
-    await expect(race.service.createQuoteDraft(race.context, {
-      preparation_id: prepared.preparation_id,
-      request_id: "authority-race",
-    })).rejects.toMatchObject({ code: "APPROVAL_INVALID" });
-    expect(race.createQuoteDraft).not.toHaveBeenCalled();
-    await expect(race.repository.getXeroMutationRequest(
-      `xmr_${hashObject({ preparationId: prepared.preparation_id }).slice(0, 32)}`,
-    )).resolves.toBeUndefined();
-  });
-
-  it("rechecks the expected durable snapshot inside the repository claim", async () => {
-    const race = harness({
-      authorityResolverFactory: (repository) => new RepositoryLedgerAuthoritySnapshotResolver(repository),
-    });
-    const activeGrant = {
-      delegationId: "repository-cas-delegation",
-      revision: 1,
-      status: "ACTIVE" as const,
-      providerId: "xero",
-      workspaceId: "workspace-test",
-      agentId: "agent-test",
-      installationId: "installation-test",
-      tenantIds: [tenantId],
-      actionIds: XERO_AUTONOMOUS_WRITE_ACTIONS,
-    };
-    await race.repository.publishLedgerAuthoritySnapshot({
-      providerId: "xero",
-      revision: 1,
-      writeKillSwitchEnabled: true,
-      standingDelegations: [activeGrant],
-      publishedAt: new Date("2026-08-13T00:00:00.000Z"),
-    });
-    const prepared = await race.service.prepareQuoteDraft(race.context, {
-      ...quoteInput,
-      source_ref: "work-material:authority-repository-cas",
-      source_unit_key: "document:authority-repository-cas",
+      source_ref: "work-material:sealed-case-claim",
+      source_unit_key: "document:sealed-case-claim",
     });
     const confirm = race.repository.confirmXeroMutationPreparation.bind(race.repository);
     vi.spyOn(race.repository, "confirmXeroMutationPreparation").mockImplementationOnce(async (input) => {
@@ -431,9 +318,9 @@ describe("XeroControlledMutationService quote/PO execution", () => {
     });
     await expect(race.service.createQuoteDraft(race.context, {
       preparation_id: prepared.preparation_id,
-      request_id: "authority-repository-cas",
-    })).rejects.toMatchObject({ code: "APPROVAL_INVALID" });
-    expect(race.createQuoteDraft).not.toHaveBeenCalled();
+      request_id: "sealed-case-claim",
+    })).resolves.toMatchObject({ state: "DRAFT_READBACK_VERIFIED" });
+    expect(race.createQuoteDraft).toHaveBeenCalledOnce();
   });
 
   it("uses the exact OAuth Broker binding when the legacy tenant allowlist is intentionally empty", async () => {
@@ -758,5 +645,45 @@ describe("XeroControlledMutationService quote/PO execution", () => {
       "PROVIDER_WRITE_RETURNED",
       "WRITE_EVIDENCE_PERSISTED",
     ]);
+  });
+});
+
+describe("XeroControlledMutationService tax-applicability fail-closed handling (SR-04)", () => {
+  // xeroTaxRateResolver.ts and xeroDeclaredLedgerBinding.ts both treat a
+  // missing CanApplyTo* flag as "not applicable" (=== true), never as
+  // implicit permission. This pins xeroControlledMutationService.ts's own
+  // #validateDocumentReferences -> exactActiveTax -> taxApplies chain to the
+  // identical answer, since it gates real Quote/PurchaseOrder draft writes.
+  it("rejects a line whose tax rate omits the account-class applicability flag, matching the policy files", async () => {
+    const omitted = harness({ taxRateCanApplyToRevenue: "OMIT" });
+    await expect(omitted.service.prepareQuoteDraft(omitted.context, {
+      ...quoteInput,
+      source_ref: "work-material:quote-tax-flag-omitted",
+      source_unit_key: "document:quote-tax-flag-omitted",
+    })).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      details: { path: "lines[0].tax_type" },
+    });
+  });
+
+  it("still rejects a line whose tax rate explicitly disallows the account class", async () => {
+    const disallowed = harness({ taxRateCanApplyToRevenue: false });
+    await expect(disallowed.service.prepareQuoteDraft(disallowed.context, {
+      ...quoteInput,
+      source_ref: "work-material:quote-tax-flag-false",
+      source_unit_key: "document:quote-tax-flag-false",
+    })).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      details: { path: "lines[0].tax_type" },
+    });
+  });
+
+  it("still accepts a line whose tax rate explicitly allows the account class", async () => {
+    const allowed = harness({ taxRateCanApplyToRevenue: true });
+    await expect(allowed.service.prepareQuoteDraft(allowed.context, {
+      ...quoteInput,
+      source_ref: "work-material:quote-tax-flag-true",
+      source_unit_key: "document:quote-tax-flag-true",
+    })).resolves.toMatchObject({ state: "PREPARED" });
   });
 });

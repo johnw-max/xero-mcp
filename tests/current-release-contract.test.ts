@@ -45,7 +45,7 @@ const legacyObjectMutationTools = [
 ];
 
 describe("current 0.4.0-rc.1 release materials", () => {
-  it("pins one exact 30-tool allowlist and three Case mutation tools", () => {
+  it("derives the current allowlist and Case authority model from current release sources", () => {
     const allowlist = json<{ tools: string[] }>("config/tool-allowlist.json").tools;
     const expected = json<string[]>("tests/contract/expected-tools.json");
     const contract = json<{
@@ -59,15 +59,15 @@ describe("current 0.4.0-rc.1 release materials", () => {
     expect(allowlist).toEqual([...TOOL_ALLOWLIST]);
     expect(expected).toEqual(allowlist);
     expect(contract.releaseVersion).toBe("0.4.0-rc.1");
-    expect(contract.requiredMigration).toBe("041_accounting_case_source_case_binding.sql");
+    expect(contract.requiredMigration).toBe("042_accounting_case_ledger_state_transitions.sql");
     expect(contract.requiredMigration).toBe(XERO_RELEASE_ATTESTATION.requiredMigration);
-    expect(contract.authorityModel).toBe("STANDING_DELEGATION");
+    expect(contract.authorityModel).toBe("OAUTH_TARGET_BOUND_WRITE_GATE");
     expect(contract.expectedTools).toEqual(allowlist);
-    expect(allowlist).toHaveLength(30);
+    expect(allowlist).toEqual([...TOOL_ALLOWLIST]);
     expect(caseTools.every((tool) => allowlist.includes(tool))).toBe(true);
     expect(legacyObjectMutationTools.some((tool) => allowlist.includes(tool))).toBe(false);
     expect(contract.forbiddenPublicTools).toEqual(legacyObjectMutationTools);
-    expect(hashObject(allowlist)).toBe("ed6667e843ea916ad672ad260d0d7705df75ad4632c181e4e554250b82b076e5");
+    expect(hashObject(allowlist)).toBe(hashObject([...TOOL_ALLOWLIST]));
   });
 
   it("uses only the three current Accounting Case scenario manifests", () => {
@@ -116,17 +116,16 @@ describe("current 0.4.0-rc.1 release materials", () => {
 
   it("keeps the current plain-language capability entry on the 0.4 Case contract", () => {
     const capability = text("docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md");
-    expect(capability).toContain("当前候选：`0.4.0-rc.1` / 30 个公共工具 / Accounting Case / Standing Delegation");
-    expect(capability).toContain("尚未部署，Agent2 与 Work 的 0.4 写入验收尚未执行");
-    expect(capability).toContain("Provider ID、receipt 和精确回读");
-    expect(capability).toContain("原文件 hash / Host 文件收据");
-    expect(capability).toContain("不是当前 Case 的授权前置条件");
+    expect(capability).toContain("候选版本：`0.4.0-rc.1`，尚未上线");
+    expect(capability).toContain("`NO-GO`");
+    expect(capability).toContain("provider receipt + exact read-back");
+    expect(capability).toContain("只有切换 Xero Organisation 需要用户操作网页");
     expect(capability).not.toContain("用户输入当前提案的一次性确认句");
     expect(capability).not.toContain("10 组写入已统一为服务端一次性 Preparation");
     expect(capability).not.toContain("补齐 Host 级签名确认");
   });
 
-  it("keeps the deployed Agent profile on typed Case tools and standing delegation", () => {
+  it("keeps the deployed Agent profile on typed Case tools and the R1 OAuth target/write-gate contract", () => {
     const configRoot = "agent-skills/accounting-double-entry-skills-2026-08-10/agent-config";
     const instructions = text(`${configRoot}/accounting-agent-instructions.md`);
     const profile = text(`${configRoot}/connector-profiles/xero.md`);
@@ -134,7 +133,7 @@ describe("current 0.4.0-rc.1 release materials", () => {
     const deploymentAllowlist = text(`${configRoot}/mcp-tool-allowlist.md`);
 
     expect(instructions).toContain("typed Accounting Case");
-    expect(instructions).toContain("standing delegation");
+    expect(instructions).toContain("OAuth binding, pinned target session, effective scope, released action policy and server write gate");
     expect(instructions).toContain("do not request or invent a per-transaction confirmation phrase");
     expect(instructions).not.toContain("explicitly requested, human-approved");
 
@@ -156,12 +155,11 @@ describe("current 0.4.0-rc.1 release materials", () => {
       expect(deploymentAllowlist, tool).toContain(`\`${tool}\``);
     }
     for (const tool of legacyObjectMutationTools) expect(profile, tool).not.toContain(tool);
-    expect(profile).toContain("exactly 30 public tools");
-    expect(profile).toContain("provider object ID, a durable provider receipt and an exact matching read-back");
-    expect(profile).toContain("`VALID_FOR_LIVE_BOOKS` is required for a production target");
-    expect(profile).toContain("`UNKNOWN` or a missing validity state blocks the whole Case");
-    expect(profile).toContain("`PENDING_CALLBACK` cannot be upgraded to `VERIFIED` by an `AGENT_ASSERTED` fact");
-    expect(deploymentAllowlist).toContain("installation standing delegation");
+    expect(profile).toContain("never pin a numeric count");
+    expect(profile).toContain("provider object ID/receipt");
+    expect(profile).toContain("read back exactly");
+    expect(profile).toContain("The only user confirmation flow");
+    expect(deploymentAllowlist).toContain("current OAuth binding and pinned target session");
 
     for (const capability of [
       "ledger.accounting_case.prepare",
@@ -170,34 +168,24 @@ describe("current 0.4.0-rc.1 release materials", () => {
     ]) expect(capabilityContract).toContain(capability);
   });
 
-  it("keeps authorization as a two-path contract and allows only controlled unknown-outcome recovery", () => {
+  it("keeps the R1 Xero authorization contract free of extra user confirmation and preserves recovery", () => {
     const configRoot = "agent-skills/accounting-double-entry-skills-2026-08-10/agent-config";
     const skill = text(`${configRoot}/../accounting-agent/skills/execute-approved-accounting-entry/SKILL.md`);
     const instructions = text(`${configRoot}/accounting-agent-instructions.md`);
     const capabilityContract = text(`${configRoot}/capability-contract.md`);
     const profile = text(`${configRoot}/connector-profiles/xero.md`);
-    const genericAuthorizationFiles = [skill, instructions, capabilityContract];
     const authorizationFiles = [skill, instructions, capabilityContract, profile];
 
-    for (const content of genericAuthorizationFiles) {
-      expect(content).toContain("exact current per-transaction approval");
-    }
     for (const content of authorizationFiles) {
-      expect(content).toContain("platform-bound");
-      expect(content).toContain("standing delegation");
-      expect(content).toContain("same target");
-      expect(content).toContain("A natural-language business execution request is not permission");
-      expect(content).toContain("provider-native idempotency window");
-      expect(content).toContain("same request and same idempotency key");
-      expect(content).toContain("durable single claim");
-      expect(content).not.toContain("Require a current human approval for every transaction");
+      expect(content).toContain("OAuth");
+      expect(content).toContain("write gate");
+      expect(content).not.toContain("standing delegation");
     }
 
-    expect(skill).toContain("do not require both");
-    expect(capabilityContract).toContain("These paths are alternatives; the runtime must not require both");
-    expect(profile).toContain("no confirmation phrase or per-item approval");
-    expect(profile).toContain("prohibit blind or new-key retry");
-    expect(instructions).toContain("for the Xero typed Accounting Case, standing delegation is the authorization path");
+    expect(skill).toContain("organisation-selection URL is the only user confirmation flow");
+    expect(capabilityContract).toContain("organisation-selection URL is the only user confirmation flow");
+    expect(profile).toContain("Do not add confirmation phrases");
+    expect(instructions).toContain("The only user confirmation is the existing organisation-selection URL");
   });
 
   it("keeps 0.3.x and 44-tool records explicitly historical instead of rewriting them", () => {

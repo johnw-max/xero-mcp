@@ -26,7 +26,6 @@ function parseArguments(argv) {
   const options = {
     outputDirectory: resolve(repoRoot, "artifacts/release"),
     sourceDateEpoch: Number.parseInt(process.env.SOURCE_DATE_EPOCH ?? String(DEFAULT_SOURCE_DATE_EPOCH), 10),
-    approvedControlCatalogSha256: undefined,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -39,13 +38,6 @@ function parseArguments(argv) {
       const value = argv[index + 1];
       if (!value) throw new Error("--source-date-epoch requires an integer.");
       options.sourceDateEpoch = Number.parseInt(value, 10);
-      index += 1;
-    } else if (argument === "--approved-control-catalog-sha256") {
-      const value = argv[index + 1];
-      if (!value || !/^[a-f0-9]{64}$/u.test(value)) {
-        throw new Error("--approved-control-catalog-sha256 requires a SHA-256 digest.");
-      }
-      options.approvedControlCatalogSha256 = value;
       index += 1;
     } else if (argument === "--artifact-stream-fd") {
       const value = argv[index + 1];
@@ -60,9 +52,6 @@ function parseArguments(argv) {
   }
   if (!Number.isSafeInteger(options.sourceDateEpoch) || options.sourceDateEpoch < 0) {
     throw new Error("SOURCE_DATE_EPOCH must be a non-negative integer.");
-  }
-  if (!options.approvedControlCatalogSha256) {
-    throw new Error("--approved-control-catalog-sha256 is required from the host acceptance boundary.");
   }
   return options;
 }
@@ -204,7 +193,6 @@ async function main() {
     releaseSourceManifestSha256,
     sourceArchiveSha256: archiveSha256,
     sourceBundleManifestSha256: manifestSha256,
-    approvedControlCatalogSha256: options.approvedControlCatalogSha256,
   });
   const buildIdentityContent = Buffer.from(stableJson(buildIdentity), "utf8");
   const buildIdentitySha256 = sha256(buildIdentityContent);

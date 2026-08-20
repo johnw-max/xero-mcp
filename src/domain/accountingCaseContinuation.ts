@@ -4,6 +4,7 @@ import type {
   CompiledAccountingCase,
   ContactDurableIdentity,
   NativeDocumentFact,
+  LedgerStateTransitionFact,
 } from "./accountingCase.js";
 import { hashObject } from "../security/hash.js";
 
@@ -13,6 +14,7 @@ export interface AccountingCaseBusinessContinuationTemplate {
   source_label: string;
   source_set_complete: true;
   documents: Array<Record<string, unknown>>;
+  ledger_state_transitions?: Array<Record<string, unknown>>;
   new_contacts?: Array<Record<string, unknown>>;
 }
 
@@ -92,6 +94,12 @@ function publicContact(fact: Extract<AccountingFact, { kind: "CONTACT_CANDIDATE"
   };
 }
 
+function publicLedgerStateTransition(fact: LedgerStateTransitionFact): Record<string, unknown> {
+  return fact.actionId === "manual_journal.post"
+    ? { action: fact.actionId, manual_journal_id: fact.targetXeroObjectId }
+    : { action: fact.actionId, invoice_id: fact.targetXeroObjectId };
+}
+
 export function accountingCaseRecoveryBusinessContinuationTemplate(input: Readonly<{
   caseId: string;
   sources: readonly AccountingSourceArtifact[];
@@ -106,7 +114,11 @@ export function accountingCaseRecoveryBusinessContinuationTemplate(input: Readon
       fact.kind === "CONTACT_CANDIDATE")
     .map(publicContact)
     .sort((left, right) => hashObject(left).localeCompare(hashObject(right)));
-  if (documents.length + contacts.length === 0) {
+  const ledgerStateTransitions = input.facts
+    .filter((fact): fact is LedgerStateTransitionFact => fact.kind === "LEDGER_STATE_TRANSITION")
+    .map(publicLedgerStateTransition)
+    .sort((left, right) => hashObject(left).localeCompare(hashObject(right)));
+  if (documents.length + contacts.length + ledgerStateTransitions.length === 0) {
     throw new Error("Accounting Case recovery continuation has no public business intent.");
   }
   // A recovery successor may combine a residual contact source and the
@@ -120,6 +132,7 @@ export function accountingCaseRecoveryBusinessContinuationTemplate(input: Readon
     source_label: sourceLabel,
     source_set_complete: true,
     documents,
+    ...(ledgerStateTransitions.length > 0 ? { ledger_state_transitions: ledgerStateTransitions } : {}),
     ...(contacts.length > 0 ? { new_contacts: contacts } : {}),
   };
 }
@@ -193,7 +206,8 @@ export function accountingCaseRecoveryResidualContinuationTemplate(input: Readon
     .flatMap((event) => event.primaryFactId ? [event.primaryFactId] : []));
   const directFacts = input.source.activeFacts.filter((fact) => factIds.has(fact.factId));
   if (directFacts.length !== residualOperations.length || directFacts.some((fact) =>
-    fact.kind !== "NATIVE_DOCUMENT" && fact.kind !== "CONTACT_CANDIDATE")) {
+    fact.kind !== "NATIVE_DOCUMENT" && fact.kind !== "CONTACT_CANDIDATE" &&
+    fact.kind !== "LEDGER_STATE_TRANSITION")) {
     throw new Error("Accounting Case recovery residual intent is not representable as public business documents.");
   }
   const residualContacts = directFacts.filter((fact): fact is Extract<AccountingFact, {

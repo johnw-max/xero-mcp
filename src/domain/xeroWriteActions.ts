@@ -53,11 +53,35 @@ export const XERO_WRITE_ACTIONS = Object.freeze({
     surface: "LEDGER_EVENT",
     providerAdapterOperation: "XeroAccountingProvider.createDraftSupplierBill",
   },
+  "supplier_bill.update_draft": {
+    objectType: "SUPPLIER_BILL",
+    operation: "UPDATE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroAccountingProvider.updateDraftSupplierBill",
+  },
   "customer_invoice.create_draft": {
     objectType: "SALES_INVOICE",
     operation: "CREATE_DRAFT",
     surface: "LEDGER_EVENT",
     providerAdapterOperation: "XeroAccountingProvider.createDraftSalesInvoice",
+  },
+  "customer_invoice.update_draft": {
+    objectType: "SALES_INVOICE",
+    operation: "UPDATE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroAccountingProvider.updateDraftSalesInvoice",
+  },
+  "customer_invoice.authorise": {
+    objectType: "SALES_INVOICE",
+    operation: "AUTHORISE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroControlledLedgerTransitionProvider.authoriseSalesInvoice",
+  },
+  "supplier_bill.authorise": {
+    objectType: "SUPPLIER_BILL",
+    operation: "AUTHORISE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroControlledLedgerTransitionProvider.authoriseSupplierBill",
   },
   "quote.create_draft": {
     objectType: "QUOTE",
@@ -65,11 +89,23 @@ export const XERO_WRITE_ACTIONS = Object.freeze({
     surface: "LEDGER_EVENT",
     providerAdapterOperation: "XeroControlledMutationProvider.createQuoteDraft",
   },
+  "quote.update_draft": {
+    objectType: "QUOTE",
+    operation: "UPDATE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroControlledMutationProvider.updateQuoteDraft",
+  },
   "purchase_order.create_draft": {
     objectType: "PURCHASE_ORDER",
     operation: "CREATE_DRAFT",
     surface: "LEDGER_EVENT",
     providerAdapterOperation: "XeroControlledMutationProvider.createPurchaseOrderDraft",
+  },
+  "purchase_order.update_draft": {
+    objectType: "PURCHASE_ORDER",
+    operation: "UPDATE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroControlledMutationProvider.updatePurchaseOrderDraft",
   },
   "credit_note.create_draft": {
     objectType: "CREDIT_NOTE",
@@ -77,11 +113,131 @@ export const XERO_WRITE_ACTIONS = Object.freeze({
     surface: "LEDGER_EVENT",
     providerAdapterOperation: "XeroCreditNoteManualJournalProvider.createCreditNoteDraft",
   },
+  "credit_note.update_draft": {
+    objectType: "CREDIT_NOTE",
+    operation: "UPDATE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroCreditNoteManualJournalProvider.updateCreditNoteDraft",
+  },
   "manual_journal.create_draft": {
     objectType: "MANUAL_JOURNAL",
     operation: "CREATE_DRAFT",
     surface: "LEDGER_EVENT",
     providerAdapterOperation: "XeroCreditNoteManualJournalProvider.createManualJournalDraft",
+  },
+  "manual_journal.update_draft": {
+    objectType: "MANUAL_JOURNAL",
+    operation: "UPDATE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroCreditNoteManualJournalProvider.updateManualJournalDraft",
+  },
+  "manual_journal.post": {
+    objectType: "MANUAL_JOURNAL",
+    operation: "POST",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroControlledLedgerTransitionProvider.postManualJournal",
+  },
+  "customer_invoice.void": {
+    objectType: "SALES_INVOICE",
+    operation: "VOID",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroLedgerAdjustmentProvider.voidSalesInvoice",
+  },
+  "supplier_bill.void": {
+    objectType: "SUPPLIER_BILL",
+    operation: "VOID",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroLedgerAdjustmentProvider.voidSupplierBill",
+  },
+  "credit_note.authorise": {
+    objectType: "CREDIT_NOTE",
+    operation: "AUTHORISE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroLedgerAdjustmentProvider.authoriseCreditNote",
+  },
+  "credit_note.allocate": {
+    objectType: "CREDIT_NOTE",
+    operation: "ALLOCATE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroLedgerAdjustmentProvider.allocateCreditNote",
+  },
+  "credit_note.refund": {
+    objectType: "CREDIT_NOTE",
+    operation: "REFUND",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroLedgerAdjustmentProvider.refundCreditNote",
+  },
+  "credit_note.void": {
+    objectType: "CREDIT_NOTE",
+    operation: "VOID",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroLedgerAdjustmentProvider.voidCreditNote",
+  },
+  "credit_note.unallocate": {
+    objectType: "CREDIT_NOTE",
+    operation: "UNALLOCATE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroLedgerAdjustmentProvider.unallocateCreditNote",
+  },
+  "manual_journal.void": {
+    objectType: "MANUAL_JOURNAL",
+    operation: "VOID",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroLedgerAdjustmentProvider.voidManualJournal",
+  },
+  "tracking_category.create": {
+    objectType: "TRACKING_CATEGORY",
+    operation: "CREATE",
+    surface: "REFERENCE_DATA",
+    providerAdapterOperation: "XeroTrackingMutationProvider.createCategory",
+  },
+  "tracking_category.update": {
+    objectType: "TRACKING_CATEGORY",
+    operation: "UPDATE",
+    surface: "REFERENCE_DATA",
+    providerAdapterOperation: "XeroTrackingMutationProvider.updateCategory",
+  },
+  "tracking_option.create": {
+    objectType: "TRACKING_OPTION",
+    operation: "CREATE",
+    surface: "REFERENCE_DATA",
+    providerAdapterOperation: "XeroTrackingMutationProvider.createOption",
+  },
+  "tracking_option.update": {
+    objectType: "TRACKING_OPTION",
+    operation: "UPDATE",
+    surface: "REFERENCE_DATA",
+    providerAdapterOperation: "XeroTrackingMutationProvider.updateOption",
+  },
+  "payment.create": {
+    objectType: "PAYMENT",
+    operation: "CREATE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroPaymentBankTransactionProvider.createPayment",
+  },
+  "payment.reverse": {
+    objectType: "PAYMENT",
+    operation: "REVERSE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroPaymentBankTransactionProvider.reversePayment",
+  },
+  "bank_transaction.create": {
+    objectType: "BANK_TRANSACTION",
+    operation: "CREATE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroPaymentBankTransactionProvider.createBankTransaction",
+  },
+  "bank_transaction.update": {
+    objectType: "BANK_TRANSACTION",
+    operation: "UPDATE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroPaymentBankTransactionProvider.updateBankTransaction",
+  },
+  "bank_transaction.reverse": {
+    objectType: "BANK_TRANSACTION",
+    operation: "REVERSE",
+    surface: "LEDGER_EVENT",
+    providerAdapterOperation: "XeroPaymentBankTransactionProvider.reverseBankTransaction",
   },
   "contact.create_basic": {
     objectType: "CONTACT",
@@ -123,21 +279,56 @@ export function xeroWriteActionsOnSurface(surface: XeroWriteSurface): readonly X
  * The write actions an agent can actually invoke today.
  *
  * This is the fact every other layer keeps getting wrong. The capability catalog
- * currently marks six actions AVAILABLE_NOW - with rationales describing a
- * complete, gated, validated path - that no tool can reach, because the only
+ * once marked six actions AVAILABLE_NOW - with rationales describing a
+ * complete, gated, validated path - that no tool could reach, because the only
  * exposed write tools bind to the Accounting Case and the case executor
- * dispatches four actions. Anyone reading that catalog to decide what the agent
- * can do is wrong about six of ten released actions.
+ * dispatched four actions. quote.create_draft and purchase_order.create_draft
+ * were wired first (their own CommercialDocumentRoute family), then
+ * manual_journal.create_draft (its own BalancedJournalRoute family) closed the
+ * remaining ledger-event gap. The same public Case union now carries the
+ * three already-safe reference-data actions as well; those actions reuse the
+ * existing contact/item primitive provider path rather than reopening legacy
+ * object-mutation tools.
  *
  * Reachability is stated here, once, and validated against the catalog.
  */
 export const AGENT_REACHABLE_WRITE_ACTIONS = Object.freeze([
   "contact.create_basic",
+  "contact.update_basic",
   "credit_note.create_draft",
+  "credit_note.update_draft",
+  "credit_note.authorise",
+  "credit_note.allocate",
+  "credit_note.refund",
+  "credit_note.void",
+  "credit_note.unallocate",
+  "bank_transaction.create",
+  "bank_transaction.update",
+  "bank_transaction.reverse",
+  "item.create_basic_untracked",
+  "item.update_basic_untracked",
   "customer_invoice.create_draft",
+  "customer_invoice.update_draft",
+  "customer_invoice.authorise",
+  "customer_invoice.void",
+  "manual_journal.create_draft",
+  "manual_journal.update_draft",
+  "manual_journal.post",
+  "manual_journal.void",
   "purchase_order.create_draft",
+  "purchase_order.update_draft",
+  "payment.create",
+  "payment.reverse",
   "quote.create_draft",
+  "quote.update_draft",
   "supplier_bill.create_draft",
+  "supplier_bill.update_draft",
+  "supplier_bill.authorise",
+  "supplier_bill.void",
+  "tracking_category.create",
+  "tracking_category.update",
+  "tracking_option.create",
+  "tracking_option.update",
 ] as const satisfies readonly XeroWriteActionId[]);
 
 export type AgentReachableWriteAction = typeof AGENT_REACHABLE_WRITE_ACTIONS[number];
@@ -154,10 +345,16 @@ export function isAgentReachableWriteAction(id: XeroWriteActionId): boolean {
  * could tell "not built" from "built and forgotten". Wiring an action means
  * removing it here, and the executor's exhaustive dispatch then refuses to
  * compile until it is handled.
+ *
+ * The three normal ledger-state transitions below have provider primitives but
+ * are deliberately pending until their typed Case execution routes exist.
+ * Keeping that gap named makes a provider-only action impossible to mistake
+ * for a public capability.
  */
-export const CASE_EXECUTOR_PENDING_ACTIONS = Object.freeze([
-  "manual_journal.create_draft",
-] as const satisfies readonly XeroWriteActionId[]);
+export const CASE_EXECUTOR_PENDING_ACTIONS = Object.freeze(
+  [
+  ] as const satisfies readonly XeroWriteActionId[],
+);
 
 export type CaseExecutorPendingAction = typeof CASE_EXECUTOR_PENDING_ACTIONS[number];
 

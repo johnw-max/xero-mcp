@@ -3,6 +3,7 @@ import {
   XERO_MUTATION_OBJECT_TYPES,
   XERO_MUTATION_OPERATIONS,
   XERO_MUTATION_SOURCE_EVIDENCE_TYPES,
+  xeroMutationTargetsExistingObject,
 } from "./xeroMutation.js";
 
 const identifier = z.string().trim().min(1).max(255);
@@ -39,13 +40,18 @@ export const prepareXeroMutationSchema = z.object({
   confirmationPhrase: confirmationPhrase.optional(),
   targetXeroObjectId: identifier.optional(),
 }).strict().superRefine((value, context) => {
-  if (value.operation === "UPDATE" && !value.targetXeroObjectId) {
-    context.addIssue({ code: "custom", message: "UPDATE requires targetXeroObjectId", path: ["targetXeroObjectId"] });
-  }
-  if (value.operation !== "UPDATE" && value.targetXeroObjectId) {
+  const targetsExistingObject = xeroMutationTargetsExistingObject(value.operation);
+  if (targetsExistingObject && !value.targetXeroObjectId) {
     context.addIssue({
       code: "custom",
-      message: "targetXeroObjectId is only valid for UPDATE",
+      message: `${value.operation} requires targetXeroObjectId`,
+      path: ["targetXeroObjectId"],
+    });
+  }
+  if (!targetsExistingObject && value.targetXeroObjectId) {
+    context.addIssue({
+      code: "custom",
+      message: "targetXeroObjectId is only valid for an exact existing-object mutation",
       path: ["targetXeroObjectId"],
     });
   }

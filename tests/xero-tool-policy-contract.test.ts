@@ -41,7 +41,7 @@ describe("Xero public tool capability release contract", () => {
     expect(fileAllowlist.tools.sort()).toEqual(codeTools);
     expect(Object.keys(XERO_TOOL_CAPABILITY_ACTION_IDS).sort()).toEqual(codeTools);
     expect(Object.keys(XERO_TOOL_POLICY_BINDINGS).sort()).toEqual(codeTools);
-    expect(codeTools).toHaveLength(30);
+    expect(codeTools).toHaveLength(38);
 
     for (const toolName of TOOL_ALLOWLIST) {
       const binding = XERO_TOOL_POLICY_BINDINGS[toolName];
@@ -83,7 +83,7 @@ describe("Xero public tool capability release contract", () => {
         expect(lookupAgentFacingXeroCapabilityDecision(actionId)).toMatchObject({
           releaseDecision: "AVAILABLE_NOW",
           riskClass: "AUTONOMOUS_CONTROLLED_WRITE",
-          controlRequirement: "STANDING_DELEGATION",
+          controlRequirement: "TYPED_CASE_WRITE_GATE",
           policyAllowsMutation: true,
         });
       }
@@ -110,17 +110,14 @@ describe("Xero public tool capability release contract", () => {
     }
   });
 
-  it("does not register planned, dual-approval, disabled, payment, bank-write, or reconciliation-finalisation actions", () => {
+  it("does not register planned, disabled, payment, bank-write, or reconciliation-finalisation actions", () => {
     for (const binding of Object.values(XERO_TOOL_POLICY_BINDINGS)) {
       for (const actionId of binding.actionIds) {
         const decision = lookupAgentFacingXeroCapabilityDecision(actionId);
         expect(decision.releaseDecision, `${binding.toolName} -> ${actionId}`).toBe(
           "AVAILABLE_NOW",
         );
-        expect(
-          ["DUAL_APPROVAL", "DISABLED"],
-          `${binding.toolName} -> ${actionId}`,
-        ).not.toContain(decision.riskClass);
+        expect(decision.riskClass, `${binding.toolName} -> ${actionId}`).not.toBe("DISABLED");
       }
     }
 

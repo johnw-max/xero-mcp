@@ -48,12 +48,7 @@ For a native document, accounting and tax semantics are line-scoped. A domain ru
 
 ### Authorization contract
 
-Every formal-ledger write must use exactly one authorization path for the same target, action, and scope:
-
-1. an exact current per-transaction approval when the connection or action requires per-transaction approval; or
-2. a platform-bound, currently valid standing delegation covering that same target, action, and scope.
-
-These paths are alternatives; the runtime must not require both. A natural-language business execution request is not permission; a natural-language business execution request or chat consent expresses intent, but is not permission. Before provider execution, the runtime must revalidate the selected path, target, scope, write gate, deterministic validation, idempotency, one-shot permit, receipt, and exact read-back. A typed Accounting Case that is explicitly mounted under standing delegation must not ask for a confirmation phrase or per-item approval.
+For the R1 Xero typed Accounting Case, a formal-ledger write requires the same server-resolved OAuth binding and pinned target session, the action's effective OAuth scope and released policy, and the server write gate. A natural-language business execution request expresses intent but is not a tenant, action or execution payload. The organisation-selection URL is the only user confirmation flow. Before provider execution, the runtime must revalidate target, scope, policy, write gate, deterministic validation, idempotency, one-shot permit, receipt, and exact read-back. A typed Accounting Case must not ask for a confirmation phrase, signature, approval token or per-item approval.
 
 ## Fact provenance and ledger-target gate
 
@@ -209,7 +204,7 @@ describeCapabilities(context)
 resolveTarget(context)
 readReferenceData(intent)
 prepareAccountingCase(submittedFacts, expectedVersion)
-executeAccountingCase(caseRef, standingDelegationOrExactApproval)
+executeAccountingCase(caseRef, currentCaseVersion)
 getAccountingCaseStatus(caseRef)
 readBack(providerObjectRef)
 queryOutcome(attemptRef)

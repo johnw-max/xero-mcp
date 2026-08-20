@@ -35,7 +35,7 @@ interface ContractManifest {
   schemaVersion: string;
   releaseVersion: string;
   requiredMigration: string;
-  authorityModel: "STANDING_DELEGATION";
+  authorityModel: "OAUTH_TARGET_BOUND_WRITE_GATE";
   expectedTools: string[];
   forbiddenPublicTools: string[];
   dangerousTools: string[];

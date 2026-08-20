@@ -82,13 +82,11 @@ npm run build
 
 ```sh
 GATE_DIR=artifacts/local-acceptance/REPLACE_WITH_GATE_RUN
-APPROVED_CONTROL_CATALOG_SHA256=REPLACE_WITH_SEPARATELY_HOST_APPROVED_SHA256
 node scripts/verify-accepted-oci-release.mjs \
   --gate-result "$GATE_DIR/gate-result.json" \
   --gate-receipt "$GATE_DIR/accepted-build-context-receipt.json" \
   --oci-receipt "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json" \
-  --oci-artifact "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar" \
-  --approved-control-catalog-sha256 "$APPROVED_CONTROL_CATALOG_SHA256"
+  --oci-artifact "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar"
 
 # 使用支持 oci-archive transport 的发布工具（例如 skopeo）复制同一 artifact；
 # 不得重建。复制后再次拉取/inspect，并验证 registry manifest digest 与
@@ -100,10 +98,8 @@ skopeo inspect --raw \
   "docker://REPLACE_WITH_REGISTRY/xero-accounting-mcp:0.4.0-rc.1" \
   | sha256sum
 
-# 将 APP_IMAGE、四个 XERO_ACCEPTANCE_*/XERO_ACCEPTED_* 绝对路径，以及由
-# host reviewer 单独批准的 XERO_APPROVED_CONTROL_CATALOG_SHA256 写入
-# deploy/.env.vps；四个证据路径必须是下面固定 root trust root 内的目标，
-# 禁止从 candidate receipt 反向派生批准值。
+# 将 APP_IMAGE 与四个 XERO_ACCEPTANCE_*/XERO_ACCEPTED_* 绝对路径写入
+# deploy/.env.vps；四个证据路径必须是下面固定 root trust root 内的目标。
 sudo install -d -o root -g root -m 0750 /srv/xero-accounting-mcp/release
 sudo install -d -o root -g root -m 0750 /etc/xero-accounting-mcp
 sudo install -o root -g root -m 0400 "$GATE_DIR/gate-result.json" \
@@ -117,50 +113,12 @@ sudo install -o root -g root -m 0400 \
   "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar" \
   /srv/xero-accounting-mcp/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar
 
-# Firm-governance evidence must arrive out of band from the accounting firm's
-# governance authority. It must not come from the candidate source tree, Gate
-# output, image, app configuration, or an application-held signing key.
-FIRM_GOVERNANCE_DIR=REPLACE_WITH_OUT_OF_BAND_FIRM_GOVERNANCE_DIRECTORY
-sudo install -d -o root -g root -m 0755 /etc/xero-accounting-mcp/governance
-sudo install -o root -g root -m 0444 "$FIRM_GOVERNANCE_DIR/trust-bundle.json" \
-  /etc/xero-accounting-mcp/governance/trust-bundle.json
-sudo install -o root -g root -m 0444 "$FIRM_GOVERNANCE_DIR/receipts.json" \
-  /etc/xero-accounting-mcp/governance/receipts.json
-sudo install -o root -g root -m 0444 "$FIRM_GOVERNANCE_DIR/status.json" \
-  /etc/xero-accounting-mcp/governance/status.json
-sha256sum \
-  /etc/xero-accounting-mcp/governance/trust-bundle.json \
-  /etc/xero-accounting-mcp/governance/receipts.json \
-  /etc/xero-accounting-mcp/governance/status.json
-# A root/host governance reviewer independently approves these exact hashes,
-# then writes only the three SHA256 values into release.env. The paths are fixed.
-# A missing file, placeholder hash, invalid/expired signature or status is a hard
-# stop: do not run admission, create a container, or apply a migration.
-
-# The same reviewer must also approve an explicit XERO_AUTHORITY_REVISION and
-# the exact one-line XERO_STANDING_DELEGATIONS_JSON value. Compute SHA-256 over
-# that JSON value only (no variable-name prefix and no trailing newline), write
-# it as XERO_STANDING_DELEGATIONS_CONFIG_SHA256, and bump the revision whenever
-# the JSON or write kill switch changes. Admission and /readyz must report the
-# same revision, write mode and JSON digest before cutover.
-# The same independent reviewer must calculate and approve the canonical v2
-# snapshot and normalized governance projection with the separately approved
-# offline authority projector, never by copying a candidate /readyz response,
-# then set XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256 and
-# XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 in release.env.
-#
-# Every trust-bundle, receipt, or status renewal requires a higher XERO_AUTHORITY_REVISION.
-# Replacing a host governance file does not refresh an existing container bind mount.
-# Therefore install the renewed root-owned 0444 files atomically, independently
-# approve their three hashes plus the new expected snapshot/aggregate, admit a
-# newly restarted green process, and restart and republish the higher durable authority snapshot before cutover.
-# A same-revision renewal must conflict and must never be cut over.
-#
-# Runtime status is captured only at startup: startup-captured revocation remains bounded by the effective expiry
-# (the signed status lifetime is at most one hour), rather than becoming visible
-# immediately. For urgent revocation, publish the signed replacement, raise the
-# authority revision, restart/republish, and cut traffic immediately. Without a
-# replacement, /readyz becomes 503 at the effective expiry; do not route writes.
+# 当前发布不使用 Firm Governance、签名 trust bundle、Standing Delegation、
+# authority revision 或其 hash 作为账本写入前提。准入只绑定不可变镜像、migration、
+# accepted Gate/OCI identity、Capability Manifest 与 `XERO_WRITE_ENABLED`。
+# 正常账本写入由运行时的当前 OAuth binding、已 pin Organisation、typed Accounting
+# Case、确定性校验、幂等、Provider 回执和 exact read-back 共同约束；不要把聊天文本、
+# 浏览器 Review 或外部签名文件当作第二授权层。
 
 sudo install -o root -g root -m 0600 deploy/.env.vps \
   /etc/xero-accounting-mcp/release.env
@@ -218,7 +176,7 @@ curl -i https://mcp.jiayuanwang.xyz/mcp
 
 ## 8. 受控写入
 
-写入只允许在独立测试 Organisation、明确人工确认和自动关闭窗口下进行。必须保存：
+写入只允许在独立测试 Organisation、已 pin target、已开启的 `XERO_WRITE_ENABLED` 与当前 Capability Manifest 路由下进行。必须保存：
 
 - 目标 Organisation 与 binding revision；
 - 幂等依据；
@@ -227,6 +185,8 @@ curl -i https://mcp.jiayuanwang.xyz/mcp
 - 同一记录的精确 read-back。
 
 OAuth 成功、`PREPARED` 或“接口返回 200”都不等于正式写入完成。没有记录 ID 和 read-back 时必须标记为未验证。
+
+用户唯一的浏览器交互是 `xero_start_organisation_switch` 返回的一次性 Organisation selection URL；它只允许选择已授权账套。正常 typed Case 写入不使用逐笔确认、签名、Standing Delegation 或 Review 页面。
 
 ## 9. 回滚
 

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "name": "offline-accounting-case-write-no-retry-regression",
-  "releaseContract": "0.4.0-rc.1 / Standing Delegation / Case execute identity only",
+  "releaseContract": "0.4.0-rc.1 / pinned OAuth target + released typed Case action + write gate / Case execute identity only",
   "settings": {
     "concurrency": 2,
     "timeoutMs": 5000,
@@ -14,7 +14,7 @@
     {
       "alias": "controlled_writer",
       "id": "mock-writer-agent",
-      "persona": "Controlled accounting operator who executes only a stored Accounting Case under exact Standing Delegation and always requires Provider receipt plus exact readback."
+      "persona": "Controlled accounting operator who executes only a stored Accounting Case for the pinned OAuth target and released typed action while the write gate is active, and always requires Provider receipt plus exact readback."
     }
   ],
   "cases": [
@@ -31,7 +31,7 @@
         },
         {
           "role": "user",
-          "content": "{{fixture}}\n\nUnder the active exact Standing Delegation, execute Accounting Case synthetic-case-001 version 1 once with request_id synthetic-case-request-001. Do not submit accounting payload at execute time. Stop after the first unknown result and recover by Case status/readback only."
+          "content": "{{fixture}}\n\nFor the pinned OAuth target and released typed Case action while the write gate is active, execute Accounting Case synthetic-case-001 version 1 once with request_id synthetic-case-request-001. Do not submit accounting payload at execute time. Stop after the first unknown result and recover by Case status/readback only."
         }
       ],
       "expect": {

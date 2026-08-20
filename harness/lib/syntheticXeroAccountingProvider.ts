@@ -594,6 +594,38 @@ export class SyntheticXeroAccountingProvider implements AccountingProvider {
       }],
     };
   }
+
+  async listJournals(...[principal, input]: Parameters<AccountingProvider["listJournals"]>) {
+    return this.#notImplemented("listJournals", principal, { ...input });
+  }
+
+  async getProfitAndLoss(...[principal, input]: Parameters<AccountingProvider["getProfitAndLoss"]>) {
+    return this.#notImplemented("getProfitAndLoss", principal, { ...input });
+  }
+
+  async getBalanceSheet(...[principal, input]: Parameters<AccountingProvider["getBalanceSheet"]>) {
+    return this.#notImplemented("getBalanceSheet", principal, { ...input });
+  }
+
+  async getAgedReceivables(...[principal, input]: Parameters<AccountingProvider["getAgedReceivables"]>) {
+    return this.#notImplemented("getAgedReceivables", principal, { ...input });
+  }
+
+  async getAgedPayables(...[principal, input]: Parameters<AccountingProvider["getAgedPayables"]>) {
+    return this.#notImplemented("getAgedPayables", principal, { ...input });
+  }
+
+  async getPayment(...[principal, paymentId]: Parameters<AccountingProvider["getPayment"]>) {
+    return this.#notImplemented("getPayment", principal, { paymentId });
+  }
+
+  async listTrackingCategories(...[principal, input]: Parameters<AccountingProvider["listTrackingCategories"]>) {
+    return this.#notImplemented("listTrackingCategories", principal, { ...input });
+  }
+
+  async listContactGroups(...[principal, input]: Parameters<AccountingProvider["listContactGroups"]>) {
+    return this.#notImplemented("listContactGroups", principal, { ...input });
+  }
 }
 
 export type { SyntheticLedgerFixture, CreditNoteType, PaymentType };

@@ -12,11 +12,14 @@ import { XeroAccountingProvider } from "./providers/xeroProvider.js";
 import { XeroControlledMutationProvider } from "./providers/xeroControlledMutationProvider.js";
 import { XeroCreditNoteManualJournalProvider } from "./providers/xeroCreditNoteManualJournalProvider.js";
 import { XeroContactItemMutationProvider } from "./providers/xeroContactItemMutationProvider.js";
+import { XeroControlledLedgerTransitionProvider } from "./providers/xeroControlledLedgerTransitionProvider.js";
+import { XeroTrackingMutationProvider } from "./providers/xeroTrackingMutationProvider.js";
+import { XeroLedgerAdjustmentProvider } from "./providers/xeroLedgerAdjustmentProvider.js";
+import { XeroPaymentBankTransactionProvider } from "./providers/xeroPaymentBankTransactionProvider.js";
 import { Aes256GcmTokenCipher } from "./security/tokenCipher.js";
 import { AccountingService } from "./services/accountingService.js";
 import { ConnectionTicketService } from "./services/connectionTicketService.js";
 import { EphemeralCleanupService } from "./services/ephemeralCleanupService.js";
-import { ReviewService } from "./services/reviewService.js";
 import { XeroControlledMutationService } from "./services/xeroControlledMutationService.js";
 import { XeroCreditNoteManualJournalService } from "./services/xeroCreditNoteManualJournalService.js";
 import { XeroContactItemMutationService } from "./services/xeroContactItemMutationService.js";
@@ -25,47 +28,18 @@ import { OrganisationSwitchService } from "./services/organisationSwitchService.
 import { LedgerTargetSessionService } from "./services/ledgerTargetSessionService.js";
 import { XeroRuntimeCapabilityService } from "./policy/xeroRuntimeCapabilityService.js";
 import { XeroAccountingCaseService } from "./services/xeroAccountingCaseService.js";
-import { RepositoryLedgerAuthoritySnapshotResolver } from "./domain/ledgerAuthority.js";
-import {
-  assertXeroExternalGovernanceCoversDelegations,
-  loadXeroExternalGovernanceAuthorityFromFixedFiles,
-  xeroStandingDelegationsWithExternalGovernance,
-} from "./policy/xeroExternalGovernanceAuthority.js";
+import { XeroLedgerStateTransitionService } from "./services/xeroLedgerStateTransitionService.js";
+import { XeroDraftDocumentUpdateService } from "./services/xeroDraftDocumentUpdateService.js";
+import { XeroTrackingCaseMutationService } from "./services/xeroTrackingCaseMutationService.js";
+import { XeroLedgerAdjustmentService } from "./services/xeroLedgerAdjustmentService.js";
+import { XeroPaymentBankCaseService } from "./services/xeroPaymentBankCaseService.js";
 
 const XERO_CONTACT_NAMESPACE = "zcacct";
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger(config);
-  const governanceAuthority = config.xeroGovernanceExpectedHashes
-    ? loadXeroExternalGovernanceAuthorityFromFixedFiles(config.xeroGovernanceExpectedHashes)
-    : undefined;
-  if (governanceAuthority) {
-    assertXeroExternalGovernanceCoversDelegations(
-      governanceAuthority,
-      config.xeroStandingDelegations ?? [],
-    );
-  }
-  const durableStandingDelegations = governanceAuthority
-    ? xeroStandingDelegationsWithExternalGovernance(
-        governanceAuthority,
-        config.xeroStandingDelegations ?? [],
-      )
-    : config.xeroStandingDelegations ?? [];
   const repository = new PostgresAccountingRepository(config.databaseUrl);
-  const authorityPublication = await repository.publishLedgerAuthoritySnapshot({
-    providerId: "xero",
-    revision: config.xeroAuthorityRevision,
-    writeKillSwitchEnabled: config.xeroWriteEnabled,
-    standingDelegations: durableStandingDelegations,
-    publishedAt: new Date(),
-  });
-  logger.info("Ledger authority snapshot published.", {
-    providerId: authorityPublication.snapshot.providerId,
-    revision: authorityPublication.snapshot.revision,
-    snapshotHash: authorityPublication.snapshot.snapshotHash,
-    mode: authorityPublication.mode,
-  });
   const cipher = new Aes256GcmTokenCipher(config.tokenEncryptionKey);
   const manager = new XeroClientManager({
     repository,
@@ -78,18 +52,20 @@ async function main(): Promise<void> {
   const runtimeCapability = new XeroRuntimeCapabilityService(provider, config);
   const mutationFoundation = new XeroMutationService(repository, {
     confirmationSecret: config.xeroMutationConfirmationKey,
-    authoritySnapshotResolver: new RepositoryLedgerAuthoritySnapshotResolver(repository),
+    writeEnabled: config.xeroWriteEnabled,
     providerCapabilityEvaluator: runtimeCapability,
   });
+  const controlledMutationProvider = new XeroControlledMutationProvider(manager);
+  const creditNoteManualJournalProvider = new XeroCreditNoteManualJournalProvider(manager);
   const controlledMutations = new XeroControlledMutationService(
     provider,
-    new XeroControlledMutationProvider(manager),
+    controlledMutationProvider,
     mutationFoundation,
     config,
   );
   const creditNoteManualJournalMutations = new XeroCreditNoteManualJournalService(
     provider,
-    new XeroCreditNoteManualJournalProvider(manager),
+    creditNoteManualJournalProvider,
     mutationFoundation,
     config,
   );
@@ -98,6 +74,32 @@ async function main(): Promise<void> {
     new XeroContactItemMutationProvider(manager, XERO_CONTACT_NAMESPACE),
     mutationFoundation,
     { ...config, contactNamespace: XERO_CONTACT_NAMESPACE },
+  );
+  const ledgerStateTransitions = new XeroLedgerStateTransitionService(
+    provider,
+    new XeroControlledLedgerTransitionProvider(manager),
+    mutationFoundation,
+  );
+  const draftDocumentUpdates = new XeroDraftDocumentUpdateService(
+    provider,
+    controlledMutationProvider,
+    creditNoteManualJournalProvider,
+    mutationFoundation,
+    config,
+  );
+  const trackingCaseMutations = new XeroTrackingCaseMutationService(
+    new XeroTrackingMutationProvider(manager),
+    mutationFoundation,
+  );
+  const ledgerAdjustments = new XeroLedgerAdjustmentService(
+    provider,
+    new XeroLedgerAdjustmentProvider(manager),
+    mutationFoundation,
+  );
+  const paymentBankCase = new XeroPaymentBankCaseService(
+    provider,
+    new XeroPaymentBankTransactionProvider(manager),
+    mutationFoundation,
   );
   const connectionTickets = new ConnectionTicketService(repository, config.publicBaseUrl);
   const accountingService = new AccountingService({
@@ -110,6 +112,11 @@ async function main(): Promise<void> {
     creditNoteManualJournalMutations,
     contactItemMutations,
     mutationFoundation,
+    ledgerStateTransitions,
+    draftDocumentUpdates,
+    trackingCaseMutations,
+    ledgerAdjustments,
+    paymentBankCase,
   });
   const accountingCaseService = new XeroAccountingCaseService(
     repository,
@@ -120,11 +127,9 @@ async function main(): Promise<void> {
       continuationSecret: config.xeroMutationConfirmationKey,
       testTenantIds: config.xeroAccountingCaseTestTenantIds ?? [],
       tenantCoaProfiles: config.xeroTenantCoaProfiles ?? [],
-      businessAuthorityProfiles: governanceAuthority?.authorityProfiles ??
-        config.xeroAccountingCaseBusinessAuthorities ?? [],
+      businessAuthorityProfiles: config.xeroAccountingCaseBusinessAuthorities ?? [],
     },
   );
-  const reviewService = new ReviewService(repository);
   const oauthService = new XeroOAuthService({ repository, manager, cipher, config });
   const brokerConfig = config.mcpOAuthBroker;
   const organisationSwitchService = brokerConfig?.enabled
@@ -159,7 +164,6 @@ async function main(): Promise<void> {
     repository,
     accountingService,
     oauthService,
-    reviewService,
     connectionTickets,
     logger,
     ...(mcpOAuthProvider ? { mcpOAuthProvider } : {}),

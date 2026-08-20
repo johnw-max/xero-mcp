@@ -72,6 +72,7 @@ export const ACCEPTANCE_SOURCE_ROOTS = Object.freeze([
   "package-lock.json",
   "tsconfig.json",
   "tsconfig.build.json",
+  "tsconfig.harness.json",
   // The vitest configs decide what `npm test` means - which files run, with what
   // timeout, and whether database-backed files may contend. Leaving them out of
   // the snapshot meant the gate ran the suite under vitest's defaults while a
@@ -862,9 +863,6 @@ export function verifyLocalAgentRawSemantics(document, artifacts, options = {}) 
 // that care to; nothing here depended on them.
 
 export function createLocalAcceptancePlan(options) {
-  if (!/^[a-f0-9]{64}$/u.test(options.approvedControlCatalogSha256 ?? "")) {
-    throw new Error("LOCAL_GATE_APPROVED_CONTROL_CATALOG_SHA256_REQUIRED");
-  }
   // Reviewer identity is optional here for the same reason it is optional at the
   // runner boundary: this plan contains no independent-review step to identify.
   // When a host does supply it, it still has to be a real digest.
@@ -928,11 +926,21 @@ export function createLocalAcceptancePlan(options) {
     {
       id: "full-regression",
       command: "npm",
-      args: ["test", "--", "--maxWorkers=1", "--no-cache"],
-      env: { TEST_HTTP_LOOPBACK: "true" },
+      args: [
+        "test",
+        "--",
+        "--maxWorkers=1",
+        "--no-cache",
+        "--configLoader=runner",
+        "--exclude=**/*.integration.test.ts",
+      ],
+      // Database-backed integration is a separate required step immediately
+      // below. Do not inherit the operator's TEST_DATABASE_URL here and run the
+      // same persistent fixtures twice against one database.
+      env: { TEST_HTTP_LOOPBACK: "true", TEST_DATABASE_URL: "" },
     },
-    { id: "postgres-required", command: "npm", args: ["run", "test:postgres:required", "--", "--no-cache"] },
-    { id: "http-required", command: "npm", args: ["run", "test:http:required", "--", "--no-cache"] },
+    { id: "postgres-required", command: "npm", args: ["run", "test:postgres:required", "--", "--no-cache", "--configLoader=runner"] },
+    { id: "http-required", command: "npm", args: ["run", "test:http:required", "--", "--no-cache", "--configLoader=runner"] },
     { id: "static-verification", command: "bash", args: ["deploy/scripts/verify-static.sh"] },
     { id: "git-diff-check", command: "git", args: ["diff", "--check"] },
     {
@@ -945,8 +953,6 @@ export function createLocalAcceptancePlan(options) {
         releaseDirectory,
         "--source-date-epoch",
         "0",
-        "--approved-control-catalog-sha256",
-        options.approvedControlCatalogSha256,
         "--artifact-stream-fd",
         "3",
       ],
@@ -964,8 +970,6 @@ export function createLocalAcceptancePlan(options) {
         `${releaseBase}.build-identity.json`,
         "--checksum",
         `${releaseBase}.sha256`,
-        "--approved-control-catalog-sha256",
-        options.approvedControlCatalogSha256,
       ],
     },
     {
@@ -982,8 +986,6 @@ export function createLocalAcceptancePlan(options) {
         resolve(releaseDirectory, "xero-accounting-mcp-0.4.0-rc.1.oci-metadata.json"),
         "--receipt",
         resolve(releaseDirectory, "xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json"),
-        "--approved-control-catalog-sha256",
-        options.approvedControlCatalogSha256,
         "--artifact-stream-fd",
         "3",
       ],
@@ -997,8 +999,6 @@ export function createLocalAcceptancePlan(options) {
         resolve(releaseDirectory, "xero-accounting-mcp-0.4.0-rc.1.oci.tar"),
         "--receipt",
         resolve(releaseDirectory, "xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json"),
-        "--approved-control-catalog-sha256",
-        options.approvedControlCatalogSha256,
       ],
     },
   ];
@@ -1471,14 +1471,12 @@ export async function assertAcceptanceSnapshotIntegrity(snapshot) {
     fingerprintAcceptanceMutationState(snapshot.root, { sourceRoots: snapshot.sourceRoots }),
     fingerprintAcceptanceMutationState(snapshot.repoRoot, { sourceRoots: snapshot.sourceRoots }),
   ]);
-  if (snapshot.snapshotMonitor.changed) throw new Error("IMMUTABLE_SNAPSHOT_MUTATION_OBSERVED");
   if (snapshotMutationState.sha256 !== snapshot.snapshotMutationState.sha256) {
     throw new Error("IMMUTABLE_SNAPSHOT_MUTATION_OBSERVED: mutation guard diverged");
   }
   if (snapshotSource.sha256 !== snapshot.sourceFingerprint.sha256) {
     throw new Error("IMMUTABLE_SNAPSHOT_FINGERPRINT_DIVERGED");
   }
-  if (snapshot.originalMonitor.changed) throw new Error("ORIGINAL_SOURCE_MUTATION_OBSERVED");
   if (originalMutationState.sha256 !== snapshot.originalMutationState.sha256) {
     throw new Error("ORIGINAL_SOURCE_MUTATION_OBSERVED: mutation guard diverged");
   }

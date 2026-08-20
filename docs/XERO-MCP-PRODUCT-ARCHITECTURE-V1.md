@@ -1,5 +1,7 @@
 # Xero Accounting Agent MCP 产品架构 V1
 
+> **历史文档，不再作为 R1 实现或发布依据。** 2026-08-20 起请使用 [XERO-MCP-TARGET-ARCHITECTURE-2026-08-20.md](./XERO-MCP-TARGET-ARCHITECTURE-2026-08-20.md)。其中尚未实现的 Source Bundle、Evidence Graph、通用 Policy/Approval、Scheduler/Cache、Webhook、多 Provider 等设计不进入本次上线范围。
+
 版本：V1 Draft  
 日期：2026-08-05  
 读者：产品、Work / Agent、MCP 后端、安全、QA、会计业务  

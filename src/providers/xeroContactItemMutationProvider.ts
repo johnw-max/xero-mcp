@@ -161,6 +161,23 @@ function rawBusinessValue(raw: ProviderRecord, key: NormalizedBusinessKey): stri
     case "ACCOUNT_NUMBER": return normalizeCompact(raw.accountNumber);
     case "NAME": return normalizeName(raw.name);
     case "ITEM_CODE": return normalizeName(raw.code);
+    default: {
+      // Exhaustive by construction, not by convention: a business-key kind
+      // this switch does not handle must never fall through to `undefined`,
+      // because `undefined === key.value` is always false, which would make
+      // contactDuplicateExists's full-pagination scan silently report "no
+      // duplicate found" for every contact on every page. Adding a 6th
+      // NormalizedBusinessKey kind without a matching case here fails to
+      // compile (the `never` assignment below); reaching this branch at
+      // runtime despite that -- e.g. via an `as`-cast producer -- fails loudly
+      // instead of returning a value that reads as "checked, and clean".
+      const unreachable: never = key.kind;
+      throw new AppError(
+        "CONFIGURATION_ERROR",
+        `Contact duplicate detection has no raw-value extraction for business key kind "${String(unreachable)}".`,
+        { httpStatus: 500 },
+      );
+    }
   }
 }
 

@@ -1,7 +1,8 @@
 {
   "version": 1,
   "name": "agent2-xero-v0.4.0-rc.1-accounting-case-uat-template",
-  "releaseContract": "0.4.0-rc.1 / 28 public tools / Standing Delegation",
+  "capabilityManifest": "config/xero-capability-manifest.json",
+  "releaseContract": "0.4.0-rc.1 / manifest-derived public tools / OAuth target-session, effective scope, released policy and write gate",
   "settings": {
     "concurrency": 1,
     "repeats": 1,
@@ -19,7 +20,7 @@
     {
       "alias": "accounting_case_controller",
       "idEnv": "AGENT2_ACCOUNTING_CASE_AGENT_ID",
-      "persona": "Accounting controller operating only through the three governed Xero Accounting Case tools. It uses the pinned exact target and active Standing Delegation, never sends accounting payload at execute time, and reports success only from Provider receipt plus exact readback."
+      "persona": "Accounting controller operating only through the three governed Xero Accounting Case tools. It uses the pinned exact OAuth target/session and executes only with effective scope, released policy and the server write gate, never sends accounting payload at execute time, and reports success only from Provider receipt plus exact readback."
     }
   ],
   "cases": [
@@ -72,8 +73,8 @@
       }
     },
     {
-      "id": "v040rc-case-standing-delegation-execute",
-      "title": "Execute the stored current Case once under exact Standing Delegation",
+      "id": "v040rc-case-oauth-target-write-gate-execute",
+      "title": "Execute the stored current Case once with the pinned OAuth target/session and server write gate",
       "operation": "write",
       "estimatedXeroCalls": 60,
       "fixture": "../../fixtures/xero/accounting-case-business-documents.v1.json",
@@ -85,7 +86,7 @@
         },
         {
           "role": "user",
-          "content": "Process this test pack under the current Standing Delegation: pin the organisation, prepare the Case, execute its current immutable version exactly once, then read Case status. Stop on any coverage gap, validation error, uncertain write or readback mismatch. Never AUTHORISE, pay, allocate, void or retry an unknown provider result."
+          "content": "Process this test pack with the current OAuth target/session, effective scope, released policy and server write gate: pin the organisation, prepare the Case, execute its current immutable version exactly once, then read Case status. Stop on any coverage gap, validation error, uncertain write or readback mismatch. Never AUTHORISE, pay, allocate, void or retry an unknown provider result."
         }
       ],
       "expect": {

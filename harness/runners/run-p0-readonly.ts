@@ -13,6 +13,7 @@ import { AppError } from "../../src/errors.js";
 import { createHttpApp } from "../../src/http/app.js";
 import type { Logger } from "../../src/logging.js";
 import { createAccountingMcpServer } from "../../src/mcp/createServer.js";
+import { TOOL_ALLOWLIST } from "../../src/mcp/toolNames.js";
 import type {
   CreditNoteListResult,
   InvoiceListResult,
@@ -49,38 +50,7 @@ const TARGET_CASE_IDS = [
   "DC-VERSION-008",
 ] as const;
 
-const PINNED_TOOL_SURFACE = [
-  "xero_connection_status",
-  "xero_start_organisation_switch",
-  "xero_pin_current_organisation",
-  "xero_get_organisation",
-  "xero_list_accounts",
-  "xero_list_tax_rates",
-  "xero_list_contacts",
-  "xero_get_contact",
-  "xero_search_contacts",
-  "xero_prepare_accounting_case",
-  "xero_execute_accounting_case",
-  "xero_get_accounting_case_status",
-  "xero_list_accounting_cases",
-  "xero_list_invoices",
-  "xero_list_credit_notes",
-  "xero_get_credit_note",
-  "xero_list_payments",
-  "xero_list_quotes",
-  "xero_get_quote",
-  "xero_list_purchase_orders",
-  "xero_get_purchase_order",
-  "xero_list_manual_journals",
-  "xero_get_manual_journal",
-  "xero_list_items",
-  "xero_get_item",
-  "xero_list_bank_transactions",
-  "xero_get_bank_transaction",
-  "xero_get_invoice",
-  "xero_get_supplier_bill",
-  "xero_get_trial_balance",
-] as const;
+const PINNED_TOOL_SURFACE = TOOL_ALLOWLIST;
 
 type JsonObject = Record<string, unknown>;
 type EvidenceKind = "TOOL_CALL" | "TOOL_OUTPUT" | "PROVIDER_CALL" | "REPOSITORY_STATE" | "NETWORK_RECEIPT" | "STATE_PROBE";
@@ -263,7 +233,6 @@ function applicationConfig(tenantId: string): AppConfig {
     },
     xeroWriteEnabled: false,
     xeroAllowedTenantId: tenantId,
-    xeroAuthorityRevision: 1,
     tokenEncryptionKey: Buffer.alloc(32, 7),
     xeroMutationConfirmationKey: Buffer.alloc(32, 8),
     demoActorId: "p0-readonly-demo-actor",
@@ -713,7 +682,7 @@ function evaluateConnection(options: {
     organisationFactPaths.includes("/result/baseCurrency") &&
     !JSON.stringify(callToolPayload(organisationExecution?.callToolResult)).includes(options.tenantId);
   const oracleResults = [
-    oracle("exact_30_tools", sameStringSet(options.listTools, PINNED_TOOL_SURFACE), options.listTools, [options.listToolsRef], "tools/list must equal the independent pinned 30-tool Accounting Case surface."),
+    oracle("exact_current_tools", sameStringSet(options.listTools, PINNED_TOOL_SURFACE), options.listTools, [options.listToolsRef], "tools/list must equal the release-candidate Accounting Case allowlist."),
     oracle("connected_true", status?.connected === true, status?.connected ?? null, options.executions.get("connection_status")?.evidenceRefs ?? [], "Connection status must be true from parsed model-visible MCP output."),
     oracle("write_scope_absent", scopes.includes("xero.draft.write") === false && sameStringSet(scopes, ["xero.read"]), scopes, options.executions.get("connection_status")?.evidenceRefs ?? [], "The bound installation must expose only xero.read."),
     oracle("exact_org_id", targetEvidencePassed, {

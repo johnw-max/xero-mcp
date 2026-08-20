@@ -20,6 +20,10 @@ import type {
   ListCreditNotesInput,
   ListInvoicesInput,
   ListPaymentsInput,
+  ProfitAndLossInput,
+  BalanceSheetInput,
+  AgedReceivablesInput,
+  AgedPayablesInput,
   PrepareSupplierBillDraftInput,
   PrepareSalesInvoiceDraftInput,
   SearchContactsInput,
@@ -34,11 +38,15 @@ import type {
   GetManualJournalInput,
   GetPurchaseOrderInput,
   GetQuoteInput,
+  GetPaymentInput,
   ListBankTransactionsInput,
+  ListContactGroupsInput,
   ListItemsInput,
+  ListJournalsInput,
   ListManualJournalsInput,
   ListPurchaseOrdersInput,
   ListQuotesInput,
+  ListTrackingCategoriesInput,
 } from "../domain/extendedReadSchemas.js";
 import type {
   PreparePurchaseOrderDraftInput,
@@ -92,7 +100,29 @@ import { boundXeroTrialBalanceForAgent } from "./xeroTrialBalanceBounds.js";
 import type { XeroControlledMutationService } from "./xeroControlledMutationService.js";
 import type { XeroCreditNoteManualJournalService } from "./xeroCreditNoteManualJournalService.js";
 import type { XeroContactItemMutationService } from "./xeroContactItemMutationService.js";
+import type {
+  DraftDocumentUpdateEnvelope,
+  PrepareDraftDocumentUpdateInput,
+  XeroDraftDocumentUpdateService,
+} from "./xeroDraftDocumentUpdateService.js";
+import type { DraftDocumentUpdateAction } from "../domain/accountingCase.js";
 import type { XeroMutationService } from "./xeroMutationService.js";
+import type {
+  ExecuteLedgerStateTransitionInput,
+  PrepareLedgerStateTransitionInput,
+  XeroLedgerStateTransitionService,
+} from "./xeroLedgerStateTransitionService.js";
+import type {
+  ExecuteTrackingCaseMutationInput,
+  PrepareTrackingCaseMutationInput,
+  XeroTrackingCaseMutationService,
+} from "./xeroTrackingCaseMutationService.js";
+import type {
+  ExecuteLedgerAdjustmentInput,
+  PrepareLedgerAdjustmentInput,
+  XeroLedgerAdjustmentService,
+} from "./xeroLedgerAdjustmentService.js";
+import type { ExecutePaymentBankCaseInput, PreparePaymentBankCaseInput, XeroPaymentBankCaseService } from "./xeroPaymentBankCaseService.js";
 import { issueObjectPreparationValidationReceipt } from "../control-kernel/deterministicValidation.js";
 import type { XeroFirmGovernanceExpectation } from "../policy/xeroFirmGovernanceClaim.js";
 
@@ -312,6 +342,11 @@ export class AccountingService {
   readonly #creditNoteManualJournalMutations: XeroCreditNoteManualJournalService | undefined;
   readonly #contactItemMutations: XeroContactItemMutationService | undefined;
   readonly #mutationFoundation: XeroMutationService | undefined;
+  readonly #ledgerStateTransitions: XeroLedgerStateTransitionService | undefined;
+  readonly #draftDocumentUpdates: XeroDraftDocumentUpdateService | undefined;
+  readonly #trackingCaseMutations: XeroTrackingCaseMutationService | undefined;
+  readonly #ledgerAdjustments: XeroLedgerAdjustmentService | undefined;
+  readonly #paymentBankCase: XeroPaymentBankCaseService | undefined;
   readonly #allowUnsafeDirectMutationForTests: boolean;
 
   constructor(options: {
@@ -324,6 +359,11 @@ export class AccountingService {
     creditNoteManualJournalMutations?: XeroCreditNoteManualJournalService;
     contactItemMutations?: XeroContactItemMutationService;
     mutationFoundation?: XeroMutationService;
+    ledgerStateTransitions?: XeroLedgerStateTransitionService;
+    draftDocumentUpdates?: XeroDraftDocumentUpdateService;
+    trackingCaseMutations?: XeroTrackingCaseMutationService;
+    ledgerAdjustments?: XeroLedgerAdjustmentService;
+    paymentBankCase?: XeroPaymentBankCaseService;
     unsafeAllowDirectMutationForTests?: boolean;
   }) {
     this.#repository = options.repository;
@@ -335,6 +375,11 @@ export class AccountingService {
     this.#creditNoteManualJournalMutations = options.creditNoteManualJournalMutations;
     this.#contactItemMutations = options.contactItemMutations;
     this.#mutationFoundation = options.mutationFoundation;
+    this.#ledgerStateTransitions = options.ledgerStateTransitions;
+    this.#draftDocumentUpdates = options.draftDocumentUpdates;
+    this.#trackingCaseMutations = options.trackingCaseMutations;
+    this.#ledgerAdjustments = options.ledgerAdjustments;
+    this.#paymentBankCase = options.paymentBankCase;
     this.#allowUnsafeDirectMutationForTests = options.unsafeAllowDirectMutationForTests === true;
     if (this.#allowUnsafeDirectMutationForTests && process.env.NODE_ENV !== "test") {
       throw new AppError(
@@ -1403,6 +1448,69 @@ export class AccountingService {
       .createManualJournalDraft(this.#requestContext(principal), input);
   }
 
+  prepareDraftDocumentUpdate(
+    principal: AccountingPrincipal,
+    input: PrepareDraftDocumentUpdateInput,
+  ) {
+    return this.#requireDraftDocumentUpdates().prepare(this.#requestContext(principal), input);
+  }
+
+  executeDraftDocumentUpdate(
+    principal: AccountingPrincipal,
+    input: ExecutePreparedXeroMutationInput & { actionId: DraftDocumentUpdateAction },
+    beforeProviderClaimValidation: (envelope: DraftDocumentUpdateEnvelope) => Promise<void>,
+  ) {
+    return this.#requireDraftDocumentUpdates().execute(
+      this.#requestContext(principal),
+      input,
+      beforeProviderClaimValidation,
+    );
+  }
+
+  prepareLedgerStateTransition(
+    principal: AccountingPrincipal,
+    input: PrepareLedgerStateTransitionInput,
+  ) {
+    return this.#requireLedgerStateTransitions().prepare(this.#requestContext(principal), input);
+  }
+
+  executeLedgerStateTransition(
+    principal: AccountingPrincipal,
+    input: ExecuteLedgerStateTransitionInput,
+  ) {
+    return this.#requireLedgerStateTransitions().execute(this.#requestContext(principal), input);
+  }
+
+  prepareTrackingCaseMutation(
+    principal: AccountingPrincipal,
+    input: PrepareTrackingCaseMutationInput,
+  ) {
+    return this.#requireTrackingCaseMutations().prepare(this.#requestContext(principal), input);
+  }
+
+  executeTrackingCaseMutation(
+    principal: AccountingPrincipal,
+    input: ExecuteTrackingCaseMutationInput,
+  ) {
+    return this.#requireTrackingCaseMutations().execute(this.#requestContext(principal), input);
+  }
+
+  prepareLedgerAdjustment(principal: AccountingPrincipal, input: PrepareLedgerAdjustmentInput) {
+    return this.#requireLedgerAdjustments().prepare(this.#requestContext(principal), input);
+  }
+
+  executeLedgerAdjustment(principal: AccountingPrincipal, input: ExecuteLedgerAdjustmentInput) {
+    return this.#requireLedgerAdjustments().execute(this.#requestContext(principal), input);
+  }
+
+  preparePaymentBankCase(principal: AccountingPrincipal, input: PreparePaymentBankCaseInput) {
+    return this.#requirePaymentBankCase().prepare(this.#requestContext(principal), input);
+  }
+
+  executePaymentBankCase(principal: AccountingPrincipal, input: ExecutePaymentBankCaseInput) {
+    return this.#requirePaymentBankCase().execute(this.#requestContext(principal), input);
+  }
+
   listItems(principal: AccountingPrincipal, input: ListItemsInput) {
     return this.#provider.listItems(principal, input);
   }
@@ -1465,6 +1573,38 @@ export class AccountingService {
 
   async getTrialBalance(principal: AccountingPrincipal, input: TrialBalanceInput) {
     return boundXeroTrialBalanceForAgent(await this.#provider.getTrialBalance(principal, input.date));
+  }
+
+  listJournals(principal: AccountingPrincipal, input: ListJournalsInput) {
+    return this.#provider.listJournals(principal, input);
+  }
+
+  getProfitAndLoss(principal: AccountingPrincipal, input: ProfitAndLossInput) {
+    return this.#provider.getProfitAndLoss(principal, input);
+  }
+
+  getBalanceSheet(principal: AccountingPrincipal, input: BalanceSheetInput) {
+    return this.#provider.getBalanceSheet(principal, input);
+  }
+
+  getAgedReceivables(principal: AccountingPrincipal, input: AgedReceivablesInput) {
+    return this.#provider.getAgedReceivables(principal, input);
+  }
+
+  getAgedPayables(principal: AccountingPrincipal, input: AgedPayablesInput) {
+    return this.#provider.getAgedPayables(principal, input);
+  }
+
+  getPayment(principal: AccountingPrincipal, input: GetPaymentInput) {
+    return this.#provider.getPayment(principal, input.payment_id);
+  }
+
+  listTrackingCategories(principal: AccountingPrincipal, input: ListTrackingCategoriesInput) {
+    return this.#provider.listTrackingCategories(principal, input);
+  }
+
+  listContactGroups(principal: AccountingPrincipal, input: ListContactGroupsInput) {
+    return this.#provider.listContactGroups(principal, input);
   }
 
   async createDraftSupplierBill(
@@ -3002,6 +3142,15 @@ export class AccountingService {
     return this.#creditNoteManualJournalMutations;
   }
 
+  #requireDraftDocumentUpdates(): XeroDraftDocumentUpdateService {
+    if (!this.#draftDocumentUpdates) {
+      throw new AppError("CONFIGURATION_ERROR", "The controlled Xero DRAFT update service is unavailable.", {
+        httpStatus: 503,
+      });
+    }
+    return this.#draftDocumentUpdates;
+  }
+
   #requireContactItemMutations(): XeroContactItemMutationService {
     if (!this.#contactItemMutations) {
       throw new AppError("CONFIGURATION_ERROR", "The controlled Xero Contact/Item service is unavailable.", {
@@ -3018,6 +3167,38 @@ export class AccountingService {
       });
     }
     return this.#mutationFoundation;
+  }
+
+  #requireLedgerStateTransitions(): XeroLedgerStateTransitionService {
+    if (!this.#ledgerStateTransitions) {
+      throw new AppError("CONFIGURATION_ERROR", "Ledger-state transition service is unavailable.", {
+        httpStatus: 503,
+      });
+    }
+    return this.#ledgerStateTransitions;
+  }
+
+  #requireTrackingCaseMutations(): XeroTrackingCaseMutationService {
+    if (!this.#trackingCaseMutations) {
+      throw new AppError("CONFIGURATION_ERROR", "Tracking Case mutation service is unavailable.", {
+        httpStatus: 503,
+      });
+    }
+    return this.#trackingCaseMutations;
+  }
+
+  #requireLedgerAdjustments(): XeroLedgerAdjustmentService {
+    if (!this.#ledgerAdjustments) {
+      throw new AppError("CONFIGURATION_ERROR", "Ledger-adjustment service is unavailable.", {
+        httpStatus: 503,
+      });
+    }
+    return this.#ledgerAdjustments;
+  }
+
+  #requirePaymentBankCase(): XeroPaymentBankCaseService {
+    if (!this.#paymentBankCase) throw new AppError("CONFIGURATION_ERROR", "Payment/Bank Case service is unavailable.", { httpStatus: 503 });
+    return this.#paymentBankCase;
   }
 
   #requestContext(principal: AccountingPrincipal): RequestContext {

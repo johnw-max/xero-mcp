@@ -79,7 +79,7 @@ import type {
   XeroMutationPreparation,
   XeroMutationRequest,
 } from "../domain/xeroMutation.js";
-import { XERO_MUTATION_EXPECTED_READBACK_STATUS } from "../domain/xeroMutation.js";
+import { expectedXeroMutationReadbackStatus, xeroMutationTargetsExistingObject } from "../domain/xeroMutation.js";
 import type {
   AdoptExpiredExecutingAccountingCaseForRecoveryInput,
   AdoptExpiredExecutingAccountingCaseForRecoveryResult,
@@ -3180,9 +3180,10 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     if (request.state !== "CONFIRMED") {
       throw new AppError("CONFLICT", `Mutation cannot start from ${request.state}.`, { httpStatus: 409 });
     }
-    const targetXeroObjectId = request.operation === "UPDATE" ? request.targetXeroObjectId : undefined;
-    if (request.operation === "UPDATE" && !targetXeroObjectId) {
-      throw new AppError("CONFLICT", "UPDATE mutation has no immutable Xero target identifier.", { httpStatus: 409 });
+    const targetsExistingObject = xeroMutationTargetsExistingObject(request.operation);
+    const targetXeroObjectId = targetsExistingObject ? request.targetXeroObjectId : undefined;
+    if (targetsExistingObject && !targetXeroObjectId) {
+      throw new AppError("CONFLICT", "Existing-object mutation has no immutable Xero target identifier.", { httpStatus: 409 });
     }
     if (targetXeroObjectId) this.#assertXeroMutationObjectIdAvailable(request, targetXeroObjectId);
     const updated: XeroMutationRequest = {
@@ -3319,7 +3320,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     const request = this.#requireBoundXeroMutationRequest(input);
     if (
       input.readbackPayloadHash !== request.canonicalPayloadHash ||
-      input.readbackStatus !== XERO_MUTATION_EXPECTED_READBACK_STATUS[request.objectType]
+      input.readbackStatus !== expectedXeroMutationReadbackStatus(request.objectType, request.operation)
     ) {
       throw new AppError("READBACK_MISMATCH", "Verified readback hash does not match the confirmed payload.", {
         httpStatus: 409,
@@ -3363,7 +3364,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     const request = this.#requireBoundXeroMutationRequest(input);
     if (
       input.readbackPayloadHash === request.canonicalPayloadHash &&
-      input.readbackStatus === XERO_MUTATION_EXPECTED_READBACK_STATUS[request.objectType]
+      input.readbackStatus === expectedXeroMutationReadbackStatus(request.objectType, request.operation)
     ) {
       throw new AppError("CONFLICT", "Matching readback cannot be recorded as a mismatch.", { httpStatus: 409 });
     }
@@ -3397,7 +3398,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
           ...(input.readbackPayloadHash !== request.canonicalPayloadHash
             ? ["CANONICAL_PAYLOAD_HASH_MISMATCH"]
             : []),
-          ...(input.readbackStatus !== XERO_MUTATION_EXPECTED_READBACK_STATUS[request.objectType]
+          ...(input.readbackStatus !== expectedXeroMutationReadbackStatus(request.objectType, request.operation)
             ? ["READBACK_STATUS_MISMATCH"]
             : []),
         ],
@@ -5678,11 +5679,11 @@ export class InMemoryAccountingRepository implements AccountingRepository {
     writeReceipt?: Record<string, unknown>,
   ): void {
     if (
-      request.operation === "UPDATE" &&
+      xeroMutationTargetsExistingObject(request.operation) &&
       xeroObjectId &&
       request.targetXeroObjectId !== xeroObjectId
     ) {
-      throw new AppError("CONFLICT", "UPDATE result does not match its immutable Xero target.", {
+      throw new AppError("CONFLICT", "Mutation result does not match its immutable Xero target.", {
         httpStatus: 409,
       });
     }
@@ -5748,7 +5749,7 @@ export class InMemoryAccountingRepository implements AccountingRepository {
         candidate.objectType !== request.objectType ||
         candidate.xeroObjectId !== xeroObjectId
       ) return false;
-      if (request.operation !== "UPDATE") return true;
+      if (!xeroMutationTargetsExistingObject(request.operation)) return true;
       return ["WRITE_IN_FLIGHT", "WRITE_UNCERTAIN", "READBACK_MISMATCH"].includes(candidate.state);
     });
     if (conflict) {

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { oracleRunSchema } from "../harness/lib/oracleResultRuntimeSchema.js";
 import { executeP0AccountingCaseSuite } from "../harness/runners/run-p0-accounting-case.js";
+import { TOOL_ALLOWLIST } from "../src/mcp/toolNames.js";
 
 describe("current Accounting Case controlled-write release runner", () => {
-  it("proves the 30-tool Case surface, prepare-without-write and receipt/readback-bounded autonomous execute", async () => {
+  it("proves the manifest-derived Case surface, prepare-without-write and receipt/readback-bounded execute", async () => {
     const result = await executeP0AccountingCaseSuite({
       runId: "p0-accounting-case-vitest-001",
       writeArtifacts: false,
@@ -13,7 +14,7 @@ describe("current Accounting Case controlled-write release runner", () => {
     expect(result.report.case_results.map((item) => item.case_id)).toEqual([
       "AC-SURFACE-001",
       "AC-CASE-PREPARE-002",
-      "AC-DELEGATION-003",
+      "AC-WRITE-GATE-003",
     ]);
     expect(
       result.report.summary,
@@ -32,7 +33,7 @@ describe("current Accounting Case controlled-write release runner", () => {
     expect(surface).toMatchObject({ actual_status: "PASS", hard_gate_passed: true });
     expect(surface?.oracle_results.find((item) => item.oracle_id === "exact_28_tools")).toMatchObject({
       status: "PASS",
-      observed: { expectedCount: 30, actualCount: 30 },
+      observed: { expectedCount: TOOL_ALLOWLIST.length, actualCount: TOOL_ALLOWLIST.length },
     });
     expect(surface?.oracle_results.find((item) => item.oracle_id === "legacy_mutation_tools_absent"))
       .toMatchObject({ status: "PASS", observed: { advertised: false, directCallRejected: true } });
@@ -49,10 +50,10 @@ describe("current Accounting Case controlled-write release runner", () => {
       },
     });
 
-    const executed = result.report.case_results.find((item) => item.case_id === "AC-DELEGATION-003");
+    const executed = result.report.case_results.find((item) => item.case_id === "AC-WRITE-GATE-003");
     for (const oracleId of [
       "execute_identity_only",
-      "standing_delegation_preflight",
+      "write_gate_preflight",
       "durable_mutation_projection",
       "terminal_requires_receipt_and_readback",
       "same_request_idempotent_replay",
@@ -61,7 +62,7 @@ describe("current Accounting Case controlled-write release runner", () => {
     ]) {
       expect(executed?.oracle_results.find((item) => item.oracle_id === oracleId)).toMatchObject({ status: "PASS" });
     }
-    expect(result.standingDelegationPreflights).toEqual([["customer_invoice.create_draft"]]);
+    expect(result.writeGatePreflights).toEqual([["customer_invoice.create_draft"]]);
     expect(result.providerWriteAttempts).toBe(1);
     expect(result.providerRecords).toEqual([expect.objectContaining({
       status: "DRAFT",
@@ -112,7 +113,7 @@ describe("current Accounting Case controlled-write release runner", () => {
       call.tool === "xero_execute_accounting_case" && !Object.hasOwn(call.input, "payload"));
     expect(acceptedExecuteCalls).toHaveLength(2);
     expect(result.providerWriteAttempts).toBe(1);
-    const executeCase = result.report.case_results.find((item) => item.case_id === "AC-DELEGATION-003");
+    const executeCase = result.report.case_results.find((item) => item.case_id === "AC-WRITE-GATE-003");
     expect(executeCase).toMatchObject({ actual_status: "FAIL", hard_gate_passed: false });
     expect(executeCase?.oracle_results.find((item) => item.oracle_id === "terminal_requires_receipt_and_readback"))
       .toMatchObject({ status: "FAIL" });

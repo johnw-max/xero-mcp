@@ -21,7 +21,11 @@ const readXeroScopes = [
   "accounting.payments.read",
   "accounting.manualjournals.read",
   "accounting.banktransactions.read",
+  "accounting.journals.read",
   "accounting.reports.trialbalance.read",
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.balancesheet.read",
+  "accounting.reports.aged.read",
 ];
 
 function logger(): Logger {

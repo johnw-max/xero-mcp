@@ -289,6 +289,14 @@ class CaseHarness {
     const tickets = new ConnectionTicketService(repository, "https://xero-mcp.p0-write-harness.invalid");
     const mutationFoundation = new XeroMutationService(repository, {
       confirmationSecret: CONFIRMATION_SECRET,
+      writeEnabled: this.gate.isOpen,
+      providerCapabilityEvaluator: {
+        evaluate: async (_context, actionId) => ({
+          allowed: this.gate.isOpen,
+          denyReasons: this.gate.isOpen ? [] : ["WRITE_GATE_CLOSED"],
+          receiptHash: hashObject({ actionId, writeGateOpen: this.gate.isOpen, instanceId }),
+        }),
+      },
     });
     const service = new AccountingService({
       repository,

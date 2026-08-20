@@ -7,6 +7,7 @@ import type { AccountingRepository } from "../../src/db/repository.js";
 import type { ResolvedMcpAccessToken } from "../../src/domain/models.js";
 import type { Logger } from "../../src/logging.js";
 import { createAccountingMcpServer } from "../../src/mcp/createServer.js";
+import { hashObject } from "../../src/security/hash.js";
 import { createOAuthRequestContext } from "../../src/security/requestContext.js";
 import { AccountingService } from "../../src/services/accountingService.js";
 import { ConnectionTicketService } from "../../src/services/connectionTicketService.js";
@@ -124,7 +125,17 @@ async function main(): Promise<void> {
       repository,
       "https://xero-synthetic-business-uat.invalid",
     ),
-    mutationFoundation: new XeroMutationService(repository, { confirmationSecret }),
+    mutationFoundation: new XeroMutationService(repository, {
+      confirmationSecret,
+      writeEnabled,
+      providerCapabilityEvaluator: {
+        evaluate: async (_context, actionId) => ({
+          allowed: writeEnabled,
+          denyReasons: writeEnabled ? [] : ["WRITE_GATE_CLOSED"],
+          receiptHash: hashObject({ actionId, writeEnabled, provider: "synthetic-xero" }),
+        }),
+      },
+    }),
   });
   const context = createOAuthRequestContext({
     issuer: "https://issuer.xero-synthetic-business-uat.invalid",

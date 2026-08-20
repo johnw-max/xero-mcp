@@ -19,7 +19,6 @@ import {
 } from "../scripts/release/release-bundle-lib.mjs";
 import {
   parseOciLayoutTar,
-  assertApprovedControlCatalogChain,
   verifyOciLayoutArtifact,
 } from "../scripts/verify-accepted-oci-release.mjs";
 import {
@@ -46,7 +45,6 @@ function identity() {
     releaseSourceManifestSha256: digest("release-files"),
     sourceArchiveSha256: digest("source-archive"),
     sourceBundleManifestSha256: digest("bundle-manifest"),
-    approvedControlCatalogSha256: digest("approved-control-catalog"),
   });
 }
 
@@ -113,13 +111,11 @@ function ociFixture() {
       Cmd: ["npm", "run", "start"],
       Env: [
         `XERO_BUILD_IDENTITY_JSON=${JSON.stringify(buildIdentity)}`,
-        `XERO_APPROVED_CONTROL_CATALOG_SHA256=${buildIdentity.approvedControlCatalogSha256}`,
       ],
       Labels: {
         "io.zcloak.xero.build-identity-hash": semanticBuildIdentityHash,
         "io.zcloak.xero.acceptance-source-sha256": buildIdentity.acceptanceSourceSha256,
         "io.zcloak.xero.source-archive-sha256": buildIdentity.sourceArchiveSha256,
-        "io.zcloak.xero.approved-control-catalog-sha256": buildIdentity.approvedControlCatalogSha256,
       },
     },
     rootfs: { type: "layers", diff_ids: [`sha256:${layerDigest}`] },
@@ -151,7 +147,6 @@ function ociFixture() {
       semanticBuildIdentityHash,
       acceptanceSourceSha256: buildIdentity.acceptanceSourceSha256,
       sourceArchiveSha256: buildIdentity.sourceArchiveSha256,
-      approvedControlCatalogSha256: buildIdentity.approvedControlCatalogSha256,
     },
   };
 }
@@ -183,7 +178,6 @@ async function acceptedContextFixture() {
     releaseSourceManifestSha256,
     sourceArchiveSha256: manifest.archive.sha256,
     sourceBundleManifestSha256: digest(manifestContent),
-    approvedControlCatalogSha256: digest("approved-control-catalog"),
   });
   const buildIdentityContent = Buffer.from(stableJson(buildIdentity), "utf8");
   const checksumContent = Buffer.from(
@@ -318,26 +312,10 @@ describe("accepted source to OCI runtime identity", () => {
       .toThrow("DEV_COMPOSE_WRITE_GATE_INVALID:dev");
   });
 
-  it("requires an out-of-band host-approved control catalog even when candidate artifacts agree", () => {
-    const candidateDigest = "b".repeat(64);
-    const hostApprovedDigest = "a".repeat(64);
-    const candidate = {
-      gateResult: { approved_control_catalog_sha256: candidateDigest },
-      gateReceipt: { approved_control_catalog_sha256: candidateDigest },
-      ociReceipt: { approvedControlCatalogSha256: candidateDigest },
-    };
-    expect(() => assertApprovedControlCatalogChain({
-      ...candidate,
-      approvedControlCatalogSha256: hostApprovedDigest,
-    })).toThrow("LOCAL_ACCEPTANCE_CONTROL_CATALOG_MISMATCH");
-    expect(() => assertApprovedControlCatalogChain({
-      ...candidate,
-      approvedControlCatalogSha256: undefined,
-    })).toThrow("APPROVED_CONTROL_CATALOG_SHA256_REQUIRED");
-    expect(() => assertApprovedControlCatalogChain({
-      ...candidate,
-      approvedControlCatalogSha256: candidateDigest,
-    })).not.toThrow();
+  it("does not require an external control-catalog approval", () => {
+    const buildIdentity = identity();
+    expect(buildIdentity).not.toHaveProperty("approvedControlCatalogSha256");
+    expect(JSON.stringify(buildIdentity)).not.toContain("CONTROL_CATALOG");
   });
 
   it("verifies every accepted build-context byte and rejects source or file-set drift", async () => {

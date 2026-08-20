@@ -241,6 +241,7 @@ describeWithPostgres("Postgres Xero controlled mutation foundation", () => {
   ) {
     return new XeroMutationService(targetRepository, {
       confirmationSecret,
+      writeEnabled: true,
       now: () => now,
       authoritySnapshotResolver: new RepositoryLedgerAuthoritySnapshotResolver(targetRepository),
       providerCapabilityEvaluator: {

@@ -2,11 +2,11 @@
   "schema_version": "1.0",
   "suite_id": "xero-accounting-case-browser-p0",
   "layer": "FINAL_BROWSER_SIGNATURE",
-  "description": "One current browser signature journey proves that a normal accounting request uses the three Case tools under Standing Delegation and reports only receipt/readback-backed outcomes.",
+  "description": "One current browser signature journey proves that a normal accounting request uses the three Case tools with the current OAuth target/session, effective scope, released policy and server write gate, and reports only receipt/readback-backed outcomes.",
   "safety": {
     "data_class": "SYNTHETIC_ONLY",
-    "write_policy": "ONE_CONTROLLED_DRAFT_WRITER",
-    "authorise_forbidden": true,
+    "write_policy": "ONE_CONTROLLED_CASE_WRITER",
+    "unreleased_state_actions_forbidden": true,
     "payment_forbidden": true,
     "write_gate_must_start_closed": true,
     "write_gate_must_end_closed": true
@@ -24,13 +24,13 @@
       "mode": "CONTROLLED_WRITE",
       "personas": ["controller_recovery_agent"],
       "fixture_refs": ["harness/fixtures/xero/accounting-case-business-documents.v1.json"],
-      "prerequisites": ["Agent2 browser authenticated", "Dedicated Xero test organisation pinned", "Active exact Standing Delegation", "Emergency write gate controlled by the operator"],
+      "prerequisites": ["Agent2 browser authenticated", "Dedicated Xero test organisation pinned", "Effective required OAuth scope and released action policy", "Emergency write gate controlled by the operator"],
       "steps": [
         {
           "id": "run_case_in_browser",
           "actor": "human_accountant",
           "action": "BROWSER_TURN",
-          "utterance": "请处理我加入的这组测试会计材料。先核对来源覆盖、账套、联系人、科目、税码和金额；符合当前授权的 DRAFT 自动执行。任何缺失、冲突或不确定写入都必须停止，不要 AUTHORISE、付款或重试。",
+          "utterance": "请处理我加入的这组测试会计材料。先核对来源覆盖、账套、联系人、科目、税码和金额；按当前已发布的 action 自动执行。任何缺失、冲突或不确定写入都必须停止，不要调用本场景未发布的状态动作、付款或重试。",
           "capture": ["AGENT_TEXT", "TOOL_CALL", "TOOL_OUTPUT", "PROVIDER_RECORD", "REPOSITORY_STATE", "BROWSER_EVIDENCE"],
           "oracles": [
             {
@@ -53,7 +53,7 @@
           "kind": "EVIDENCE_PRESENT",
           "source": "AGGREGATE",
           "operator": "ALL",
-          "expected": ["exact target", "standing delegation revision", "provider object ID", "provider receipt", "exact same-ID readback", "residual event count"],
+          "expected": ["exact OAuth target/session", "effective scope and released policy", "provider object ID", "provider receipt", "exact same-ID readback", "residual event count"],
           "evidence_required": ["browser evidence", "provider record", "Case status"],
           "on_failure": "FAIL_CASE"
         },
@@ -69,7 +69,7 @@
         }
       ],
       "baseline_expectation": "PASS",
-      "tags": ["browser", "accounting_case", "standing_delegation", "receipt", "readback"]
+      "tags": ["browser", "accounting_case", "oauth_target_and_write_gate", "receipt", "readback"]
     }
   ]
 }

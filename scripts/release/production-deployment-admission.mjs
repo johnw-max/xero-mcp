@@ -10,12 +10,6 @@ import { verifyLocalAcceptanceRelease } from "../verify-accepted-oci-release.mjs
 
 export const PRODUCTION_RELEASE_ENV_PATH = "/etc/xero-accounting-mcp/release.env";
 export const PRODUCTION_RELEASE_ARTIFACT_ROOT = "/srv/xero-accounting-mcp/release";
-export const PRODUCTION_GOVERNANCE_ROOT = "/etc/xero-accounting-mcp/governance";
-export const PRODUCTION_GOVERNANCE_PATHS = Object.freeze({
-  trustBundle: `${PRODUCTION_GOVERNANCE_ROOT}/trust-bundle.json`,
-  receipts: `${PRODUCTION_GOVERNANCE_ROOT}/receipts.json`,
-  status: `${PRODUCTION_GOVERNANCE_ROOT}/status.json`,
-});
 
 const REQUIRED_ENV_KEYS = Object.freeze([
   "APP_IMAGE",
@@ -23,16 +17,7 @@ const REQUIRED_ENV_KEYS = Object.freeze([
   "XERO_ACCEPTANCE_GATE_RECEIPT",
   "XERO_ACCEPTED_OCI_RECEIPT",
   "XERO_ACCEPTED_OCI_ARTIFACT",
-  "XERO_APPROVED_CONTROL_CATALOG_SHA256",
-  "XERO_GOVERNANCE_TRUST_BUNDLE_SHA256",
-  "XERO_GOVERNANCE_RECEIPTS_SHA256",
-  "XERO_GOVERNANCE_STATUS_SHA256",
   "XERO_WRITE_ENABLED",
-  "XERO_AUTHORITY_REVISION",
-  "XERO_STANDING_DELEGATIONS_JSON",
-  "XERO_STANDING_DELEGATIONS_CONFIG_SHA256",
-  "XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256",
-  "XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256",
 ]);
 
 const XERO_AUTONOMOUS_WRITE_ACTIONS = Object.freeze(new Set([
@@ -175,81 +160,8 @@ export function parseCapturedReleaseEnvironment(content) {
     if (!value) throw new Error(`PRODUCTION_RELEASE_ENV_REQUIRED:${key}`);
     return [key, value];
   }));
-  if (!/^[a-f0-9]{64}$/u.test(required.XERO_APPROVED_CONTROL_CATALOG_SHA256)) {
-    throw new Error("PRODUCTION_RELEASE_ENV_CONTROL_CATALOG_INVALID");
-  }
-  for (const key of [
-    "XERO_GOVERNANCE_TRUST_BUNDLE_SHA256",
-    "XERO_GOVERNANCE_RECEIPTS_SHA256",
-    "XERO_GOVERNANCE_STATUS_SHA256",
-  ]) {
-    if (!/^[a-f0-9]{64}$/u.test(required[key])) {
-      throw new Error(`PRODUCTION_RELEASE_ENV_GOVERNANCE_SHA256_INVALID:${key}`);
-    }
-  }
   if (!/^(?:true|false)$/u.test(required.XERO_WRITE_ENABLED)) {
     throw new Error("PRODUCTION_RELEASE_ENV_WRITE_ENABLED_INVALID");
-  }
-  if (!/^[1-9][0-9]*$/u.test(required.XERO_AUTHORITY_REVISION) ||
-      !Number.isSafeInteger(Number(required.XERO_AUTHORITY_REVISION))) {
-    throw new Error("PRODUCTION_RELEASE_ENV_AUTHORITY_REVISION_INVALID");
-  }
-  if (!/^[a-f0-9]{64}$/u.test(required.XERO_STANDING_DELEGATIONS_CONFIG_SHA256) ||
-      sha256(Buffer.from(required.XERO_STANDING_DELEGATIONS_JSON, "utf8")) !==
-        required.XERO_STANDING_DELEGATIONS_CONFIG_SHA256) {
-    throw new Error("PRODUCTION_RELEASE_ENV_STANDING_DELEGATIONS_DIGEST_MISMATCH");
-  }
-  let standingDelegations;
-  try {
-    standingDelegations = JSON.parse(required.XERO_STANDING_DELEGATIONS_JSON);
-  } catch {
-    throw new Error("PRODUCTION_RELEASE_ENV_STANDING_DELEGATIONS_INVALID");
-  }
-  const requiredDelegationKeys = [
-    "delegation_id", "revision", "workspace_id", "agent_id", "installation_id", "tenant_id", "action_ids",
-  ];
-  const allowedDelegationKeys = new Set([...requiredDelegationKeys, "status", "expires_at"]);
-  const validDelegation = (delegation) => {
-    if (!delegation || typeof delegation !== "object" || Array.isArray(delegation) ||
-        requiredDelegationKeys.some((key) => !(key in delegation)) ||
-        Object.keys(delegation).some((key) => !allowedDelegationKeys.has(key))) return false;
-    const delegationId = typeof delegation.delegation_id === "string" ? delegation.delegation_id.trim() : "";
-    const status = delegation.status ?? "ACTIVE";
-    const tenantId = typeof delegation.tenant_id === "string" ? delegation.tenant_id.trim() : "";
-    const exactBoundedText = (value) => typeof value === "string" && value.trim().length >= 1 &&
-      value.trim().length <= 255;
-    return /^[A-Za-z0-9._:-]{8,128}$/u.test(delegationId) &&
-      exactPositiveInteger(delegation.revision) && ["ACTIVE", "REVOKED"].includes(status) &&
-      exactBoundedText(delegation.workspace_id) && exactBoundedText(delegation.agent_id) &&
-      exactBoundedText(delegation.installation_id) && exactUuid(tenantId) &&
-      Array.isArray(delegation.action_ids) && delegation.action_ids.length > 0 &&
-      delegation.action_ids.every((actionId) => XERO_AUTONOMOUS_WRITE_ACTIONS.has(actionId)) &&
-      new Set(delegation.action_ids).size === delegation.action_ids.length &&
-      (delegation.expires_at === undefined || exactTimestamp(delegation.expires_at));
-  };
-  if (!Array.isArray(standingDelegations) || standingDelegations.length > 10_000 ||
-      standingDelegations.some((delegation) => !validDelegation(delegation)) ||
-      new Set(standingDelegations.map((delegation) => delegation.delegation_id.trim())).size !==
-        standingDelegations.length) {
-    throw new Error("PRODUCTION_RELEASE_ENV_STANDING_DELEGATIONS_INVALID");
-  }
-  if (required.XERO_WRITE_ENABLED === "true" &&
-      !standingDelegations.some((delegation) => (delegation.status ?? "ACTIVE") === "ACTIVE")) {
-    throw new Error("PRODUCTION_RELEASE_ENV_ACTIVE_DELEGATION_REQUIRED");
-  }
-  const firmGovernanceRequired = standingDelegations.some((delegation) =>
-    (delegation.status ?? "ACTIVE") === "ACTIVE" &&
-      delegation.action_ids.some((actionId) => XERO_FIRM_GOVERNANCE_ACTIONS.has(actionId)));
-  required.XERO_FIRM_GOVERNANCE_REQUIRED = String(firmGovernanceRequired);
-  if (!/^[a-f0-9]{64}$/u.test(required.XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256)) {
-    throw new Error("PRODUCTION_RELEASE_ENV_AUTHORITY_SNAPSHOT_SHA256_INVALID");
-  }
-  if (firmGovernanceRequired) {
-    if (!/^[a-f0-9]{64}$/u.test(required.XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256)) {
-      throw new Error("PRODUCTION_RELEASE_ENV_FIRM_GOVERNANCE_AGGREGATE_REQUIRED");
-    }
-  } else if (required.XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 !== "NOT_REQUIRED") {
-    throw new Error("PRODUCTION_RELEASE_ENV_FIRM_GOVERNANCE_AGGREGATE_UNEXPECTED");
   }
   if (!/^[^\s@]+(?:\/[^\s@]+)*@sha256:[a-f0-9]{64}$/u.test(required.APP_IMAGE)) {
     throw new Error("PRODUCTION_RELEASE_ENV_APP_IMAGE_INVALID");
@@ -617,8 +529,16 @@ export function assertPulledProductionImageIdentity(inspection, env, ociReceipt)
   if (!inspection || typeof inspection !== "object" || Array.isArray(inspection)) {
     throw new Error("PRODUCTION_IMAGE_INSPECTION_INVALID");
   }
+  // Docker's classic image store exposes the config digest as `.Id`, while
+  // Docker 29 with the containerd image store exposes the exact pulled
+  // single-platform manifest digest. Both are content identities pinned by the
+  // accepted OCI receipt; no other image ID is admissible.
+  const acceptedImageIds = new Set([
+    ociReceipt.ociConfigDigest,
+    ociReceipt.ociManifestDigest,
+  ]);
   if (!Array.isArray(inspection.RepoDigests) || !inspection.RepoDigests.includes(env.APP_IMAGE) ||
-      inspection.Id !== ociReceipt.ociConfigDigest ||
+      !acceptedImageIds.has(inspection.Id) ||
       !env.APP_IMAGE.endsWith(`@${ociReceipt.ociManifestDigest}`)) {
     throw new Error("PRODUCTION_IMAGE_REPODIGEST_MISMATCH");
   }
@@ -627,16 +547,12 @@ export function assertPulledProductionImageIdentity(inspection, env, ociReceipt)
     "io.zcloak.xero.build-identity-hash": ociReceipt.semanticBuildIdentityHash,
     "io.zcloak.xero.acceptance-source-sha256": ociReceipt.acceptanceSourceSha256,
     "io.zcloak.xero.source-archive-sha256": ociReceipt.sourceArchiveSha256,
-    "io.zcloak.xero.approved-control-catalog-sha256": env.XERO_APPROVED_CONTROL_CATALOG_SHA256,
   };
   for (const [key, value] of Object.entries(expectedLabels)) {
     if (labels[key] !== value) throw new Error(`PRODUCTION_IMAGE_LABEL_MISMATCH:${key}`);
   }
   const envValues = inspection.Config?.Env;
-  if (!Array.isArray(envValues) ||
-      !envValues.includes(`XERO_APPROVED_CONTROL_CATALOG_SHA256=${env.XERO_APPROVED_CONTROL_CATALOG_SHA256}`)) {
-    throw new Error("PRODUCTION_IMAGE_CONTROL_CATALOG_ENV_MISMATCH");
-  }
+  if (!Array.isArray(envValues)) throw new Error("PRODUCTION_IMAGE_ENV_INVALID");
   // The image bakes in the identity of the source it was built from, and that is
   // what the server publishes as its runtime attestation. A deployment env file
   // supplying the same variable silently wins over the baked value, so the server
@@ -681,17 +597,6 @@ export async function admitProductionDeployment(options = {}) {
     includeAnchorAncestors,
   });
   const env = parseCapturedReleaseEnvironment(envFile.content);
-  const governanceFiles = {};
-  for (const [key, path] of Object.entries(PRODUCTION_GOVERNANCE_PATHS)) {
-    const file = await readTrustedRegularFile(path, {
-      anchor: PRODUCTION_GOVERNANCE_ROOT,
-      expectedUid,
-      includeAnchorAncestors,
-      allowedModes: [0o444],
-    });
-    governanceFiles[key] = file.content;
-  }
-  const governance = verifyCapturedGovernanceAuthority({ ...governanceFiles, env });
   const artifactSpecs = [
     ["gateResult", env.XERO_ACCEPTANCE_GATE_RESULT, true],
     ["gateReceipt", env.XERO_ACCEPTANCE_GATE_RECEIPT, true],
@@ -710,7 +615,6 @@ export async function admitProductionDeployment(options = {}) {
   }
   verifyLocalAcceptanceRelease({
     ...captured,
-    approvedControlCatalogSha256: env.XERO_APPROVED_CONTROL_CATALOG_SHA256,
   });
   if (!env.APP_IMAGE.endsWith(`@${captured.ociReceipt.ociManifestDigest}`)) {
     throw new Error("PRODUCTION_APP_IMAGE_NOT_ACCEPTED_OCI_MANIFEST");
@@ -730,17 +634,7 @@ export async function admitProductionDeployment(options = {}) {
     semanticBuildIdentityHash: captured.ociReceipt.semanticBuildIdentityHash,
     acceptanceSourceSha256: captured.ociReceipt.acceptanceSourceSha256,
     sourceArchiveSha256: captured.ociReceipt.sourceArchiveSha256,
-    approvedControlCatalogSha256: env.XERO_APPROVED_CONTROL_CATALOG_SHA256,
-    governanceTrustBundleSha256: governance.trustBundleSha256,
-    governanceReceiptsSha256: governance.receiptsSha256,
-    governanceStatusSha256: governance.statusSha256,
-    governanceReceiptCount: governance.receiptCount,
     writeEnabled: env.XERO_WRITE_ENABLED === "true",
-    authorityRevision: Number(env.XERO_AUTHORITY_REVISION),
-    standingDelegationsConfigSha256: env.XERO_STANDING_DELEGATIONS_CONFIG_SHA256,
-    firmGovernanceRequired: env.XERO_FIRM_GOVERNANCE_REQUIRED === "true",
-    expectedAuthoritySnapshotSha256: env.XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256,
-    expectedFirmGovernanceAggregateSha256: env.XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256,
   });
 }
 
@@ -757,16 +651,7 @@ async function main() {
       result.semanticBuildIdentityHash,
       result.acceptanceSourceSha256,
       result.sourceArchiveSha256,
-      result.approvedControlCatalogSha256,
-      result.governanceTrustBundleSha256,
-      result.governanceReceiptsSha256,
-      result.governanceStatusSha256,
-      String(result.authorityRevision),
-      result.standingDelegationsConfigSha256,
       String(result.writeEnabled),
-      String(result.firmGovernanceRequired),
-      result.expectedAuthoritySnapshotSha256,
-      result.expectedFirmGovernanceAggregateSha256,
     ].join("|") + "\n");
   } else {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

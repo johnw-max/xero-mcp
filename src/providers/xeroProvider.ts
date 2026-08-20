@@ -9,6 +9,9 @@ import {
   TaxRate,
 } from "xero-node";
 import type {
+  AgedPayablesInput,
+  AgedReceivablesInput,
+  BalanceSheetInput,
   CreateDraftSalesInvoiceInput,
   CreateDraftSupplierBillInput,
   CreditNoteType,
@@ -19,13 +22,17 @@ import type {
   ListInvoicesInput,
   ListPaymentsInput,
   PaymentType,
+  ProfitAndLossInput,
 } from "../domain/schemas.js";
 import type {
   ListBankTransactionsInput,
+  ListContactGroupsInput,
   ListItemsInput,
+  ListJournalsInput,
   ListManualJournalsInput,
   ListPurchaseOrdersInput,
   ListQuotesInput,
+  ListTrackingCategoriesInput,
 } from "../domain/extendedReadSchemas.js";
 import type { AccountingRepository } from "../db/repository.js";
 import { AppError } from "../errors.js";
@@ -40,6 +47,7 @@ import type {
   ConnectionSummary,
   ContactSearchResult,
   ContactListResult,
+  ContactGroupListResult,
   ContactSummary,
   CreditNoteListResult,
   CreditNoteSnapshot,
@@ -47,6 +55,7 @@ import type {
   InvoiceListResult,
   InvoiceSnapshot,
   InvoiceSummary,
+  JournalListResult,
   OrganisationSummary,
   PaymentListResult,
   PaymentSummary,
@@ -62,9 +71,11 @@ import type {
   SupplierBillSnapshot,
   SupplierBillDraftReferenceData,
   TaxRateSummary,
+  TrackingCategoryListResult,
 } from "./types.js";
 import { classifyXeroWriteException } from "./xeroWriteOutcome.js";
 import { describeLegacyXeroScopePolicyProblems } from "./xeroScopes.js";
+import { xeroProviderInstant } from "./xeroProviderDate.js";
 import {
   buildBankTransactionReadQuery,
   buildItemReadQuery,
@@ -75,12 +86,14 @@ import {
   mapBankTransactionSummary,
   mapBoundedExtendedReadPage,
   mapItemSummary,
+  mapJournalsPage,
   mapManualJournalSnapshot,
   mapManualJournalSummary,
   mapPurchaseOrderSnapshot,
   mapPurchaseOrderSummary,
   mapQuoteSnapshot,
   mapQuoteSummary,
+  mapXeroReportEnvelope,
   XERO_QUOTE_PROVIDER_PAGE_CAPACITY,
   type BankTransactionSnapshot,
   type ItemSummary,
@@ -274,6 +287,398 @@ function persistedInvoiceCanonicalPayload(
   return canonicalPayload as unknown as Record<string, unknown>;
 }
 
+/**
+ * Existing-document updates accept the sealed, complete draft projection,
+ * rather than a patch. The Case compiler uses provider-neutral field names
+ * while the older direct draft path uses snake case; this small compatibility
+ * union keeps both paths on the same action-specific transport.
+ */
+export interface InvoiceDraftUpdateCanonicalPayload {
+  readonly schemaVersion?: string;
+  readonly route?: string;
+  readonly documentKind?: string;
+  readonly type?: string;
+  readonly contactId?: string;
+  readonly xeroContactId?: string;
+  readonly contact_id?: string;
+  readonly documentDate?: string;
+  readonly invoiceDate?: string;
+  readonly invoice_date?: string;
+  readonly dueDate?: string;
+  readonly due_date?: string;
+  readonly currency?: string;
+  readonly currencyRate?: number | string;
+  readonly invoiceRate?: number | string;
+  readonly currency_rate?: number | string;
+  readonly reference?: string;
+  readonly invoiceNumber?: string;
+  readonly authoritativeProviderField?: "INVOICE_NUMBER" | "REFERENCE" | string;
+  readonly authoritative_provider_field?: "INVOICE_NUMBER" | "REFERENCE" | string;
+  readonly lineAmountType?: string;
+  readonly line_amount_type?: string;
+  readonly lines?: readonly InvoiceDraftUpdateCanonicalLine[];
+  readonly net?: number | string;
+  readonly tax?: number | string;
+  readonly gross?: number | string;
+  readonly subTotal?: number | string;
+  readonly totalTax?: number | string;
+  readonly total?: number | string;
+  readonly status?: string;
+  readonly [key: string]: unknown;
+}
+
+export interface InvoiceDraftUpdateCanonicalLine {
+  readonly description: string;
+  readonly quantity: number | string;
+  readonly unitAmount?: number | string;
+  readonly unit_amount?: number | string;
+  readonly lineAmount?: number | string;
+  readonly line_amount?: number | string;
+  readonly accountId?: string;
+  readonly account_id?: string;
+  readonly accountCode?: string;
+  readonly account_code?: string;
+  readonly taxType?: string;
+  readonly tax_type?: string;
+  readonly [key: string]: unknown;
+}
+
+export interface InvoiceDraftUpdateRequest {
+  readonly targetXeroObjectId: string;
+  readonly replacement: InvoiceDraftUpdateCanonicalPayload;
+}
+
+interface NormalizedInvoiceDraftUpdate {
+  readonly targetXeroObjectId: string;
+  readonly replacementPayload: Record<string, unknown>;
+  readonly contactId: string;
+  readonly invoiceDate: string;
+  readonly dueDate: string;
+  readonly currency: CurrencyCode;
+  readonly currencyCode: string;
+  readonly currencyRate?: number;
+  readonly reference: string;
+  readonly authoritativeProviderField: "INVOICE_NUMBER" | "REFERENCE";
+  readonly lineAmountType: LineAmountTypes;
+  readonly canonicalLineAmountType: "Exclusive" | "Inclusive" | "NoTax";
+  readonly lines: readonly {
+    readonly description: string;
+    readonly quantity: number;
+    readonly unitAmount: number;
+    readonly accountId?: string;
+    readonly accountCode: string;
+    readonly taxType: string;
+  }[];
+}
+
+function draftUpdateValidation(message: string, invalidFields: readonly string[] = []): AppError {
+  return new AppError("VALIDATION_FAILED", message, {
+    httpStatus: 422,
+    retryable: false,
+    details: {
+      providerMutationPossible: false,
+      reasonCodes: ["INVOICE_DRAFT_UPDATE_INPUT_INVALID"],
+      ...(invalidFields.length > 0 ? { invalidFields: [...invalidFields] } : {}),
+    },
+  });
+}
+
+function exactInvoiceId(value: unknown): string | undefined {
+  if (typeof value !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value)) {
+    return undefined;
+  }
+  return value;
+}
+
+function expectedUpdatedAtInstant(value: unknown): number | undefined {
+  if (typeof value !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/u.test(value)) {
+    return undefined;
+  }
+  const instant = Date.parse(value);
+  return Number.isFinite(instant) ? instant : undefined;
+}
+
+function expectedUpdatedAtConflict(
+  message: string,
+  reasonCode: string,
+  expectedUpdatedAt?: string,
+  actualUpdatedAt?: string,
+): AppError {
+  const actualInstant = expectedUpdatedAtInstant(actualUpdatedAt);
+  return new AppError("PROVIDER_ERROR", message, {
+    httpStatus: 409,
+    retryable: false,
+    details: {
+      ...(expectedUpdatedAt !== undefined ? { expectedUpdatedAt } : {}),
+      ...(actualInstant !== undefined ? { actualUpdatedAt: new Date(actualInstant).toISOString() } : {}),
+      reasonCodes: [reasonCode],
+      writeOutcome: "DEFINITELY_REJECTED",
+      providerMutationPossible: false,
+    },
+  });
+}
+
+function draftDate(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) return undefined;
+  const parsed = new Date(value + "T00:00:00.000Z");
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value) ? value : undefined;
+}
+
+function draftDecimal(value: unknown): number | undefined {
+  const number = typeof value === "number" ? value : typeof value === "string" && value.trim() !== ""
+    ? Number(value)
+    : Number.NaN;
+  if (!Number.isFinite(number) || number <= 0 || Math.abs(number * 10_000 - Math.round(number * 10_000)) > 1e-7) {
+    return undefined;
+  }
+  return number;
+}
+
+function draftNonNegativeDecimal(value: unknown): number | undefined {
+  const number = typeof value === "number" ? value : typeof value === "string" && value.trim() !== ""
+    ? Number(value)
+    : Number.NaN;
+  if (!Number.isFinite(number) || number < 0 || Math.abs(number * 10_000 - Math.round(number * 10_000)) > 1e-7) {
+    return undefined;
+  }
+  return number;
+}
+
+function optionalDraftDecimal(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  const number = typeof value === "number" ? value : typeof value === "string" && value.trim() !== ""
+    ? Number(value)
+    : Number.NaN;
+  return Number.isFinite(number) && number > 0 &&
+    Math.abs(number * 10_000 - Math.round(number * 10_000)) <= 1e-7
+    ? number
+    : undefined;
+}
+
+function canonicalLineAmountType(value: unknown): {
+  provider: LineAmountTypes;
+  canonical: "Exclusive" | "Inclusive" | "NoTax";
+} | undefined {
+  switch (value) {
+    case "EXCLUSIVE":
+    case "Exclusive":
+      return { provider: LineAmountTypes.Exclusive, canonical: "Exclusive" };
+    case "INCLUSIVE":
+    case "Inclusive":
+      return { provider: LineAmountTypes.Inclusive, canonical: "Inclusive" };
+    case "NO_TAX":
+    case "NoTax":
+    case "NOTAX":
+      return { provider: LineAmountTypes.NoTax, canonical: "NoTax" };
+    default:
+      return undefined;
+  }
+}
+
+function normalizeInvoiceDraftUpdate(
+  targetXeroObjectId: unknown,
+  input: unknown,
+  expectedType: "ACCPAY" | "ACCREC",
+): NormalizedInvoiceDraftUpdate {
+  const target = exactInvoiceId(targetXeroObjectId);
+  if (!target) throw draftUpdateValidation("The existing invoice target must be an exact Xero UUID.", ["targetXeroObjectId"]);
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw draftUpdateValidation("An existing invoice DRAFT update requires the complete canonical payload.", ["canonicalPayload"]);
+  }
+  const value = input as Record<string, unknown>;
+  const declaredType = value.type;
+  if (declaredType !== undefined && declaredType !== expectedType) {
+    throw draftUpdateValidation("The invoice DRAFT update route does not match the sealed Xero invoice type.", ["type"]);
+  }
+  if (value.status !== undefined && value.status !== "DRAFT") {
+    throw draftUpdateValidation("An invoice DRAFT replacement must keep status DRAFT.", ["status"]);
+  }
+  const contactId = exactInvoiceId(value.xeroContactId ?? value.contactId ?? value.contact_id);
+  const invoiceDate = draftDate(value.documentDate ?? value.invoiceDate ?? value.invoice_date);
+  const dueDate = draftDate(value.dueDate ?? value.due_date);
+  const currencyCode = typeof value.currency === "string" && /^[A-Z]{3}$/u.test(value.currency)
+    ? value.currency
+    : undefined;
+  const currency = currencyCode
+    ? CurrencyCode[currencyCode as keyof typeof CurrencyCode]
+    : undefined;
+  const currencyRateValue = value.invoiceRate ?? value.currencyRate ?? value.currency_rate;
+  const currencyRate = optionalDraftDecimal(currencyRateValue);
+  const referenceValue = value.reference ?? value.invoiceNumber;
+  const reference = typeof referenceValue === "string" && referenceValue.trim().length > 0 && referenceValue.length <= 255
+    ? referenceValue.trim()
+    : undefined;
+  const authoritativeFieldValue = value.authoritativeProviderField ?? value.authoritative_provider_field;
+  const authoritativeProviderField = authoritativeFieldValue === undefined
+    ? "INVOICE_NUMBER"
+    : authoritativeFieldValue === "INVOICE_NUMBER" || authoritativeFieldValue === "REFERENCE"
+      ? authoritativeFieldValue
+      : undefined;
+  const lineAmountType = canonicalLineAmountType(value.lineAmountType ?? value.line_amount_type);
+  const rawLines = value.lines;
+  const lines = Array.isArray(rawLines) && rawLines.length > 0 && rawLines.length <= 20
+    ? rawLines.map((candidate) => {
+      if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return undefined;
+      const line = candidate as Record<string, unknown>;
+      const description = typeof line.description === "string" && line.description.trim().length > 0 &&
+        line.description.length <= 4_000 ? line.description.trim() : undefined;
+      const quantity = draftDecimal(line.quantity);
+      const unitAmount = draftNonNegativeDecimal(line.unitAmount ?? line.unit_amount);
+      const accountIdValue = line.accountId ?? line.account_id;
+      const accountId = accountIdValue === undefined ? undefined : exactInvoiceId(accountIdValue);
+      const accountCodeValue = line.accountCode ?? line.account_code;
+      const accountCode = typeof accountCodeValue === "string" && accountCodeValue.trim().length > 0 &&
+        accountCodeValue.length <= 10 ? accountCodeValue.trim() : undefined;
+      const taxValue = line.taxType ?? line.tax_type;
+      const taxType = typeof taxValue === "string" && taxValue.trim().length > 0 && taxValue.length <= 100
+        ? taxValue.trim()
+        : undefined;
+      if (!description || quantity === undefined || unitAmount === undefined || !accountCode || !taxType ||
+          (accountIdValue !== undefined && !accountId)) return undefined;
+      return {
+        description,
+        quantity,
+        unitAmount,
+        ...(accountId ? { accountId } : {}),
+        accountCode,
+        taxType,
+      };
+    }).filter((line): line is NonNullable<typeof line> => line !== undefined)
+    : [];
+  if (!contactId || !invoiceDate || !dueDate || dueDate < invoiceDate || !currency || !currencyCode ||
+      !reference || authoritativeProviderField === undefined || !lineAmountType ||
+      (currencyRateValue !== undefined && currencyRate === undefined) ||
+      (expectedType === "ACCPAY" && authoritativeProviderField !== "INVOICE_NUMBER") ||
+      !Array.isArray(rawLines) || rawLines.length < 1 || rawLines.length > 20 ||
+      lines.length !== (Array.isArray(rawLines) ? rawLines.length : 0)) {
+    const fields = [
+      ...(!contactId ? ["contactId"] : []),
+      ...(!invoiceDate ? ["documentDate"] : []),
+      ...(!dueDate ? ["dueDate"] : []),
+      ...(invoiceDate && dueDate && dueDate < invoiceDate ? ["dueDate"] : []),
+      ...(!currency ? ["currency"] : []),
+      ...(!reference ? ["reference"] : []),
+      ...(authoritativeProviderField === undefined ? ["authoritativeProviderField"] : []),
+      ...(currencyRateValue !== undefined && currencyRate === undefined ? ["currencyRate"] : []),
+      ...(expectedType === "ACCPAY" && authoritativeProviderField !== "INVOICE_NUMBER"
+        ? ["authoritativeProviderField"]
+        : []),
+      ...(!lineAmountType ? ["lineAmountType"] : []),
+      ...(lines.length !== (Array.isArray(rawLines) ? rawLines.length : 0) ? ["lines"] : []),
+    ];
+    throw draftUpdateValidation("The invoice DRAFT replacement is not a complete canonical payload.", fields);
+  }
+  return {
+    targetXeroObjectId: target,
+    replacementPayload: { ...value },
+    contactId,
+    invoiceDate,
+    dueDate,
+    currency,
+    currencyCode,
+    ...(currencyRate !== undefined ? { currencyRate } : {}),
+    reference,
+    authoritativeProviderField,
+    lineAmountType: lineAmountType.provider,
+    canonicalLineAmountType: lineAmountType.canonical,
+    lines,
+  };
+}
+
+function invoiceDraftReadbackMismatches(
+  expected: NormalizedInvoiceDraftUpdate,
+  actual: InvoiceSnapshot,
+  expectedType: "ACCPAY" | "ACCREC",
+): string[] {
+  const mismatches: string[] = [];
+  const sameDecimal = (left: number | string | undefined, right: string | undefined): boolean =>
+    left !== undefined && right !== undefined && Number(left).toFixed(4) === Number(right).toFixed(4);
+  if (actual.invoiceId.toLowerCase() !== expected.targetXeroObjectId.toLowerCase()) mismatches.push("invoiceId");
+  if (actual.type !== expectedType) mismatches.push("type");
+  if (actual.status !== "DRAFT") mismatches.push("status");
+  if (actual.contact.contactId.toLowerCase() !== expected.contactId.toLowerCase()) mismatches.push("contactId");
+  if (actual.invoiceDate !== expected.invoiceDate) mismatches.push("invoiceDate");
+  if (actual.dueDate !== expected.dueDate) mismatches.push("dueDate");
+  if (actual.currency !== expected.currencyCode) mismatches.push("currency");
+  if (expected.currencyRate !== undefined && !sameDecimal(expected.currencyRate, actual.currencyRate)) {
+    mismatches.push("currencyRate");
+  }
+  if (expected.authoritativeProviderField === "INVOICE_NUMBER") {
+    if (actual.invoiceNumber !== expected.reference) mismatches.push("invoiceNumber");
+  } else if (actual.reference !== expected.reference) {
+    mismatches.push("reference");
+  }
+  if (actual.lineAmountType !== expected.canonicalLineAmountType) mismatches.push("lineAmountType");
+  if (actual.lines.length !== expected.lines.length || actual.lineItemCount !== expected.lines.length) {
+    mismatches.push("lines");
+  } else {
+    expected.lines.forEach((expectedLine, index) => {
+      const actualLine = actual.lines[index];
+      if (!actualLine || actualLine.description !== expectedLine.description ||
+          !sameDecimal(expectedLine.quantity, actualLine.quantity) ||
+          !sameDecimal(expectedLine.unitAmount, actualLine.unitAmount) ||
+          actualLine.accountCode !== expectedLine.accountCode || actualLine.taxType !== expectedLine.taxType ||
+          (expectedLine.accountId !== undefined &&
+            actualLine.accountId?.toLowerCase() !== expectedLine.accountId.toLowerCase())) {
+        mismatches.push("lines[" + index + "]");
+      }
+    });
+  }
+  for (const [inputField, snapshotField] of [
+    ["net", actual.subTotal],
+    ["subTotal", actual.subTotal],
+    ["tax", actual.totalTax],
+    ["totalTax", actual.totalTax],
+    ["gross", actual.total],
+    ["total", actual.total],
+  ] as const) {
+    const expectedValue = expected.replacementPayload[inputField];
+    if (expectedValue !== undefined && !sameDecimal(expectedValue as number | string, snapshotField)) {
+      mismatches.push(inputField);
+    }
+  }
+  if (actual.subTotal === undefined || actual.totalTax === undefined || actual.total === undefined) {
+    mismatches.push("economicTotals");
+  }
+  return [...new Set(mismatches)];
+}
+
+function invoiceDraftProviderRejected(message: string, details?: Record<string, unknown>): AppError {
+  return new AppError("PROVIDER_ERROR", message, {
+    httpStatus: 422,
+    retryable: false,
+    details: {
+      ...details,
+      writeOutcome: "DEFINITELY_REJECTED",
+    },
+  });
+}
+
+function invoiceDraftWriteUnknown(message: string, cause?: unknown, details?: Record<string, unknown>): AppError {
+  return new AppError("WRITE_RESULT_UNKNOWN", message, {
+    httpStatus: 502,
+    retryable: false,
+    ...(cause ? { cause } : {}),
+    ...(details ? { details } : {}),
+  });
+}
+
+function invoiceDraftPreflightUnavailable(cause: unknown): AppError {
+  return new AppError("PROVIDER_ERROR", "The exact Xero invoice target could not be read before the DRAFT replacement.", {
+    httpStatus: 503,
+    retryable: true,
+    cause,
+    details: {
+      failureLayer: "PROVIDER_PREFLIGHT",
+      reasonCodes: ["EXACT_TARGET_PREFLIGHT_FAILED"],
+      recoveryAction: "RETRY_AFTER_PROVIDER_RECOVERS",
+      providerMutationPossible: false,
+    },
+  });
+}
+
 function mapContact(contact: XeroContact): ContactSummary | undefined {
   if (!contact.contactID) return undefined;
   const summary: ContactSummary = { contactId: contact.contactID };
@@ -336,7 +741,8 @@ function mapInvoiceSummary(invoice: XeroInvoice): InvoiceSummary | undefined {
   if (amountDue !== undefined) summary.amountDue = amountDue;
   if (amountPaid !== undefined) summary.amountPaid = amountPaid;
   if (amountCredited !== undefined) summary.amountCredited = amountCredited;
-  if (invoice.updatedDateUTC instanceof Date) summary.updatedAt = invoice.updatedDateUTC.toISOString();
+  const updatedAt = xeroProviderInstant(invoice.updatedDateUTC) ?? xeroProviderInstant(invoice.updatedDateUTCString);
+  if (updatedAt) summary.updatedAt = updatedAt.toISOString();
   else if (invoice.updatedDateUTCString) summary.updatedAt = invoice.updatedDateUTCString;
   return summary;
 }
@@ -1357,6 +1763,287 @@ export class XeroAccountingProvider implements AccountingProvider {
     );
   }
 
+  /**
+   * Replaces an existing ACCPAY DRAFT in one bounded provider action.
+   *
+   * The exact GET is intentionally inside withWriteClient and immediately
+   * precedes updateInvoice. The body always carries the complete canonical
+   * contact, dates, currency, reference and line set; no patch or create
+   * fallback is possible on this route.
+   */
+  async updateDraftSupplierBill(
+    principal: AccountingPrincipal,
+    targetXeroObjectId: string,
+    expectedUpdatedAt: string,
+    input: InvoiceDraftUpdateCanonicalPayload,
+    idempotencyKey: string,
+    recordWriteEvidence?: RecordProviderDraftWriteEvidence,
+    providerWritePermit?: LedgerProviderWritePermit,
+    mutationRequestId?: string,
+  ): Promise<ProviderWriteResult> {
+    return this.#updateDraftInvoice(
+      principal,
+      targetXeroObjectId,
+      expectedUpdatedAt,
+      input,
+      idempotencyKey,
+      "ACCPAY",
+      recordWriteEvidence,
+      providerWritePermit,
+      mutationRequestId,
+    ) as Promise<ProviderWriteResult>;
+  }
+
+  /**
+   * Replaces an existing ACCREC DRAFT in one bounded provider action.
+   * ACCREC is selected by this method, never by an input type flag.
+   */
+  async updateDraftSalesInvoice(
+    principal: AccountingPrincipal,
+    targetXeroObjectId: string,
+    expectedUpdatedAt: string,
+    input: InvoiceDraftUpdateCanonicalPayload,
+    idempotencyKey: string,
+    recordWriteEvidence?: RecordProviderDraftWriteEvidence,
+    providerWritePermit?: LedgerProviderWritePermit,
+    mutationRequestId?: string,
+  ): Promise<ProviderSalesInvoiceWriteResult> {
+    return this.#updateDraftInvoice(
+      principal,
+      targetXeroObjectId,
+      expectedUpdatedAt,
+      input,
+      idempotencyKey,
+      "ACCREC",
+      recordWriteEvidence,
+      providerWritePermit,
+      mutationRequestId,
+    ) as Promise<ProviderSalesInvoiceWriteResult>;
+  }
+
+  async #updateDraftInvoice(
+    principal: AccountingPrincipal,
+    targetXeroObjectId: string,
+    expectedUpdatedAt: string,
+    input: InvoiceDraftUpdateCanonicalPayload,
+    idempotencyKey: string,
+    expectedType: "ACCPAY" | "ACCREC",
+    recordWriteEvidence: RecordProviderDraftWriteEvidence | undefined,
+    providerWritePermit: LedgerProviderWritePermit | undefined,
+    mutationRequestId: string | undefined,
+  ): Promise<ProviderWriteResult | ProviderSalesInvoiceWriteResult> {
+    const expectedUpdatedAtEpoch = expectedUpdatedAtInstant(expectedUpdatedAt);
+    if (expectedUpdatedAtEpoch === undefined) {
+      throw new AppError(
+        "VALIDATION_FAILED",
+        "The invoice DRAFT update expectedUpdatedAt must be an ISO datetime.",
+        {
+          httpStatus: 422,
+          retryable: false,
+          details: { providerMutationPossible: false, path: "expectedUpdatedAt" },
+        },
+      );
+    }
+    const normalized = normalizeInvoiceDraftUpdate(targetXeroObjectId, input, expectedType);
+    assertDraftWriteEvidenceRecorder(recordWriteEvidence);
+    const providerIdempotencyKey = mutationRequestId ?? idempotencyKey;
+    const providerType = expectedType === "ACCPAY" ? Invoice.TypeEnum.ACCPAY : Invoice.TypeEnum.ACCREC;
+    const invoicePayload = {
+      invoiceID: normalized.targetXeroObjectId,
+      type: providerType,
+      status: Invoice.StatusEnum.DRAFT,
+      contact: { contactID: normalized.contactId },
+      date: normalized.invoiceDate,
+      dueDate: normalized.dueDate,
+      currencyCode: normalized.currency,
+      ...(normalized.currencyRate !== undefined ? { currencyRate: normalized.currencyRate } : {}),
+      ...(expectedType === "ACCPAY" || normalized.authoritativeProviderField === "INVOICE_NUMBER"
+        ? { invoiceNumber: normalized.reference }
+        : { reference: normalized.reference }),
+      lineAmountTypes: normalized.lineAmountType,
+      // This is the complete replacement set. Deliberately omit lineItemID:
+      // caller-provided line IDs would turn the action into a patch.
+      lineItems: normalized.lines.map((line) => ({
+        description: line.description,
+        quantity: line.quantity,
+        unitAmount: line.unitAmount,
+        ...(line.accountId ? { accountID: line.accountId } : {}),
+        accountCode: line.accountCode,
+        taxType: line.taxType,
+      })),
+    };
+
+    return this.#manager.withWriteClient(principal, {
+      permit: providerWritePermit,
+      adapterOperation: expectedType === "ACCPAY"
+        ? "XeroAccountingProvider.updateDraftSupplierBill"
+        : "XeroAccountingProvider.updateDraftSalesInvoice",
+      actionId: expectedType === "ACCPAY" ? "supplier_bill.update_draft" : "customer_invoice.update_draft",
+      mutationRequestId: providerIdempotencyKey,
+      providerIdempotencyKey,
+      canonicalPayload: {
+        targetXeroObjectId: normalized.targetXeroObjectId,
+        expectedUpdatedAt,
+        replacement: normalized.replacementPayload,
+      },
+    }, async (client, connection) => {
+      let updateReceipt: Record<string, unknown> | undefined;
+      let mutationStarted = false;
+      try {
+        // Preflight and post-write reads deliberately use this same exact
+        // provider projection. The type is fixed by the action route.
+        let before: InvoiceSnapshot;
+        try {
+          before = await this.#getInvoice(
+            client,
+            connection.tenantId,
+            normalized.targetXeroObjectId,
+            expectedType,
+            MAX_AGENT_INVOICE_LINES,
+          );
+        } catch (error) {
+          if (error instanceof AppError && error.code === "NOT_FOUND") {
+            throw invoiceDraftProviderRejected(
+              "Xero did not return the exact invoice DRAFT update target.",
+              {
+                objectId: normalized.targetXeroObjectId,
+                reasonCodes: ["EXACT_TARGET_NOT_FOUND"],
+                providerMutationPossible: false,
+              },
+            );
+          }
+          throw error;
+        }
+        if (before.status !== "DRAFT") {
+          throw new AppError("CONFLICT", "The existing Xero invoice is no longer in DRAFT state.", {
+            httpStatus: 409,
+            details: {
+              objectId: normalized.targetXeroObjectId,
+              expectedStatus: Invoice.StatusEnum.DRAFT,
+              actualStatus: before.status,
+              reasonCodes: ["TARGET_NOT_DRAFT"],
+              writeOutcome: "DEFINITELY_REJECTED",
+              providerMutationPossible: false,
+            },
+          });
+        }
+        const actualUpdatedAtEpoch = expectedUpdatedAtInstant(before.updatedAt);
+        if (actualUpdatedAtEpoch === undefined) {
+          throw expectedUpdatedAtConflict(
+            "The exact Xero invoice has no readable updated timestamp.",
+            "UPDATED_AT_UNAVAILABLE",
+            expectedUpdatedAt,
+            before.updatedAt,
+          );
+        }
+        if (actualUpdatedAtEpoch !== expectedUpdatedAtEpoch) {
+          throw expectedUpdatedAtConflict(
+            "The existing Xero invoice changed after the expected DRAFT version.",
+            "STALE_UPDATED_AT",
+            expectedUpdatedAt,
+            before.updatedAt,
+          );
+        }
+
+        mutationStarted = true;
+        const updated = await client.accountingApi.updateInvoice(
+          connection.tenantId,
+          normalized.targetXeroObjectId,
+          { invoices: [invoicePayload] },
+          4,
+          providerIdempotencyKey,
+        );
+        const returned = updated.body?.invoices?.[0];
+        if (returned?.hasErrors || (returned?.validationErrors?.length ?? 0) > 0) {
+          throw invoiceDraftProviderRejected("Xero rejected the invoice DRAFT replacement.", {
+            validationErrorCount: returned?.validationErrors?.length ?? 0,
+          });
+        }
+        if (!returned?.invoiceID) {
+          throw invoiceDraftWriteUnknown("Xero returned no InvoiceID for the invoice DRAFT replacement; recovery is required.");
+        }
+        if (returned.invoiceID.toLowerCase() !== normalized.targetXeroObjectId.toLowerCase()) {
+          throw invoiceDraftWriteUnknown("Xero returned a different InvoiceID after the invoice DRAFT replacement.");
+        }
+        if (returned.type !== undefined && returned.type !== providerType) {
+          throw invoiceDraftWriteUnknown("Xero returned the wrong invoice type after the invoice DRAFT replacement.");
+        }
+        if (returned.status !== undefined && returned.status !== Invoice.StatusEnum.DRAFT) {
+          throw invoiceDraftWriteUnknown("Xero returned a non-DRAFT status after the invoice DRAFT replacement.");
+        }
+        updateReceipt = {
+          operation: expectedType === "ACCPAY" ? "UPDATE_ACCPAY_DRAFT" : "UPDATE_ACCREC_DRAFT",
+          invoiceId: normalized.targetXeroObjectId,
+          ...(updated.response && providerRequestId(updated.response)
+            ? { providerRequestId: providerRequestId(updated.response) }
+            : {}),
+        };
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        if (!mutationStarted) {
+          if (classifyXeroWriteException(error) === "UNKNOWN") {
+            throw invoiceDraftPreflightUnavailable(error);
+          }
+          throw invoiceDraftProviderRejected("Xero rejected the exact invoice DRAFT update target preflight.", {
+            objectId: normalized.targetXeroObjectId,
+            reasonCodes: ["EXACT_TARGET_PREFLIGHT_REJECTED"],
+            providerMutationPossible: false,
+          });
+        }
+        if (classifyXeroWriteException(error) === "UNKNOWN") {
+          throw invoiceDraftWriteUnknown("The invoice DRAFT replacement result is unknown and requires recovery.", error);
+        }
+        throw invoiceDraftProviderRejected("Xero rejected the invoice DRAFT replacement.");
+      }
+
+      try {
+        await recordWriteEvidence({
+          invoiceId: normalized.targetXeroObjectId,
+          receipt: updateReceipt!,
+        });
+      } catch (error) {
+        throw invoiceDraftWriteUnknown(
+          "Xero returned an InvoiceID but its write receipt could not be persisted before readback.",
+          error,
+          { invoiceId: normalized.targetXeroObjectId },
+        );
+      }
+
+      let readback: InvoiceSnapshot;
+      try {
+        readback = await this.#getInvoice(
+          client,
+          connection.tenantId,
+          normalized.targetXeroObjectId,
+          expectedType,
+          MAX_AGENT_INVOICE_LINES,
+        );
+      } catch (error) {
+        throw invoiceDraftWriteUnknown(
+          "The invoice DRAFT replacement could not be exactly read back.",
+          error,
+          { invoiceId: normalized.targetXeroObjectId },
+        );
+      }
+      const mismatches = invoiceDraftReadbackMismatches(normalized, readback, expectedType);
+      if (mismatches.length > 0) {
+        throw invoiceDraftWriteUnknown(
+          "The invoice DRAFT replacement readback did not match the complete canonical payload.",
+          undefined,
+          {
+            invoiceId: normalized.targetXeroObjectId,
+            reasonCodes: ["READBACK_MISMATCH"],
+            mismatchFields: mismatches,
+          },
+        );
+      }
+      const receipt = { ...updateReceipt!, status: readback.status };
+      return expectedType === "ACCPAY"
+        ? { bill: readback as SupplierBillSnapshot, receipt }
+        : { invoice: readback as SalesInvoiceSnapshot, receipt };
+    });
+  }
+
   async createDraftSupplierBill(
     principal: AccountingPrincipal,
     input: CreateDraftSupplierBillInput,
@@ -1628,6 +2315,176 @@ export class XeroAccountingProvider implements AccountingProvider {
     return this.#manager.getTrialBalance(principal, date);
   }
 
+  /**
+   * The ledger itself: the actual debit/credit lines a document produced.
+   * Unlike getTrialBalance this goes through the ordinary SDK call, not the
+   * dedicated bounded transport - `/Journals` responses are pages of a fixed,
+   * provider-controlled batch size, not the whole-COA-at-once shape that made
+   * Trial Balance need its own streaming boundary (see
+   * docs/XERO-TRIAL-BALANCE-PROVIDER-RESOURCE-BOUNDARY.md).
+   */
+  async listJournals(principal: AccountingPrincipal, input: ListJournalsInput): Promise<JournalListResult> {
+    return this.#manager.withClient(principal, async (client, connection) => {
+      const response = await client.accountingApi.getJournals(
+        connection.tenantId,
+        undefined,
+        ...(input.offset === undefined ? [] : [input.offset]),
+      );
+      return mapJournalsPage(response.body.journals, input.offset === undefined ? {} : { offset: input.offset });
+    });
+  }
+
+  async getProfitAndLoss(
+    principal: AccountingPrincipal,
+    input: ProfitAndLossInput,
+  ): Promise<Record<string, unknown>> {
+    return this.#manager.withClient(principal, async (client, connection) => {
+      const response = await client.accountingApi.getReportProfitAndLoss(
+        connection.tenantId,
+        input.date_from,
+        input.date_to,
+        input.periods,
+        input.timeframe,
+      );
+      return mapXeroReportEnvelope(response.body);
+    });
+  }
+
+  async getBalanceSheet(
+    principal: AccountingPrincipal,
+    input: BalanceSheetInput,
+  ): Promise<Record<string, unknown>> {
+    return this.#manager.withClient(principal, async (client, connection) => {
+      const response = await client.accountingApi.getReportBalanceSheet(
+        connection.tenantId,
+        input.date,
+        input.periods,
+        input.timeframe,
+      );
+      return mapXeroReportEnvelope(response.body);
+    });
+  }
+
+  async getAgedReceivables(
+    principal: AccountingPrincipal,
+    input: AgedReceivablesInput,
+  ): Promise<Record<string, unknown>> {
+    return this.#manager.withClient(principal, async (client, connection) => {
+      const response = await client.accountingApi.getReportAgedReceivablesByContact(
+        connection.tenantId,
+        input.contact_id,
+        input.date,
+        input.date_from,
+        input.date_to,
+      );
+      return mapXeroReportEnvelope(response.body);
+    });
+  }
+
+  async getAgedPayables(
+    principal: AccountingPrincipal,
+    input: AgedPayablesInput,
+  ): Promise<Record<string, unknown>> {
+    return this.#manager.withClient(principal, async (client, connection) => {
+      const response = await client.accountingApi.getReportAgedPayablesByContact(
+        connection.tenantId,
+        input.contact_id,
+        input.date,
+        input.date_from,
+        input.date_to,
+      );
+      return mapXeroReportEnvelope(response.body);
+    });
+  }
+
+  async getPayment(principal: AccountingPrincipal, paymentId: string): Promise<PaymentSummary> {
+    return this.#manager.withClient(principal, async (client, connection) => {
+      const response = await client.accountingApi.getPayment(connection.tenantId, paymentId);
+      const payment = response.body.payments?.find((candidate) => candidate.paymentID === paymentId);
+      const summary = payment === undefined ? undefined : mapPaymentSummary(payment);
+      if (!summary || summary.paymentId !== paymentId) {
+        throw new AppError("NOT_FOUND", "The requested Xero payment was not found.", { httpStatus: 404 });
+      }
+      return summary;
+    });
+  }
+
+  async listTrackingCategories(
+    principal: AccountingPrincipal,
+    input: ListTrackingCategoriesInput,
+  ): Promise<TrackingCategoryListResult> {
+    return this.#manager.withClient(principal, async (client, connection) => {
+      const response = await client.accountingApi.getTrackingCategories(
+        connection.tenantId,
+        undefined,
+        "Name ASC",
+        input.include_archived,
+      );
+      const source = response.body.trackingCategories ?? [];
+      const trackingCategories = source.slice(0, input.limit).flatMap((category) => {
+        if (!category.trackingCategoryID) return [];
+        const rawOptions = category.options ?? [];
+        const options = rawOptions.slice(0, 100).flatMap((option) => option.trackingOptionID
+          ? [{
+              trackingOptionId: option.trackingOptionID,
+              ...(option.name ? { name: option.name } : {}),
+              ...(option.status ? { status: String(option.status) } : {}),
+            }]
+          : []);
+        return [{
+          trackingCategoryId: category.trackingCategoryID,
+          ...(category.name ? { name: category.name } : {}),
+          ...(category.status ? { status: String(category.status) } : {}),
+          options,
+          optionCount: rawOptions.length,
+          optionsTruncated: rawOptions.length > 100,
+          omittedInvalidOptions: rawOptions.slice(0, 100).length - options.length,
+        }];
+      });
+      return {
+        trackingCategories,
+        pagination: {
+          page: 1,
+          pageSize: input.limit,
+          returned: trackingCategories.length,
+          hasNextPage: source.length > input.limit,
+          hasNextPageIsEstimated: true,
+          omittedInvalid: source.slice(0, input.limit).length - trackingCategories.length,
+          ...(source.length > input.limit ? { omittedOverflow: source.length - input.limit } : {}),
+        },
+      };
+    });
+  }
+
+  async listContactGroups(
+    principal: AccountingPrincipal,
+    input: ListContactGroupsInput,
+  ): Promise<ContactGroupListResult> {
+    return this.#manager.withClient(principal, async (client, connection) => {
+      const response = await client.accountingApi.getContactGroups(connection.tenantId, undefined, "Name ASC");
+      const source = response.body.contactGroups ?? [];
+      const contactGroups = source.slice(0, input.limit).flatMap((group) => group.contactGroupID
+        ? [{
+            contactGroupId: group.contactGroupID,
+            ...(group.name ? { name: group.name } : {}),
+            ...(group.status ? { status: String(group.status) } : {}),
+          }]
+        : []);
+      return {
+        contactGroups,
+        pagination: {
+          page: 1,
+          pageSize: input.limit,
+          returned: contactGroups.length,
+          hasNextPage: source.length > input.limit,
+          hasNextPageIsEstimated: true,
+          omittedInvalid: source.slice(0, input.limit).length - contactGroups.length,
+          ...(source.length > input.limit ? { omittedOverflow: source.length - input.limit } : {}),
+        },
+      };
+    });
+  }
+
   async #getInvoice(
     client: XeroReadClient,
     tenantId: string,
@@ -1651,7 +2508,9 @@ export class XeroAccountingProvider implements AccountingProvider {
       false,
       1,
     );
-    const invoice = response.body.invoices?.find((candidate) => candidate.invoiceID === invoiceId);
+    const invoice = response.body.invoices?.find(
+      (candidate) => candidate.invoiceID?.toLowerCase() === invoiceId.toLowerCase(),
+    );
     const type = accountingInvoiceType(invoice?.type);
     if (!invoice || !type || (expectedType !== undefined && type !== expectedType)) {
       throw new AppError("NOT_FOUND", "The requested Xero invoice was not found.", { httpStatus: 404 });

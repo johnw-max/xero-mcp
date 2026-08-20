@@ -25,19 +25,27 @@ import {
   prepareSupplierBillDraftSchema,
   searchContactsSchema,
   trialBalanceSchema,
+  profitAndLossSchema,
+  balanceSheetSchema,
+  agedReceivablesSchema,
+  agedPayablesSchema,
 } from "../domain/schemas.js";
 import {
   getBankTransactionSchema,
   getItemSchema,
   getCreditNoteSchema,
   getManualJournalSchema,
+  getPaymentSchema,
   getPurchaseOrderSchema,
   getQuoteSchema,
   listBankTransactionsSchema,
+  listContactGroupsSchema,
   listItemsSchema,
+  listJournalsSchema,
   listManualJournalsSchema,
   listPurchaseOrdersSchema,
   listQuotesSchema,
+  listTrackingCategoriesSchema,
 } from "../domain/extendedReadSchemas.js";
 import {
   preparePurchaseOrderDraftInputSchema,
@@ -331,7 +339,7 @@ export function createAccountingMcpServer(
       "xero_execute_accounting_case",
       {
         title: "Execute eligible Xero Accounting Case drafts",
-        description: "Executes only the immutable eligible operations stored in the exact current Accounting Case version under standing delegation. It accepts no payload, tenant, action, account, tax, receipt or confirmation phrase, stops on uncertain writes, and reports ledger success only with provider receipt plus exact readback for each eligible write. Ledger readback never verifies the submitted source or original file; source_truth_claim remains NOT_VERIFIED.",
+        description: "Executes only immutable eligible operations stored in the exact current Accounting Case version, using the current OAuth organisation binding, target session, effective scope and released policy behind the server write gate. It accepts no payload, tenant, action, account, tax, receipt or confirmation phrase, stops on uncertain writes, and reports ledger success only with provider receipt plus exact readback for each eligible write. Ledger readback never verifies the submitted source or original file; source_truth_claim remains NOT_VERIFIED.",
         inputSchema: targeted(executeAccountingCaseSchema),
         annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false },
       },
@@ -1320,6 +1328,159 @@ export function createAccountingMcpServer(
       action: (effectiveContext, businessInput) => service.createPurchaseOrderDraft(effectiveContext, businessInput),
       recordId: (result) => result.xero_object_id,
       formatSuccess: (result, auditCallId) => success({ ...result, auditCallId }),
+    }),
+  );
+
+  server.registerTool(
+    "xero_list_journals",
+    {
+      title: "List posted Xero journals",
+      description: "Reads one provider-controlled page of actual Xero ledger journal events. Continue only with the returned nextOffset; an empty page is the sole provider proof of exhaustion. This never posts, voids, or changes journals.",
+      inputSchema: targeted(listJournalsSchema),
+      annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false },
+    },
+    async (input) => audited({
+      service,
+      context,
+      requiredScope: "xero.read",
+      actorId,
+      toolName: "xero_list_journals",
+      input,
+      action: (effectiveContext, businessInput) => service.listJournals(effectiveContext, businessInput),
+    }),
+  );
+
+  server.registerTool(
+    "xero_get_payment",
+    {
+      title: "Get exact Xero payment",
+      description: "Reads one payment by its exact Xero PaymentID for payment-history analysis. It never creates, allocates, refunds, reverses, or releases a payment.",
+      inputSchema: targeted(getPaymentSchema),
+      annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false },
+    },
+    async (input) => audited({
+      service,
+      context,
+      requiredScope: "xero.read",
+      actorId,
+      toolName: "xero_get_payment",
+      input,
+      action: (effectiveContext, businessInput) => service.getPayment(effectiveContext, businessInput),
+      recordId: (result) => result.paymentId,
+    }),
+  );
+
+  server.registerTool(
+    "xero_list_tracking_categories",
+    {
+      title: "List Xero tracking categories and options",
+      description: "Reads a bounded projection of Xero tracking categories and their options for coding validation. It never creates, updates, archives, or deletes a category or option.",
+      inputSchema: targeted(listTrackingCategoriesSchema),
+      annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false },
+    },
+    async (input) => audited({
+      service,
+      context,
+      requiredScope: "xero.read",
+      actorId,
+      toolName: "xero_list_tracking_categories",
+      input,
+      action: (effectiveContext, businessInput) => service.listTrackingCategories(effectiveContext, businessInput),
+    }),
+  );
+
+  server.registerTool(
+    "xero_list_contact_groups",
+    {
+      title: "List Xero contact groups",
+      description: "Reads a bounded projection of Xero contact-group reference data. It never creates, changes membership, archives, or deletes a contact group.",
+      inputSchema: targeted(listContactGroupsSchema),
+      annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false },
+    },
+    async (input) => audited({
+      service,
+      context,
+      requiredScope: "xero.read",
+      actorId,
+      toolName: "xero_list_contact_groups",
+      input,
+      action: (effectiveContext, businessInput) => service.listContactGroups(effectiveContext, businessInput),
+    }),
+  );
+
+  server.registerTool(
+    "xero_get_profit_and_loss",
+    {
+      title: "Get Xero profit and loss report",
+      description: "Reads Xero's provider-owned Profit and Loss report for the reviewed date range and comparison settings. It does not compute a replacement report or change Xero data.",
+      inputSchema: targeted(profitAndLossSchema),
+      annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false },
+    },
+    async (input) => audited({
+      service,
+      context,
+      requiredScope: "xero.read",
+      actorId,
+      toolName: "xero_get_profit_and_loss",
+      input,
+      action: (effectiveContext, businessInput) => service.getProfitAndLoss(effectiveContext, businessInput),
+    }),
+  );
+
+  server.registerTool(
+    "xero_get_balance_sheet",
+    {
+      title: "Get Xero balance sheet report",
+      description: "Reads Xero's provider-owned Balance Sheet report for the reviewed as-of date and comparison settings. It does not compute a replacement report or change Xero data.",
+      inputSchema: targeted(balanceSheetSchema),
+      annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false },
+    },
+    async (input) => audited({
+      service,
+      context,
+      requiredScope: "xero.read",
+      actorId,
+      toolName: "xero_get_balance_sheet",
+      input,
+      action: (effectiveContext, businessInput) => service.getBalanceSheet(effectiveContext, businessInput),
+    }),
+  );
+
+  server.registerTool(
+    "xero_get_aged_receivables",
+    {
+      title: "Get Xero aged receivables by contact",
+      description: "Reads Xero's provider-owned aged receivables report for one exact contact and reviewed date bounds. It never invoices, collects, allocates, or refunds funds.",
+      inputSchema: targeted(agedReceivablesSchema),
+      annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false },
+    },
+    async (input) => audited({
+      service,
+      context,
+      requiredScope: "xero.read",
+      actorId,
+      toolName: "xero_get_aged_receivables",
+      input,
+      action: (effectiveContext, businessInput) => service.getAgedReceivables(effectiveContext, businessInput),
+    }),
+  );
+
+  server.registerTool(
+    "xero_get_aged_payables",
+    {
+      title: "Get Xero aged payables by contact",
+      description: "Reads Xero's provider-owned aged payables report for one exact contact and reviewed date bounds. It never bills, pays, allocates, or refunds funds.",
+      inputSchema: targeted(agedPayablesSchema),
+      annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false },
+    },
+    async (input) => audited({
+      service,
+      context,
+      requiredScope: "xero.read",
+      actorId,
+      toolName: "xero_get_aged_payables",
+      input,
+      action: (effectiveContext, businessInput) => service.getAgedPayables(effectiveContext, businessInput),
     }),
   );
 

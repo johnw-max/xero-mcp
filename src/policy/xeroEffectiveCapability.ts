@@ -60,11 +60,26 @@ const TRIAL_BALANCE_READ = [
   "accounting.reports.trialbalance.read",
   "accounting.reports.read",
 ] as const;
+const PROFIT_AND_LOSS_READ = [
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.read",
+] as const;
+const BALANCE_SHEET_READ = [
+  "accounting.reports.balancesheet.read",
+  "accounting.reports.read",
+] as const;
+const AGED_REPORT_READ = [
+  "accounting.reports.aged.read",
+  "accounting.reports.read",
+] as const;
 const MANUAL_JOURNAL_READ = [
   "accounting.manualjournals.read",
   "accounting.manualjournals",
 ] as const;
 const MANUAL_JOURNAL_WRITE = ["accounting.manualjournals"] as const;
+const JOURNAL_READ = [
+  "accounting.journals.read",
+] as const;
 const PAYMENT_READ = [
   "accounting.payments.read",
   "accounting.transactions.read",
@@ -82,6 +97,7 @@ const BANK_TRANSACTION_WRITE = [
 ] as const;
 
 function oauthRequirements(
+  actionId: string,
   object: XeroBusinessObject,
   mutation: boolean,
 ): readonly (readonly string[])[] {
@@ -91,8 +107,19 @@ function oauthRequirements(
     case "ORGANISATION":
     case "TAX_RATE":
       return [SETTINGS_READ];
-    case "REPORT":
-      return mutation ? [] : [TRIAL_BALANCE_READ];
+    case "REPORT": {
+      if (mutation) return [];
+      switch (actionId) {
+        case "report.trial_balance_read": return [TRIAL_BALANCE_READ];
+        case "report.profit_and_loss_read": return [PROFIT_AND_LOSS_READ];
+        case "report.balance_sheet_read": return [BALANCE_SHEET_READ];
+        case "report.aged_receivables_read":
+        case "report.aged_payables_read": return [AGED_REPORT_READ];
+        default: return [["__unsupported_xero_report_action__"]];
+      }
+    }
+    case "JOURNAL":
+      return mutation ? [] : [JOURNAL_READ];
     case "CUSTOMER_INVOICE":
     case "SUPPLIER_BILL":
       return [mutation ? INVOICE_WRITE : INVOICE_READ];
@@ -110,7 +137,10 @@ function oauthRequirements(
     case "MANUAL_JOURNAL":
       return [mutation ? MANUAL_JOURNAL_WRITE : MANUAL_JOURNAL_READ];
     case "CONTACT":
+    case "CONTACT_GROUP":
       return [mutation ? CONTACT_WRITE : CONTACT_READ];
+    case "TRACKING_CATEGORY":
+      return [mutation ? SETTINGS_WRITE : SETTINGS_READ];
     case "ACCOUNT":
       return [mutation ? SETTINGS_WRITE : SETTINGS_READ];
     case "PAYMENT":
@@ -172,7 +202,7 @@ export function evaluateEffectiveXeroCapability(
 
   const requiredXeroOAuthScopeAnyOf = policy.object === "UNKNOWN"
     ? []
-    : oauthRequirements(policy.object, mutation);
+    : oauthRequirements(actionId, policy.object, mutation);
   const grantedXeroOAuthScopes = new Set(context.grantedXeroOAuthScopes);
   if (
     requiredXeroOAuthScopeAnyOf.some((alternatives) =>

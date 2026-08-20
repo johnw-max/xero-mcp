@@ -16,6 +16,7 @@ import {
   assertNaturalBusinessPrompt,
   businessPrompt,
 } from "../scripts/release/run-local-agent-evidence.mjs";
+import { TOOL_ALLOWLIST } from "../src/mcp/toolNames.js";
 
 const repoRoot = process.cwd();
 
@@ -109,8 +110,8 @@ describe("local deployment-equivalent Agent harness", () => {
     const workspace = await createAgentWorkspace(repoRoot);
     try {
       const toolContract = await buildToolContractEvidence(repoRoot);
-      expect(toolContract.tool_count).toBe(30);
-      expect(toolContract.tools).toHaveLength(30);
+      expect(toolContract.tool_count).toBe(TOOL_ALLOWLIST.length);
+      expect(toolContract.tools).toHaveLength(TOOL_ALLOWLIST.length);
       expect(toolContract.allowlist.sha256).toMatch(/^[a-f0-9]{64}$/u);
       expect(toolContract.schema.sha256).toMatch(/^[a-f0-9]{64}$/u);
       const evidence = {
@@ -129,13 +130,13 @@ describe("local deployment-equivalent Agent harness", () => {
     }
   });
 
-  it("keeps 30 backend tools but exposes only the typed Case profile to Luna", async () => {
+  it("keeps the current backend tools but exposes only the typed Case profile to Luna", async () => {
     const contract = await buildToolContractEvidence(repoRoot);
-    expect(contract.tool_count).toBe(30);
+    expect(contract.tool_count).toBe(TOOL_ALLOWLIST.length);
     expect(contract.agent_profile).toEqual({
       profile_id: "xero-accounting-case-write-v1",
       enabled_tools: [...ACCOUNTING_CASE_AGENT_ENABLED_TOOLS],
-      backend_tool_count: 30,
+      backend_tool_count: TOOL_ALLOWLIST.length,
     });
   });
 

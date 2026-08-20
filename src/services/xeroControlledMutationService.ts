@@ -80,13 +80,19 @@ function exactActiveAccount(
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+// Fail-closed to match src/policy/xeroTaxRateResolver.ts and
+// src/policy/xeroDeclaredLedgerBinding.ts: Xero's CanApplyTo* flags are
+// genuinely optional, and an absent flag means Xero did not say this tax may
+// be used for this account class. A bookkeeping gateway must not infer
+// permission from silence, so undefined is treated the same as an explicit
+// false -- never as implicit true.
 function taxApplies(tax: TaxRateSummary, account: AccountSummary): boolean {
   switch (account.class) {
-    case "EXPENSE": return tax.canApplyToExpenses !== false;
-    case "ASSET": return tax.canApplyToAssets !== false;
-    case "LIABILITY": return tax.canApplyToLiabilities !== false;
-    case "REVENUE": return tax.canApplyToRevenue !== false;
-    case "EQUITY": return tax.canApplyToEquity !== false;
+    case "EXPENSE": return tax.canApplyToExpenses === true;
+    case "ASSET": return tax.canApplyToAssets === true;
+    case "LIABILITY": return tax.canApplyToLiabilities === true;
+    case "REVENUE": return tax.canApplyToRevenue === true;
+    case "EQUITY": return tax.canApplyToEquity === true;
     default: return false;
   }
 }
@@ -105,7 +111,6 @@ function permissionsFor(context: RequestContext): XeroCapabilityPermission[] {
   const permissions: XeroCapabilityPermission[] = [];
   if (context.scopes.includes("xero.read")) permissions.push("XERO_ACCOUNTING_READ");
   if (context.scopes.includes("xero.draft.write")) permissions.push("XERO_DRAFT_WRITE");
-  if (context.roles.includes("xero.dual_approval")) permissions.push("XERO_DUAL_APPROVAL");
   return permissions;
 }
 
@@ -203,7 +208,7 @@ export class XeroControlledMutationService {
       execution_mode: "STANDING_AUTONOMOUS_DELEGATION",
       per_transaction_confirmation_required: false,
       next_action: "CALL_EXECUTE_TOOL",
-      warning: "Execution revalidates the exact target, standing delegation, immutable payload and provider readback. Source facts remain model-extracted provenance.",
+      warning: "Execution revalidates the exact OAuth target, released policy, immutable payload and provider readback. Source facts remain model-extracted provenance.",
     };
   }
 

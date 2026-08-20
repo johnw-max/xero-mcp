@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.1-accounting-case",
   "releaseVersion": "0.4.0-rc.1",
-  "requiredMigration": "041_accounting_case_source_case_binding.sql",
-  "authorityModel": "STANDING_DELEGATION",
+  "requiredMigration": "042_accounting_case_ledger_state_transitions.sql",
+  "authorityModel": "OAUTH_TARGET_BOUND_WRITE_GATE",
   "expectedTools": [
     "xero_connection_status",
     "xero_start_organisation_switch",
@@ -21,6 +21,7 @@
     "xero_list_invoices",
     "xero_list_credit_notes",
     "xero_list_payments",
+    "xero_get_payment",
     "xero_list_quotes",
     "xero_get_quote",
     "xero_list_purchase_orders",
@@ -31,9 +32,16 @@
     "xero_get_item",
     "xero_list_bank_transactions",
     "xero_get_bank_transaction",
+    "xero_list_journals",
+    "xero_list_tracking_categories",
+    "xero_list_contact_groups",
     "xero_get_invoice",
     "xero_get_supplier_bill",
-    "xero_get_trial_balance"
+    "xero_get_trial_balance",
+    "xero_get_profit_and_loss",
+    "xero_get_balance_sheet",
+    "xero_get_aged_receivables",
+    "xero_get_aged_payables"
   ],
   "forbiddenPublicTools": [
     "xero_prepare_supplier_bill_draft",

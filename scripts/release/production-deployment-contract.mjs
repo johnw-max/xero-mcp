@@ -18,34 +18,6 @@ export const PRODUCTION_ADMISSION_WRAPPER_PATH = "deploy/scripts/admit-and-compo
 export const PRODUCTION_CUTOVER_PATH = "deploy/scripts/switch-xero-upstream.sh";
 export const PRODUCTION_ADMISSION_VERIFIER_PATH = "scripts/release/production-deployment-admission.mjs";
 
-const GOVERNANCE_MOUNTS = Object.freeze([
-  [
-    "/etc/xero-accounting-mcp/governance/trust-bundle.json",
-    "/run/xero-governance/trust-bundle.json",
-  ],
-  [
-    "/etc/xero-accounting-mcp/governance/receipts.json",
-    "/run/xero-governance/receipts.json",
-  ],
-  [
-    "/etc/xero-accounting-mcp/governance/status.json",
-    "/run/xero-governance/status.json",
-  ],
-]);
-
-const GOVERNANCE_HASH_ENV = Object.freeze([
-  "XERO_GOVERNANCE_TRUST_BUNDLE_SHA256",
-  "XERO_GOVERNANCE_RECEIPTS_SHA256",
-  "XERO_GOVERNANCE_STATUS_SHA256",
-]);
-const AUTHORITY_CONFIG_ENV = Object.freeze([
-  "XERO_AUTHORITY_REVISION",
-  "XERO_STANDING_DELEGATIONS_JSON",
-  "XERO_STANDING_DELEGATIONS_CONFIG_SHA256",
-  "XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256",
-  "XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256",
-]);
-
 function requireText(text, pattern, errorCode) {
   if (!pattern.test(text)) throw new Error(errorCode);
 }
@@ -75,42 +47,8 @@ export function assertProductionComposeContract(path, content) {
   if (/XERO_ACCOUNTING_CASE_BUSINESS_AUTHORITIES_JSON/u.test(text)) {
     throw new Error(`PRODUCTION_COMPOSE_CANDIDATE_GOVERNANCE_FORBIDDEN:${path}`);
   }
-  const sources = [...text.matchAll(/^\s*source:\s*(\S+)\s*$/gmu)]
-    .map((match) => match[1]).filter((value) => value.includes("xero-accounting-mcp/governance"));
-  const targets = [...text.matchAll(/^\s*target:\s*(\S+)\s*$/gmu)]
-    .map((match) => match[1]).filter((value) => value.includes("xero-governance"));
-  if (JSON.stringify(sources.sort()) !== JSON.stringify(GOVERNANCE_MOUNTS.map(([source]) => source).sort()) ||
-      JSON.stringify(targets.sort()) !== JSON.stringify(GOVERNANCE_MOUNTS.map(([, target]) => target).sort())) {
-    throw new Error(`PRODUCTION_COMPOSE_GOVERNANCE_MOUNT_PATH_INVALID:${path}`);
-  }
-  for (const [source, target] of GOVERNANCE_MOUNTS) {
-    const escapedSource = source.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-    const escapedTarget = target.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-    requireText(
-      text,
-      new RegExp(
-        `-\\s+type:\\s*bind\\s+source:\\s*${escapedSource}\\s+target:\\s*${escapedTarget}` +
-          "\\s+read_only:\\s*true\\s+bind:\\s+create_host_path:\\s*false",
-        "u",
-      ),
-      `PRODUCTION_COMPOSE_GOVERNANCE_MOUNT_UNSAFE:${path}:${target}`,
-    );
-  }
-  for (const key of GOVERNANCE_HASH_ENV) {
-    const escaped = key.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-    requireText(
-      text,
-      new RegExp(`^\\s*${escaped}:\\s*\\$\\{${escaped}:\\?[^}]+\\}\\s*$`, "mu"),
-      `PRODUCTION_COMPOSE_GOVERNANCE_HASH_REQUIRED:${path}:${key}`,
-    );
-  }
-  for (const key of AUTHORITY_CONFIG_ENV) {
-    const escaped = key.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-    requireText(
-      text,
-      new RegExp(`^\\s*${escaped}:\\s*\\$\\{${escaped}:\\?[^}]+\\}\\s*$`, "mu"),
-      `PRODUCTION_COMPOSE_AUTHORITY_CONFIG_REQUIRED:${path}:${key}`,
-    );
+  if (/xero-governance|XERO_GOVERNANCE_|XERO_STANDING_DELEGATIONS_|XERO_EXPECTED_AUTHORITY_|XERO_AUTHORITY_REVISION/u.test(text)) {
+    throw new Error(`PRODUCTION_COMPOSE_LEGACY_GOVERNANCE_FORBIDDEN:${path}`);
   }
   return true;
 }
@@ -141,11 +79,6 @@ export function assertProductionRunbookContract(path, content) {
   }
   requireText(
     text,
-    /--approved-control-catalog-sha256/u,
-    `PRODUCTION_RUNBOOK_CONTROL_CATALOG_ROOT_MISSING:${path}`,
-  );
-  requireText(
-    text,
     /sudo deploy\/scripts\/admit-and-compose\.sh/u,
     `PRODUCTION_RUNBOOK_ADMISSION_COMMAND_MISSING:${path}`,
   );
@@ -158,27 +91,6 @@ export function assertProductionRunbookContract(path, content) {
     text,
     /\/etc\/xero-accounting-mcp\/release\.env/u,
     `PRODUCTION_RUNBOOK_FIXED_ENV_ROOT_MISSING:${path}`,
-  );
-  for (const required of [
-    "REPLACE_WITH_OUT_OF_BAND_FIRM_GOVERNANCE_DIRECTORY",
-    "install -d -o root -g root -m 0755 /etc/xero-accounting-mcp/governance",
-    "-m 0444 \"$FIRM_GOVERNANCE_DIR/trust-bundle.json\"",
-    "-m 0444 \"$FIRM_GOVERNANCE_DIR/receipts.json\"",
-    "-m 0444 \"$FIRM_GOVERNANCE_DIR/status.json\"",
-    "do not run admission, create a container, or apply a migration",
-    "XERO_AUTHORITY_REVISION",
-    "XERO_STANDING_DELEGATIONS_JSON",
-    "XERO_STANDING_DELEGATIONS_CONFIG_SHA256",
-    "XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256",
-    "XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256",
-    "Every trust-bundle, receipt, or status renewal requires a higher XERO_AUTHORITY_REVISION",
-    "Replacing a host governance file does not refresh an existing container bind mount",
-    "startup-captured revocation remains bounded by the effective expiry",
-    "restart and republish the higher durable authority snapshot before cutover",
-  ]) requireText(
-    text,
-    new RegExp(required.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"),
-    `PRODUCTION_RUNBOOK_GOVERNANCE_PROVISIONING_MISSING:${path}:${required}`,
   );
   return true;
 }
@@ -215,23 +127,7 @@ export function assertProductionCutoverContract(path, content) {
   if (/release_env_value|verify-accepted-oci-release\.mjs/u.test(text)) {
     throw new Error(`PRODUCTION_CUTOVER_PATH_REREAD_FORBIDDEN:${path}`);
   }
-  for (const required of [
-    "XERO_ADMITTED_GOVERNANCE_TRUST_BUNDLE_SHA256",
-    "XERO_ADMITTED_GOVERNANCE_RECEIPTS_SHA256",
-    "XERO_ADMITTED_GOVERNANCE_STATUS_SHA256",
-    "XERO_ADMITTED_AUTHORITY_REVISION",
-    "XERO_ADMITTED_STANDING_DELEGATIONS_CONFIG_SHA256",
-    "XERO_ADMITTED_WRITE_ENABLED",
-    "XERO_ADMITTED_FIRM_GOVERNANCE_REQUIRED",
-    "XERO_ADMITTED_EXPECTED_AUTHORITY_SNAPSHOT_SHA256",
-    "XERO_ADMITTED_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256",
-    "deploy/scripts/governance-cutover-contract.mjs",
-    "GREEN_READY_GOVERNANCE_ADMISSION_MISMATCH",
-  ]) requireText(
-    text,
-    new RegExp(required, "u"),
-    `PRODUCTION_CUTOVER_GOVERNANCE_IDENTITY_GUARD_MISSING:${path}:${required}`,
-  );
+  requireText(text, /XERO_ADMITTED_WRITE_ENABLED/u, `PRODUCTION_CUTOVER_WRITE_GATE_MISSING:${path}`);
   return true;
 }
 
@@ -241,21 +137,8 @@ export function assertProductionAdmissionVerifierContract(path, content) {
     "O_NOFOLLOW",
     "PRODUCTION_RELEASE_ENV_PATH",
     "PRODUCTION_RELEASE_ARTIFACT_ROOT",
-    "PRODUCTION_GOVERNANCE_ROOT",
-    "PRODUCTION_GOVERNANCE_PATHS",
-    "verifyCapturedGovernanceAuthority",
     "assertDirectoryChainUnchanged",
-    "approvedControlCatalogSha256: env.XERO_APPROVED_CONTROL_CATALOG_SHA256",
-    "governanceTrustBundleSha256: governance.trustBundleSha256",
-    "result.governanceTrustBundleSha256",
-    "result.governanceReceiptsSha256",
-    "result.governanceStatusSha256",
-    "result.authorityRevision",
-    "result.standingDelegationsConfigSha256",
     "result.writeEnabled",
-    "result.firmGovernanceRequired",
-    "result.expectedAuthoritySnapshotSha256",
-    "result.expectedFirmGovernanceAggregateSha256",
     "PRODUCTION_APP_IMAGE_NOT_ACCEPTED_OCI_MANIFEST",
     "assertPulledProductionImageIdentity",
   ]) requireText(text, new RegExp(required.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"),

@@ -1,5 +1,12 @@
 import type { AccountingCaseProviderBusinessHistoryLookup } from "../control-kernel/accountingCaseProviderContract.js";
-import type { AccountingCaseOperation, CommercialDocumentRoute, NativeDocumentRoute } from "../domain/accountingCase.js";
+import type {
+  AccountingCaseOperation,
+  BalancedJournalRoute,
+  CommercialDocumentRoute,
+  NativeDocumentRoute,
+  ReferenceDataRoute,
+  LedgerStateTransitionRoute,
+} from "../domain/accountingCase.js";
 import { hashObject, stableStringify } from "../security/hash.js";
 import {
   XERO_REFERENCE_COORDINATE_NORMALIZATION_VERSION,
@@ -87,6 +94,26 @@ function isCommercialDocumentRoute(
   return route === "QUOTE" || route === "PURCHASE_ORDER";
 }
 
+function isBalancedJournalRoute(
+  route: AccountingCaseOperation["nativeRoute"],
+): route is BalancedJournalRoute {
+  return route === "MANUAL_JOURNAL";
+}
+
+function isReferenceDataRoute(
+  route: AccountingCaseOperation["nativeRoute"],
+): route is ReferenceDataRoute {
+  return route === "CONTACT_BASIC_UPDATE" ||
+    route === "ITEM_BASIC_CREATE_UNTRACKED" ||
+    route === "ITEM_BASIC_UPDATE_UNTRACKED";
+}
+
+function isLedgerStateTransitionRoute(
+  route: AccountingCaseOperation["nativeRoute"],
+): route is LedgerStateTransitionRoute {
+  return route === "LEDGER_STATE_TRANSITION";
+}
+
 export function xeroExistingDocumentMismatchReasons(
   operation: AccountingCaseOperation,
   rawSnapshot: unknown,
@@ -100,6 +127,30 @@ export function xeroExistingDocumentMismatchReasons(
   // expectedProviderType()/expectedAction() below, which are typed to
   // NativeDocumentRoute and would not accept this value anyway.
   if (isCommercialDocumentRoute(operation.nativeRoute)) {
+    return ["EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE"];
+  }
+  // A manual journal has no ACCREC/ACCPAY document type and no natural
+  // unique number either (see BalancedJournalRoute in accountingCase.ts) --
+  // the same "no pre-write existing-document check" gap as commercial
+  // documents, for a different underlying reason. #preflightBalancedJournal
+  // and #executeBalancedJournal never call this; it is a defensive,
+  // type-forced answer, not a live code path.
+  if (isBalancedJournalRoute(operation.nativeRoute)) {
+    return ["EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE"];
+  }
+  if (isReferenceDataRoute(operation.nativeRoute)) {
+    return ["EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE"];
+  }
+  if (isLedgerStateTransitionRoute(operation.nativeRoute)) {
+    return ["EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE"];
+  }
+  if (operation.nativeRoute === "LEDGER_ADJUSTMENT") {
+    return ["EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE"];
+  }
+  if (operation.nativeRoute === "PAYMENT_BANK_LEDGER") {
+    return ["EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE"];
+  }
+  if (operation.nativeRoute === "DRAFT_DOCUMENT_UPDATE") {
     return ["EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE"];
   }
   const route = operation.nativeRoute;

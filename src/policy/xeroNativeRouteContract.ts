@@ -1,11 +1,13 @@
 import type {
   AccountingCaseOperation,
   AccountingCaseTarget,
+  BalancedJournalFact,
   CommercialDocumentFact,
   CommercialDocumentRoute,
   NativeDocumentFact,
   NativeDocumentRoute,
 } from "../domain/accountingCase.js";
+import { parseAccountingFixedDecimal } from "../control-kernel/accountingMonetary.js";
 
 /**
  * The compiler and the Xero adapter must agree on one released input surface.
@@ -123,6 +125,54 @@ export function evaluateXeroCommercialDocumentRouteContract(
   }
   return {
     route: fact.documentKind,
+    adapterCanPrepare: reasonCodes.length === 0,
+    reasonCodes: [...new Set(reasonCodes)].sort((left, right) => left.localeCompare(right)),
+  };
+}
+
+/**
+ * Field-compatibility rules for the balanced-journal (manual journal) route.
+ * JOURNAL_NOT_BALANCED restates the identity accountingCaseCompiler.ts's
+ * balancedJournalRouteReasonCodes() computes at compile time -- redundant by
+ * construction, not shared code, the same idiom as
+ * evaluateXeroCommercialDocumentRouteContract above: this file is Xero-
+ * specific policy the provider-neutral compiler must not import, and this
+ * copy is the execution-time re-check (see #assertBalancedJournalRouteContract
+ * in xeroAccountingCaseService.ts), not the compile-time gate itself.
+ *
+ * MANUAL_JOURNAL_TAX_TYPE_UNSUPPORTED is a genuine released-adapter capability
+ * gap, not a universal accounting rule: the shared XeroCreditNoteManualJournalProvider
+ * adapter (canonicalManualJournalDraftPayloadSchema) hard-codes every journal
+ * line's TaxType to the literal "NONE" and sends Xero no other value --
+ * journal lines simply are not the released tax-on-journals surface. A
+ * BalancedJournalFact line may still declare another TaxType (the domain
+ * type does not forbid it), so it is rejected explicitly here rather than
+ * silently dropped when building the provider payload.
+ */
+export type XeroBalancedJournalRouteContractReason =
+  | "JOURNAL_NOT_BALANCED"
+  | "MANUAL_JOURNAL_TAX_TYPE_UNSUPPORTED";
+
+export interface XeroBalancedJournalRouteContractDecision {
+  route: "MANUAL_JOURNAL";
+  adapterCanPrepare: boolean;
+  reasonCodes: XeroBalancedJournalRouteContractReason[];
+}
+
+export function evaluateXeroBalancedJournalRouteContract(
+  fact: Pick<BalancedJournalFact, "lines">,
+): XeroBalancedJournalRouteContractDecision {
+  const reasonCodes: XeroBalancedJournalRouteContractReason[] = [];
+  let debits = 0n;
+  let credits = 0n;
+  for (const line of fact.lines) {
+    if (line.taxType !== "NONE") reasonCodes.push("MANUAL_JOURNAL_TAX_TYPE_UNSUPPORTED");
+    if (line.debit !== undefined) debits += parseAccountingFixedDecimal(line.debit);
+    if (line.credit !== undefined) credits += parseAccountingFixedDecimal(line.credit);
+  }
+  if (debits !== credits) reasonCodes.push("JOURNAL_NOT_BALANCED");
+  return {
+    route: "MANUAL_JOURNAL",
     adapterCanPrepare: reasonCodes.length === 0,
     reasonCodes: [...new Set(reasonCodes)].sort((left, right) => left.localeCompare(right)),
   };

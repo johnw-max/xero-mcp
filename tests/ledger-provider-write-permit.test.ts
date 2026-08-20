@@ -13,6 +13,7 @@ import {
   type XeroProviderWritePermitClaims,
   type XeroProviderWriteAdapterOperation,
 } from "../src/security/xeroProviderWritePermit.js";
+import { XERO_WRITE_ACTIONS } from "../src/domain/xeroWriteActions.js";
 
 function typescriptFiles(root: string): string[] {
   return readdirSync(root).flatMap((name) => {
@@ -107,20 +108,11 @@ describe("LedgerProviderWritePermit architecture", () => {
     expect(importers).toEqual(["services/xeroMutationService.ts"]);
   });
 
-  it("enumerates exactly the ten released raw adapter mutations", () => {
-    expect(XERO_PROVIDER_WRITE_ADAPTER_OPERATIONS).toEqual([
-      "XeroAccountingProvider.createDraftSupplierBill",
-      "XeroAccountingProvider.createDraftSalesInvoice",
-      "XeroControlledMutationProvider.createQuoteDraft",
-      "XeroControlledMutationProvider.createPurchaseOrderDraft",
-      "XeroCreditNoteManualJournalProvider.createCreditNoteDraft",
-      "XeroCreditNoteManualJournalProvider.createManualJournalDraft",
-      "XeroContactItemMutationProvider.createContact",
-      "XeroContactItemMutationProvider.updateContact",
-      "XeroContactItemMutationProvider.createItem",
-      "XeroContactItemMutationProvider.updateItem",
-    ]);
-    expect(new Set(XERO_PROVIDER_WRITE_ADAPTER_OPERATIONS).size).toBe(10);
+  it("derives one unique raw adapter mutation for every registered write action", () => {
+    const registeredOperations = Object.values(XERO_WRITE_ACTIONS)
+      .map((definition) => definition.providerAdapterOperation);
+    expect(new Set(XERO_PROVIDER_WRITE_ADAPTER_OPERATIONS)).toEqual(new Set(registeredOperations));
+    expect(new Set(XERO_PROVIDER_WRITE_ADAPTER_OPERATIONS).size).toBe(registeredOperations.length);
   });
 });
 

@@ -1,11 +1,6 @@
 import { z } from "zod/v4";
 import { missingXeroScopeCapabilities } from "./providers/xeroScopes.js";
 import {
-  XERO_AUTONOMOUS_WRITE_ACTIONS,
-  type XeroAutonomousWriteAction,
-} from "./policy/xeroAutonomousActions.js";
-import type { LedgerStandingDelegation } from "./control-kernel/ledgerControlKernel.js";
-import {
   parseXeroBuildIdentity,
   type XeroBuildIdentity,
 } from "./xeroRelease.js";
@@ -17,9 +12,6 @@ import {
   parseXeroAccountingCaseBusinessAuthorityProfiles,
   type XeroAccountingCaseBusinessAuthorityProfile,
 } from "./policy/xeroBusinessCoordinateAuthority.js";
-import type { XeroExternalGovernanceExpectedHashes } from
-  "./policy/xeroExternalGovernanceAuthority.js";
-import { sha256 } from "./security/hash.js";
 
 const nonEmptyCsv = z.string().transform((value, context) => {
   const entries = value
@@ -74,14 +66,6 @@ const booleanFlag = z.enum(["true", "false"]).default("false").transform((value)
 const optionalUuid = z.preprocess(
   (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
   z.string().trim().uuid().optional(),
-);
-const optionalSha256 = z.preprocess(
-  (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
-  z.string().regex(/^[a-f0-9]{64}$/u).optional(),
-);
-const optionalGovernanceAggregateIdentity = z.preprocess(
-  (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
-  z.union([z.string().regex(/^[a-f0-9]{64}$/u), z.literal("NOT_REQUIRED")]).optional(),
 );
 
 const optionalUuidCsv = z.string().default("").transform((value, context) => {
@@ -140,62 +124,6 @@ const xeroAccountingCaseBusinessAuthoritiesJson = z.string().default("[]").trans
 
 export const MCP_OAUTH_SCOPES = ["xero.read", "xero.draft.write"] as const;
 export type McpOAuthScope = (typeof MCP_OAUTH_SCOPES)[number];
-
-const xeroStandingDelegationRecordSchema = z.object({
-  delegation_id: z.string().trim().min(8).max(128).regex(/^[A-Za-z0-9._:-]+$/u),
-  revision: z.number().int().positive(),
-  status: z.enum(["ACTIVE", "REVOKED"]).default("ACTIVE"),
-  workspace_id: z.string().trim().min(1).max(255),
-  agent_id: z.string().trim().min(1).max(255),
-  // Optional pin. An OAuth installation is minted anew on every Xero
-  // re-authorisation, so pinning a delegation to one silently revokes the
-  // agent's authority the next time the user reconnects. The durable grantee
-  // is workspace + agent + tenant; set installation_id only when you really
-  // want the grant to die with a specific connection.
-  installation_id: z.string().trim().min(1).max(255).optional(),
-  tenant_id: z.string().trim().uuid(),
-  action_ids: z.array(z.enum(XERO_AUTONOMOUS_WRITE_ACTIONS)).min(1)
-    .refine((values) => new Set(values).size === values.length, "must contain unique action IDs"),
-  expires_at: z.iso.datetime({ offset: true }).optional(),
-}).strict();
-
-const xeroStandingDelegationsJson = z.string().default("[]").transform((raw, context) => {
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(raw) as unknown;
-  } catch {
-    context.addIssue({ code: "custom", message: "must be a valid JSON array" });
-    return z.NEVER;
-  }
-  const parsed = z.array(xeroStandingDelegationRecordSchema).safeParse(decoded);
-  if (!parsed.success) {
-    for (const issue of parsed.error.issues) {
-      context.addIssue({
-        code: "custom",
-        path: issue.path,
-        message: issue.message,
-      });
-    }
-    return z.NEVER;
-  }
-  const ids = parsed.data.map((item) => item.delegation_id);
-  if (new Set(ids).size !== ids.length) {
-    context.addIssue({ code: "custom", message: "delegation_id values must be unique" });
-    return z.NEVER;
-  }
-  return parsed.data.map((item): LedgerStandingDelegation => ({
-    delegationId: item.delegation_id,
-    revision: item.revision,
-    status: item.status,
-    providerId: "xero",
-    workspaceId: item.workspace_id,
-    agentId: item.agent_id,
-    ...(item.installation_id ? { installationId: item.installation_id } : {}),
-    tenantIds: [item.tenant_id],
-    actionIds: item.action_ids as readonly XeroAutonomousWriteAction[],
-    ...(item.expires_at ? { expiresAt: new Date(item.expires_at) } : {}),
-  }));
-});
 
 export interface McpOAuthHostClient {
   name: string;
@@ -343,18 +271,10 @@ const envSchema = z.object({
   XERO_CLIENT_SECRET: z.string().min(1),
   XERO_SCOPES: z.string().transform((value) => [...new Set(value.split(/\s+/).filter(Boolean))]),
   XERO_WRITE_ENABLED: booleanFlag,
-  XERO_AUTHORITY_REVISION: z.coerce.number().int().positive().default(1),
-  XERO_STANDING_DELEGATIONS_JSON: xeroStandingDelegationsJson,
-  XERO_STANDING_DELEGATIONS_CONFIG_SHA256: optionalSha256,
-  XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256: optionalSha256,
-  XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256: optionalGovernanceAggregateIdentity,
   XERO_ALLOWED_TENANT_ID: optionalUuid,
   XERO_ACCOUNTING_CASE_TEST_TENANT_IDS: optionalUuidCsv,
   XERO_TENANT_COA_PROFILES_JSON: xeroTenantCoaProfilesJson,
   XERO_ACCOUNTING_CASE_BUSINESS_AUTHORITIES_JSON: xeroAccountingCaseBusinessAuthoritiesJson,
-  XERO_GOVERNANCE_TRUST_BUNDLE_SHA256: optionalSha256,
-  XERO_GOVERNANCE_RECEIPTS_SHA256: optionalSha256,
-  XERO_GOVERNANCE_STATUS_SHA256: optionalSha256,
   TOKEN_ENCRYPTION_KEY_B64: base64Key,
   XERO_MUTATION_CONFIRMATION_KEY_B64: base64Key,
   XERO_TARGET_SESSION_REQUIRED: booleanFlag,
@@ -395,23 +315,12 @@ export interface AppConfig {
   xeroWriteEnabled: boolean;
   /** Required by loadConfig in production; optional only for hand-built test/dev configs. */
   xeroBuildIdentity?: XeroBuildIdentity;
-  xeroAuthorityRevision: number;
-  /** Optional on hand-built test configs; loadConfig always supplies the list. */
-  xeroStandingDelegations?: readonly LedgerStandingDelegation[];
-  /** SHA-256 of the exact deployment-owned standing-delegation JSON bytes. */
-  xeroStandingDelegationsConfigSha256?: string;
-  /** Root-admission-approved durable authority snapshot identity. */
-  xeroExpectedAuthoritySnapshotSha256?: string;
-  /** Root-admission-approved normalized governance aggregate, or NOT_REQUIRED. */
-  xeroExpectedFirmGovernanceAggregateSha256?: string;
   xeroAllowedTenantId?: string;
   /** Exact server-owned allowlist where model-extracted test documents may be written. */
   /** Optional on hand-built test configs; loadConfig always supplies the server-owned allowlist. */
   xeroAccountingCaseTestTenantIds?: readonly string[];
   /** Deployment-owned semantic category -> exact tenant AccountID/code bindings. */
   xeroTenantCoaProfiles?: readonly XeroTenantCoaProfile[];
-  /** Host-admission-pinned hashes for externally signed firm-governance evidence. */
-  xeroGovernanceExpectedHashes?: XeroExternalGovernanceExpectedHashes;
   /** Explicitly test-only legacy fixtures; production loadConfig rejects this source. */
   xeroAccountingCaseBusinessAuthorities?: readonly XeroAccountingCaseBusinessAuthorityProfile[];
   tokenEncryptionKey: Buffer;
@@ -607,7 +516,6 @@ function buildMcpOAuthBrokerConfig(
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  const rawStandingDelegationsJson = env.XERO_STANDING_DELEGATIONS_JSON ?? "[]";
   const parsed = envSchema.safeParse(env);
   if (!parsed.success) {
     const message = parsed.error.issues
@@ -619,7 +527,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const value = parsed.data;
   if (value.NODE_ENV !== "test" && value.XERO_ACCOUNTING_CASE_BUSINESS_AUTHORITIES_JSON.length > 0) {
     throw new Error(
-      "Invalid application configuration: candidate-supplied XERO_ACCOUNTING_CASE_BUSINESS_AUTHORITIES_JSON authority is forbidden; use host-admitted signed governance evidence",
+      "Invalid application configuration: XERO_ACCOUNTING_CASE_BUSINESS_AUTHORITIES_JSON is test-only compatibility data",
     );
   }
   let xeroBuildIdentity: XeroBuildIdentity | undefined;
@@ -676,62 +584,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       "Invalid application configuration: XERO_TARGET_SESSION_REQUIRED=true is required when XERO_WRITE_ENABLED=true",
     );
   }
-  const standingDelegationsConfigSha256 = sha256(rawStandingDelegationsJson);
-  if (
-    value.XERO_STANDING_DELEGATIONS_CONFIG_SHA256 !== undefined &&
-    value.XERO_STANDING_DELEGATIONS_CONFIG_SHA256 !== standingDelegationsConfigSha256
-  ) {
-    throw new Error(
-      "Invalid application configuration: XERO_STANDING_DELEGATIONS_CONFIG_SHA256 does not match the exact XERO_STANDING_DELEGATIONS_JSON bytes",
-    );
-  }
-  if (
-    value.XERO_WRITE_ENABLED &&
-    (!env.XERO_AUTHORITY_REVISION?.trim() || value.XERO_STANDING_DELEGATIONS_CONFIG_SHA256 === undefined ||
-      value.XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256 === undefined ||
-      value.XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 === undefined)
-  ) {
-    throw new Error(
-      "Invalid application configuration: explicit XERO_AUTHORITY_REVISION, XERO_STANDING_DELEGATIONS_CONFIG_SHA256, XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256 and XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 are required when XERO_WRITE_ENABLED=true",
-    );
-  }
-  if (
-    value.XERO_WRITE_ENABLED &&
-    !value.XERO_STANDING_DELEGATIONS_JSON.some((delegation) => delegation.status === "ACTIVE")
-  ) {
-    throw new Error(
-      "Invalid application configuration: at least one active Xero standing delegation is required when XERO_WRITE_ENABLED=true",
-    );
-  }
-  const firmGovernanceRequired = value.XERO_STANDING_DELEGATIONS_JSON.some((delegation) =>
-    delegation.status === "ACTIVE" && delegation.firmGovernanceRequired === true);
-  if (value.XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 !== undefined &&
-      ((firmGovernanceRequired && value.XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 === "NOT_REQUIRED") ||
-        (!firmGovernanceRequired && value.XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 !== "NOT_REQUIRED"))) {
-    throw new Error(
-      "Invalid application configuration: XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 does not match the standing-delegation governance requirement",
-    );
-  }
-  if (value.XERO_WRITE_ENABLED) {
-    // ADR-002: per-tenant chart-of-accounts profiles are no longer a write-gate
-    // precondition. Account and tax coordinates are declared by the caller and
-    // verified against the target tenant's live chart of accounts and tax rates
-    // at prepare and again at the provider permit edge. The environment
-    // variable itself is retained so existing deployments keep booting.
-    // Firm-governance exclusive-writer authority is no longer a deployment
-    // precondition for any write action. It guarded one residual case: another
-    // writer creating the same coordinate in Xero, on routes where Xero itself
-    // does not enforce uniqueness. That residual is now carried by controls
-    // that cost nothing to provision -- the provider coordinate-history lookup
-    // before every create, our own durable coordinate reservation, the
-    // idempotency identity, and the fact that this connector only ever creates
-    // DRAFTs that an accountant reviews in Xero before posting.
-    //
-    // Requiring signed governance artifacts up front bought none of that back;
-    // it only stopped a deployment from writing anything at all until firm
-    // signing infrastructure existed, which is the wrong trade while the
-    // product is being put in front of its first users.
-  }
   const tokenEncryptionKey = Buffer.from(value.TOKEN_ENCRYPTION_KEY_B64, "base64");
   const xeroMutationConfirmationKey = Buffer.from(value.XERO_MUTATION_CONFIRMATION_KEY_B64, "base64");
   if (tokenEncryptionKey.equals(xeroMutationConfirmationKey)) {
@@ -769,27 +621,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     xeroWriteEnabled: value.XERO_WRITE_ENABLED,
     ...(xeroBuildIdentity ? { xeroBuildIdentity } : {}),
-    xeroAuthorityRevision: value.XERO_AUTHORITY_REVISION,
-    xeroStandingDelegations: Object.freeze([...value.XERO_STANDING_DELEGATIONS_JSON]),
-    xeroStandingDelegationsConfigSha256: standingDelegationsConfigSha256,
-    ...(value.XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256
-      ? { xeroExpectedAuthoritySnapshotSha256: value.XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256 }
-      : {}),
-    ...(value.XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256
-      ? { xeroExpectedFirmGovernanceAggregateSha256:
-          value.XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 }
-      : {}),
     ...(value.XERO_ALLOWED_TENANT_ID ? { xeroAllowedTenantId: value.XERO_ALLOWED_TENANT_ID } : {}),
     xeroAccountingCaseTestTenantIds: Object.freeze([...value.XERO_ACCOUNTING_CASE_TEST_TENANT_IDS]),
     xeroTenantCoaProfiles: Object.freeze([...value.XERO_TENANT_COA_PROFILES_JSON]),
-    ...(value.XERO_GOVERNANCE_TRUST_BUNDLE_SHA256 && value.XERO_GOVERNANCE_RECEIPTS_SHA256 &&
-      value.XERO_GOVERNANCE_STATUS_SHA256 ? {
-        xeroGovernanceExpectedHashes: Object.freeze({
-          trustBundleSha256: value.XERO_GOVERNANCE_TRUST_BUNDLE_SHA256,
-          receiptsSha256: value.XERO_GOVERNANCE_RECEIPTS_SHA256,
-          statusSha256: value.XERO_GOVERNANCE_STATUS_SHA256,
-        }),
-      } : {}),
     ...(value.NODE_ENV === "test" ? {
       xeroAccountingCaseBusinessAuthorities: Object.freeze([
         ...value.XERO_ACCOUNTING_CASE_BUSINESS_AUTHORITIES_JSON,

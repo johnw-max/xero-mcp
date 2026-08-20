@@ -15,12 +15,12 @@
     {
       "id": "CG-003",
       "false_equivalence": "DRAFT equals posted, approved, authorised, paid, reconciled, or filed",
-      "required_evidence": "Use only the literal Xero status; DRAFT must be reported as awaiting human review."
+      "required_evidence": "Use only the literal Xero status; DRAFT remains a draft until a released typed Case state action completes with its expected exact read-back."
     },
     {
       "id": "CG-004",
       "false_equivalence": "An open emergency write gate proves the request has accounting authority",
-      "required_evidence": "The execute receipt must bind the exact Case/version, workspace, Agent, installation, Tenant, target session and active Standing Delegation revision before one write attempt."
+      "required_evidence": "The execute receipt must bind the exact Case/version, workspace, Agent, installation, Tenant, pinned OAuth target session, released typed Case action and active write gate before one write attempt."
     },
     {
       "id": "CG-005",
@@ -40,7 +40,7 @@
     {
       "id": "CG-008",
       "false_equivalence": "source_sha256 proves the original Work file",
-      "required_evidence": "A Host-signed receipt over the immutable file identity, version, digest, user, workspace, and action."
+      "required_evidence": "Drive/source identity together with the submitted source version and hash evidence. This proves the bounded source reference used by the Case, not an unverified claim about an original file."
     },
     {
       "id": "CG-009",
@@ -50,7 +50,7 @@
     {
       "id": "CG-010",
       "false_equivalence": "A prepared Case or technically valid operation equals a completed ledger write",
-      "required_evidence": "Prepare reports NOT_WRITTEN. Execute loads the immutable stored Case, revalidates Standing Delegation, and success requires Provider receipt plus exact same-ID readback for every eligible operation."
+      "required_evidence": "Prepare reports NOT_WRITTEN. Execute loads the immutable stored Case, revalidates the OAuth target session, released typed action and write gate, and success requires Provider receipt plus exact same-ID readback for every eligible operation."
     },
     {
       "id": "CG-011",

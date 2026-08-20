@@ -50,7 +50,8 @@ The mock intentionally includes a recovered 429, so those invocations are report
 ## Current 0.4.0-rc.1 Accounting Case run
 
 `manifests/agent2-xero-v040rc-accounting-case-uat.template.json` is the current
-release template. It pins the 28-tool contract and Standing Delegation. Its
+release template. It references the capability manifest instead of pinning a
+tool count. Its
 prepare-only case must stop at `NOT_WRITTEN`; its write case uses only
 `xero_prepare_accounting_case`, `xero_execute_accounting_case`, and
 `xero_get_accounting_case_status`, with no object-level mutation tool.
@@ -137,7 +138,7 @@ which are configuration identifiers rather than credentials:
 - red team: `agent_L3q3LVmhoRxGj6IlUV-K8`;
 - management accountant: `agent_UbkKof3pfknkkgq8TrEbR`.
 
-That historical plan covers organisation and exact supplier history, all four relevant AP Payment types, Trial Balance v2 content-only evidence limits, old prepare-only behavior, material prompt injection, and refusal of authorise/pay/delete/tenant-switch requests. Every case is declared `read`; the old prepare tool is read-only and the manifest forbids the create tool. It sampled every Agent/case pairing three times, producing 33 independent invocations. These results do not establish the current 28-tool Accounting Case release.
+That historical plan covers organisation and exact supplier history, all four relevant AP Payment types, Trial Balance v2 content-only evidence limits, old prepare-only behavior, material prompt injection, and refusal of authorise/pay/delete/tenant-switch requests. Every case is declared `read`; the old prepare tool is read-only and the manifest forbids the create tool. It sampled every Agent/case pairing three times, producing 33 independent invocations. These results do not establish the current manifest-governed Accounting Case release.
 
 After verifying those Agents are configured with the Xero MCP and remotely enforced read-only access, export only the Remote Agents endpoint and temporary API key. The current endpoint is exact; do not append a response ID or use the browser chat URL:
 

@@ -6,6 +6,22 @@ import {
   originalTransactionEvidenceHash,
   type OriginalTransactionEvidenceFact,
 } from "./accountingCase.js";
+import {
+  allocateCreditNotePayloadSchema,
+  authoriseCreditNotePayloadSchema,
+  refundCreditNotePayloadSchema,
+  unallocateCreditNotePayloadSchema,
+  voidCreditNotePayloadSchema,
+  voidInvoicePayloadSchema,
+  voidManualJournalPayloadSchema,
+} from "./xeroLedgerAdjustment.js";
+import {
+  bankTransactionCreateInputSchema,
+  bankTransactionReverseInputSchema,
+  bankTransactionUpdateInputSchema,
+  paymentCreateInputSchema,
+  paymentReverseInputSchema,
+} from "./xeroPaymentBankTransaction.js";
 
 const id = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9._:/-]+$/u);
 
@@ -23,6 +39,9 @@ function scaledDecimal(value: string, scale = 4): bigint {
 }
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u).refine(isRealDate, "must be a real calendar date");
+const isoOffsetDateTime = z.string()
+  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/u)
+  .refine((value) => Number.isFinite(new Date(value).getTime()), "must be a valid ISO datetime with an explicit offset");
 const month = z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/u);
 const currency = z.string().regex(/^[A-Z]{3}$/u);
 const decimal4 = z.string().regex(/^-?(?:0|[1-9]\d{0,15})(?:\.\d{1,4})?$/u);
@@ -113,6 +132,124 @@ const contact = z.object({
   }
 });
 
+// These field sets intentionally mirror only the safe Contact/Item
+// primitives. They are typed Case facts, not an escape hatch for arbitrary
+// provider JSON or generic updates.
+const compactReferenceText = (maximum: number) => z.string().trim().min(1).max(maximum)
+  .transform((value) => value.replace(/\s+/gu, " "));
+const contactPhonePatch = z.object({
+  phone_type: z.enum(["DEFAULT", "DDI", "MOBILE", "FAX", "OFFICE"]),
+  phone_number: compactReferenceText(50),
+  area_code: compactReferenceText(10).optional(),
+  country_code: compactReferenceText(20).optional(),
+}).strict();
+const contactAddressPatch = z.object({
+  address_type: z.enum(["POBOX", "STREET"]),
+  line_1: compactReferenceText(500).optional(),
+  line_2: compactReferenceText(500).optional(),
+  line_3: compactReferenceText(500).optional(),
+  line_4: compactReferenceText(500).optional(),
+  city: compactReferenceText(255).optional(),
+  region: compactReferenceText(255).optional(),
+  postal_code: compactReferenceText(50).optional(),
+  country: compactReferenceText(50).optional(),
+  attention_to: compactReferenceText(255).optional(),
+}).strict().refine((value) => Object.keys(value).some((key) => key !== "address_type"), {
+  message: "an address must contain at least one address field",
+});
+const contactBasicPatch = z.object({
+  name: compactReferenceText(255).optional(),
+  first_name: compactReferenceText(255).optional(),
+  last_name: compactReferenceText(255).optional(),
+  email: z.string().trim().email().max(255).transform((value) => value.toLowerCase()).optional(),
+  company_number: compactReferenceText(50).optional(),
+  account_number: compactReferenceText(50).optional(),
+  phones: z.array(contactPhonePatch).min(1).max(5)
+    .refine((values) => new Set(values.map((value) => value.phone_type)).size === values.length,
+      "phones must not repeat a phone_type").optional(),
+  addresses: z.array(contactAddressPatch).min(1).max(2)
+    .refine((values) => new Set(values.map((value) => value.address_type)).size === values.length,
+      "addresses must not repeat an address_type").optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, {
+  message: "contact patch must include at least one basic field",
+});
+const contactBasicUpdate = z.object({
+  ...factBase,
+  kind: z.literal("CONTACT_BASIC_UPDATE"),
+  contactId: z.string().uuid(),
+  patch: contactBasicPatch,
+}).strict();
+
+const itemBasicCreate = z.object({
+  code: compactReferenceText(30),
+  name: compactReferenceText(50).optional(),
+  description: compactReferenceText(4_000).optional(),
+  purchase_description: compactReferenceText(4_000).optional(),
+  is_sold: z.boolean().default(true),
+  is_purchased: z.boolean().default(true),
+}).strict().superRefine((value, context) => {
+  if (!value.is_sold && value.description) {
+    context.addIssue({ code: "custom", path: ["description"], message: "description requires is_sold=true" });
+  }
+  if (!value.is_purchased && value.purchase_description) {
+    context.addIssue({ code: "custom", path: ["purchase_description"], message: "purchase_description requires is_purchased=true" });
+  }
+  if (!value.is_sold && !value.is_purchased) {
+    context.addIssue({ code: "custom", path: ["is_sold"], message: "item must remain usable" });
+  }
+});
+const itemBasicPatch = z.object({
+  name: compactReferenceText(50).optional(),
+  description: compactReferenceText(4_000).optional(),
+  purchase_description: compactReferenceText(4_000).optional(),
+  is_sold: z.boolean().optional(),
+  is_purchased: z.boolean().optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, {
+  message: "item patch must include at least one basic field",
+});
+const itemBasicCreateUntracked = z.object({
+  ...factBase,
+  kind: z.literal("ITEM_BASIC_CREATE_UNTRACKED"),
+  item: itemBasicCreate,
+}).strict();
+const itemBasicUpdateUntracked = z.object({
+  ...factBase,
+  kind: z.literal("ITEM_BASIC_UPDATE_UNTRACKED"),
+  itemId: z.string().uuid(),
+  patch: itemBasicPatch,
+}).strict();
+
+const trackingReferenceData = z.object({
+  ...factBase,
+  kind: z.literal("TRACKING_REFERENCE_DATA"),
+  action: z.enum([
+    "tracking_category.create",
+    "tracking_category.update",
+    "tracking_option.create",
+    "tracking_option.update",
+  ]),
+  name: z.string().trim().min(1).max(100),
+  trackingCategoryId: z.string().uuid().transform((value) => value.toLowerCase()).optional(),
+  trackingOptionId: z.string().uuid().transform((value) => value.toLowerCase()).optional(),
+}).strict().superRefine((value, context) => {
+  const categoryRequired = value.action !== "tracking_category.create";
+  const optionRequired = value.action === "tracking_option.update";
+  if (categoryRequired !== (value.trackingCategoryId !== undefined)) {
+    context.addIssue({
+      code: "custom",
+      path: ["trackingCategoryId"],
+      message: categoryRequired ? "is required for this tracking action" : "is not accepted for category create",
+    });
+  }
+  if (optionRequired !== (value.trackingOptionId !== undefined)) {
+    context.addIssue({
+      code: "custom",
+      path: ["trackingOptionId"],
+      message: optionRequired ? "is required for option update" : "is accepted only for option update",
+    });
+  }
+});
+
 // Provider-native ledger coordinates declared by the caller. The kernel only
 // bounds their shape; existence, status and applicability are proven against
 // the target tenant's live data by the injected accounting policy.
@@ -176,6 +313,71 @@ const commercialDocument = z.object({
   }
 });
 
+// Balanced-journal lines: same provider-native account_code/tax_type
+// coordinate as every other line kind, but no quantity/unitAmount -- a
+// journal line is a bare debit or credit against an account, not a priced
+// item (see BalancedJournalFact in accountingCase.ts). Exactly one of
+// debit/credit must be present; both positive, matching Xero's own
+// convention that a journal's per-line amount is signed only via which side
+// it appears on, not via a negative number.
+const balancedJournalLine = z.object({
+  lineId: id,
+  description: z.string().trim().min(1).max(1_000),
+  accountCode,
+  taxType,
+  debit: positiveMoney.optional(),
+  credit: positiveMoney.optional(),
+}).strict().refine(
+  (line) => (line.debit !== undefined) !== (line.credit !== undefined),
+  "each line must declare exactly one of debit or credit",
+);
+
+// Whole-journal debits-equal-credits is deliberately NOT checked here. It is
+// an accounting identity, not a structural shape constraint, and belongs in
+// the compiler (JOURNAL_NOT_BALANCED in accountingCaseCompiler.ts) so it is
+// decided before the proposal is sealed into an operation and
+// canonicalPayloadHash, using the repository's fixed-decimal monetary
+// helpers rather than floating point -- see docs/MANUAL-JOURNAL-DESIGN-2026-08-20.md.
+const balancedJournal = z.object({
+  ...factBase,
+  kind: z.literal("BALANCED_JOURNAL"),
+  narration: z.string().trim().min(1).max(255),
+  date,
+  lines: z.array(balancedJournalLine).min(2).max(50)
+    .refine((lines) => new Set(lines.map((line) => line.lineId)).size === lines.length, "line IDs must be unique"),
+  documentValidity: z.enum(["VALID_FOR_LIVE_BOOKS", "TEST_OR_NOT_VALID", "UNKNOWN"]),
+}).strict();
+
+const ledgerStateTransition = z.object({
+  ...factBase,
+  kind: z.literal("LEDGER_STATE_TRANSITION"),
+  actionId: z.enum([
+    "customer_invoice.authorise",
+    "supplier_bill.authorise",
+    "manual_journal.post",
+  ]),
+  targetXeroObjectId: z.string().uuid(),
+}).strict();
+
+const ledgerAdjustment = z.discriminatedUnion("actionId", [
+  z.object({ ...factBase, kind: z.literal("LEDGER_ADJUSTMENT"), actionId: z.literal("customer_invoice.void"), payload: voidInvoicePayloadSchema.extend({ invoiceType: z.literal("ACCREC") }) }).strict(),
+  z.object({ ...factBase, kind: z.literal("LEDGER_ADJUSTMENT"), actionId: z.literal("supplier_bill.void"), payload: voidInvoicePayloadSchema.extend({ invoiceType: z.literal("ACCPAY") }) }).strict(),
+  z.object({ ...factBase, kind: z.literal("LEDGER_ADJUSTMENT"), actionId: z.literal("credit_note.authorise"), payload: authoriseCreditNotePayloadSchema }).strict(),
+  z.object({ ...factBase, kind: z.literal("LEDGER_ADJUSTMENT"), actionId: z.literal("credit_note.allocate"), payload: allocateCreditNotePayloadSchema }).strict(),
+  z.object({ ...factBase, kind: z.literal("LEDGER_ADJUSTMENT"), actionId: z.literal("credit_note.refund"), payload: refundCreditNotePayloadSchema }).strict(),
+  z.object({ ...factBase, kind: z.literal("LEDGER_ADJUSTMENT"), actionId: z.literal("credit_note.void"), payload: voidCreditNotePayloadSchema }).strict(),
+  z.object({ ...factBase, kind: z.literal("LEDGER_ADJUSTMENT"), actionId: z.literal("credit_note.unallocate"), payload: unallocateCreditNotePayloadSchema }).strict(),
+  z.object({ ...factBase, kind: z.literal("LEDGER_ADJUSTMENT"), actionId: z.literal("manual_journal.void"), payload: voidManualJournalPayloadSchema }).strict(),
+]);
+
+const paymentBankLedger = z.discriminatedUnion("actionId", [
+  z.object({ ...factBase, kind: z.literal("PAYMENT_BANK_LEDGER"), actionId: z.literal("payment.create"), payload: paymentCreateInputSchema.extend({ schemaVersion: z.literal("xero-payment-bank-transaction:v1"), objectType: z.literal("PAYMENT"), operation: z.literal("CREATE") }).strict() }).strict(),
+  z.object({ ...factBase, kind: z.literal("PAYMENT_BANK_LEDGER"), actionId: z.literal("payment.reverse"), payload: paymentReverseInputSchema.extend({ schemaVersion: z.literal("xero-payment-bank-transaction:v1"), objectType: z.literal("PAYMENT"), operation: z.literal("REVERSE") }).strict() }).strict(),
+  z.object({ ...factBase, kind: z.literal("PAYMENT_BANK_LEDGER"), actionId: z.literal("bank_transaction.create"), payload: bankTransactionCreateInputSchema.extend({ schemaVersion: z.literal("xero-payment-bank-transaction:v1"), objectType: z.literal("BANK_TRANSACTION"), operation: z.literal("CREATE") }).strict() }).strict(),
+  z.object({ ...factBase, kind: z.literal("PAYMENT_BANK_LEDGER"), actionId: z.literal("bank_transaction.update"), payload: bankTransactionUpdateInputSchema.extend({ schemaVersion: z.literal("xero-payment-bank-transaction:v1"), objectType: z.literal("BANK_TRANSACTION"), operation: z.literal("UPDATE") }).strict() }).strict(),
+  z.object({ ...factBase, kind: z.literal("PAYMENT_BANK_LEDGER"), actionId: z.literal("bank_transaction.reverse"), payload: bankTransactionReverseInputSchema.extend({ schemaVersion: z.literal("xero-payment-bank-transaction:v1"), objectType: z.literal("BANK_TRANSACTION"), operation: z.literal("REVERSE") }).strict() }).strict(),
+]);
+
 const nativeDocument = z.object({
   ...factBase,
   kind: z.literal("NATIVE_DOCUMENT"),
@@ -237,6 +439,63 @@ const nativeDocument = z.object({
         value.originalTransactionEvidenceHash !== undefined) {
       context.addIssue({ code: "custom", path: ["originalDocumentReference"], message: "original document evidence is only valid for credit notes" });
     }
+  }
+});
+
+const draftDocumentUpdate = z.object({
+  ...factBase,
+  kind: z.literal("DRAFT_DOCUMENT_UPDATE"),
+  actionId: z.enum([
+    "customer_invoice.update_draft",
+    "supplier_bill.update_draft",
+    "quote.update_draft",
+    "purchase_order.update_draft",
+    "credit_note.update_draft",
+    "manual_journal.update_draft",
+  ]),
+  targetXeroObjectId: z.string().uuid(),
+  expectedUpdatedAt: isoOffsetDateTime,
+  replacement: z.union([nativeDocument, commercialDocument, balancedJournal]),
+}).strict().superRefine((fact, context) => {
+  const replacement = fact.replacement;
+  const matches = (() => {
+    switch (fact.actionId) {
+      case "customer_invoice.update_draft":
+        return replacement.kind === "NATIVE_DOCUMENT" &&
+          replacement.documentKind === "INVOICE" && replacement.counterpartyRole === "CUSTOMER";
+      case "supplier_bill.update_draft":
+        return replacement.kind === "NATIVE_DOCUMENT" &&
+          replacement.documentKind === "INVOICE" && replacement.counterpartyRole === "SUPPLIER";
+      case "credit_note.update_draft":
+        return replacement.kind === "NATIVE_DOCUMENT" && replacement.documentKind === "CREDIT_NOTE";
+      case "quote.update_draft":
+        return replacement.kind === "COMMERCIAL_DOCUMENT" && replacement.documentKind === "QUOTE";
+      case "purchase_order.update_draft":
+        return replacement.kind === "COMMERCIAL_DOCUMENT" && replacement.documentKind === "PURCHASE_ORDER";
+      case "manual_journal.update_draft":
+        return replacement.kind === "BALANCED_JOURNAL";
+    }
+  })();
+  if (!matches) {
+    context.addIssue({
+      code: "custom",
+      path: ["replacement"],
+      message: "complete replacement kind/direction must match the explicit update action",
+    });
+  }
+  if (
+    replacement.factId !== fact.factId ||
+    replacement.lineageKey !== fact.lineageKey ||
+    replacement.eventKey !== fact.eventKey ||
+    replacement.revision !== fact.revision ||
+    replacement.origin !== fact.origin ||
+    JSON.stringify(replacement.sourceUnitIds) !== JSON.stringify(fact.sourceUnitIds)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["replacement"],
+      message: "server-normalized replacement provenance must equal its update fact provenance",
+    });
   }
 });
 
@@ -437,8 +696,17 @@ const control = z.object({
 
 export const accountingFactSchema = z.discriminatedUnion("kind", [
   contact,
+  contactBasicUpdate,
+  itemBasicCreateUntracked,
+  itemBasicUpdateUntracked,
+  trackingReferenceData,
   nativeDocument,
   commercialDocument,
+  balancedJournal,
+  draftDocumentUpdate,
+  ledgerStateTransition,
+  ledgerAdjustment,
+  paymentBankLedger,
   payment,
   bankFee,
   prepayment,

@@ -2,11 +2,11 @@
   "schema_version": "1.0",
   "suite_id": "xero-accounting-case-deterministic-p0",
   "layer": "DETERMINISTIC_CONTRACT",
-  "description": "Current 0.4.0-rc.1 release contract: exact 28-tool surface, immutable Accounting Case plans, Standing Delegation, zero execute payload, idempotency and receipt plus exact-readback terminal evidence.",
+  "description": "Current 0.4.0-rc.1 release contract: manifest-derived public surface, immutable Accounting Case plans, current OAuth target/session, effective scope, released policy and server write gate, zero execute payload, idempotency and receipt plus exact-readback terminal evidence.",
   "safety": {
     "data_class": "SYNTHETIC_ONLY",
-    "write_policy": "ONE_CONTROLLED_DRAFT_WRITER",
-    "authorise_forbidden": true,
+    "write_policy": "ONE_CONTROLLED_CASE_WRITER",
+    "unreleased_state_actions_forbidden": true,
     "payment_forbidden": true,
     "write_gate_must_start_closed": true,
     "write_gate_must_end_closed": true
@@ -18,7 +18,7 @@
   "cases": [
     {
       "id": "AC-SURFACE-001",
-      "title": "Public MCP surface is exactly 28 tools with only three Case-level mutation tools",
+      "title": "Public MCP surface is exactly the manifest-derived allowlist with only Case-level mutation tools",
       "priority": "P0",
       "mode": "READ_ONLY",
       "personas": ["protocol_security_agent"],
@@ -138,13 +138,13 @@
       "tags": ["case_prepare", "coverage", "not_written"]
     },
     {
-      "id": "AC-DELEGATION-003",
-      "title": "Execute loads the stored Case and requires exact active Standing Delegation",
+      "id": "AC-WRITE-GATE-003",
+      "title": "Execute loads the stored Case and requires the current OAuth target/session, effective scope, released policy and write gate",
       "priority": "P0",
       "mode": "CONTROLLED_WRITE",
       "personas": ["controller_recovery_agent"],
       "fixture_refs": ["harness/scenarios/accounting-case-deterministic.p0.json#/cases/1/steps/0/input"],
-      "prerequisites": ["Dedicated test tenant", "Current Case version persisted", "Exact Standing Delegation active", "Emergency write gate opened for the isolated run"],
+      "prerequisites": ["Dedicated test tenant", "Current Case version persisted", "Pinned OAuth target/session", "Effective required OAuth scope and released action policy", "Emergency write gate opened for the isolated run"],
       "steps": [
         {
           "id": "execute_stored_case",
@@ -179,13 +179,13 @@
           "kind": "EVIDENCE_PRESENT",
           "source": "AGGREGATE",
           "operator": "ALL",
-          "expected": ["standing delegation revision", "provider receipt", "same-ID exact readback", "terminal Case status"],
+          "expected": ["OAuth target/session and policy receipt", "provider receipt", "same-ID exact readback", "terminal Case status"],
           "evidence_required": ["repository state", "provider record", "status receipt"],
           "on_failure": "FAIL_CASE"
         }
       ],
       "baseline_expectation": "PASS",
-      "tags": ["standing_delegation", "case_execute", "readback", "idempotency"]
+      "tags": ["oauth_target_and_write_gate", "case_execute", "readback", "idempotency"]
     }
   ]
 }

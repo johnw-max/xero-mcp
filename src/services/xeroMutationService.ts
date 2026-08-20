@@ -6,7 +6,7 @@ import type {
 import { XERO_NATIVE_IDEMPOTENCY_RECOVERY_WINDOW_MS } from "../db/repository.js";
 import {
   XERO_MUTATION_ALLOWED_OPERATIONS,
-  XERO_MUTATION_EXPECTED_READBACK_STATUS,
+  expectedXeroMutationReadbackStatus,
   type BoundXeroMutationRequestInput,
   type CompleteXeroMutationReadbackInput as RepositoryReadbackInput,
   type RecordXeroMutationWriteEvidenceInput as RepositoryWriteEvidenceInput,
@@ -45,13 +45,13 @@ import { AppError } from "../errors.js";
 import { hashObject, stableStringify } from "../security/hash.js";
 import {
   requireOAuthBoundRequestContext,
+  type OAuthBoundRequestContext,
   type RequestContext,
 } from "../security/requestContext.js";
 import { z } from "zod/v4";
 import {
-  evaluateAutonomousLedgerWrite,
-  type LedgerStandingDelegation,
-  type LedgerFirmGovernanceClaim,
+  LEDGER_CONTROL_KERNEL_VERSION,
+  type LedgerAutonomousAuthorizationReceipt,
 } from "../control-kernel/ledgerControlKernel.js";
 import {
   xeroAutonomousActionForMutation,
@@ -71,17 +71,8 @@ import {
   type LedgerProviderWritePermit,
   type XeroProviderWriteAdapterOperation,
 } from "../security/xeroProviderWritePermit.js";
-import {
-  ledgerAuthoritySnapshotHash,
-  MutableTestLedgerAuthoritySnapshotResolver,
-  type LedgerAuthoritySnapshot,
-  type LedgerAuthoritySnapshotResolver,
-} from "../domain/ledgerAuthority.js";
-import {
-  resolveXeroFirmGovernanceExpectation,
-  selectXeroFirmGovernanceClaim,
-  type XeroFirmGovernanceExpectation,
-} from "../policy/xeroFirmGovernanceClaim.js";
+import type { LedgerAuthoritySnapshotResolver } from "../domain/ledgerAuthority.js";
+import type { XeroFirmGovernanceExpectation } from "../policy/xeroFirmGovernanceClaim.js";
 
 import { XERO_WRITE_ACTIONS, type XeroWriteActionId } from "../domain/xeroWriteActions.js";
 
@@ -93,6 +84,13 @@ const MAX_CONFIRMATION_DETAILS_BYTES = 16 * 1_024;
 const MAX_JSON_DEPTH = 20;
 const MAX_JSON_NODES = 50_000;
 const FORBIDDEN_JSON_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+const CURRENT_WRITE_GATE_DELEGATION_ID = "xero-current-case-write-gate";
+const CURRENT_WRITE_GATE_REVISION = 1;
+const CURRENT_WRITE_GATE_COMPATIBILITY_HASH = hashObject({
+  executionAuthority: "OAUTH_TARGET_BOUND_WRITE_GATE",
+  providerId: "xero",
+  version: 1,
+});
 
 const PROVIDER_ADAPTER_OPERATION_BY_ACTION: Readonly<
   Record<XeroAutonomousWriteAction, XeroProviderWriteAdapterOperation>
@@ -143,11 +141,12 @@ export interface PreparedXeroMutation {
 
 export interface XeroMutationServiceOptions {
   confirmationSecret: string | Buffer;
+  /** Current release process-level XERO_WRITE_ENABLED gate. */
+  writeEnabled?: boolean;
+  /** @deprecated Historical-test input; ignored by the current release path. */
   authoritySnapshotResolver?: LedgerAuthoritySnapshotResolver;
-  /** @deprecated Test-only compatibility. */
+  /** @deprecated Historical-test alias for writeEnabled. */
   writeKillSwitchEnabled?: boolean;
-  /** @deprecated Test-only compatibility. */
-  standingDelegations?: readonly LedgerStandingDelegation[];
   confirmationTtlMs?: number;
   now?: () => Date;
   unsafeAllowLegacyContextForTests?: boolean;
@@ -195,15 +194,11 @@ export interface AutonomousActionsPreflightReceipt {
   tenantId: string;
   targetSessionId: string;
   bindingRevision: number;
-  authoritySnapshotRevision: number;
-  authoritySnapshotHash: string;
   checkedAt: string;
   checks: Array<{
     actionId: XeroAutonomousWriteAction;
-    delegationId: string;
-    delegationRevision: number;
     providerCapabilityReceiptHash: string;
-    kernelDecisionReceiptHash: string;
+    writeGateReceiptHash: string;
   }>;
   receiptHash: string;
 }
@@ -277,7 +272,7 @@ export class XeroMutationService {
   readonly #now: () => Date;
   readonly #allowLegacyForTests: boolean;
   readonly #legacyBinding?: XeroMutationBindingIdentity;
-  readonly #authoritySnapshotResolver: LedgerAuthoritySnapshotResolver;
+  readonly #writeEnabled: boolean;
   readonly #providerCapabilityEvaluator: XeroRuntimeCapabilityEvaluator | undefined;
 
   constructor(
@@ -296,32 +291,7 @@ export class XeroMutationService {
     }
     this.#confirmationTtlMs = ttl;
     this.#now = options.now ?? (() => new Date());
-    if (options.authoritySnapshotResolver) {
-      if (
-        process.env.NODE_ENV !== "test" &&
-        options.authoritySnapshotResolver.claimConsistency !== "REPOSITORY_ATOMIC"
-      ) {
-        throw new AppError(
-          "CONFIGURATION_ERROR",
-          "Production Xero writes require repository-atomic ledger authority claims.",
-        );
-      }
-      this.#authoritySnapshotResolver = options.authoritySnapshotResolver;
-    } else {
-      if (process.env.NODE_ENV !== "test") {
-        throw new AppError(
-          "CONFIGURATION_ERROR",
-          "Production Xero writes require the durable ledger authority snapshot resolver.",
-        );
-      }
-      this.#authoritySnapshotResolver = new MutableTestLedgerAuthoritySnapshotResolver({
-        providerId: "xero",
-        revision: 1,
-        writeKillSwitchEnabled: options.writeKillSwitchEnabled === true,
-        standingDelegations: options.standingDelegations ?? [],
-        publishedAt: new Date(0),
-      });
-    }
+    this.#writeEnabled = options.writeEnabled ?? options.writeKillSwitchEnabled === true;
     this.#providerCapabilityEvaluator = options.providerCapabilityEvaluator;
     this.#allowLegacyForTests = options.unsafeAllowLegacyContextForTests === true;
     if (this.#allowLegacyForTests) {
@@ -633,7 +603,7 @@ export class XeroMutationService {
       }
       return {
         preparation,
-        claim: await this.#claimNativeIdempotencyRecovery(context, preparation, request, binding, actionId),
+        claim: await this.#claimNativeIdempotencyRecovery(context, request, binding, actionId),
       };
     }
     return { preparation, claim: { request, mode: "RECOVER_ONLY" } };
@@ -642,11 +612,10 @@ export class XeroMutationService {
   /**
    * Claims the only safe provider replay: the original Xero idempotency key is
    * retained, the claim is durable/CAS-protected, and a fresh one-shot permit
-   * is issued only for the exact original authority and payload.
+   * is issued only for the exact original OAuth binding, target and payload.
    */
   async #claimNativeIdempotencyRecovery(
     context: RequestContext,
-    preparation: XeroMutationPreparation,
     request: XeroMutationRequest,
     binding: XeroMutationBindingIdentity,
     actionId: XeroAutonomousWriteAction,
@@ -683,18 +652,10 @@ export class XeroMutationService {
       !Number.isSafeInteger(receiptAuthorityRevision) ||
       typeof receiptAuthorityHash !== "string"
     ) {
-      throw new AppError("WRITE_RESULT_UNKNOWN", "Native idempotency recovery authority or window is invalid.", {
+      throw new AppError("WRITE_RESULT_UNKNOWN", "Native idempotency recovery binding or window is invalid.", {
         httpStatus: 409,
         retryable: false,
         details: { reasonCode: "RECOVERY_AUTHORITY_OR_WINDOW_INVALID" },
-      });
-    }
-    const authority = await this.#resolveAuthoritySnapshot();
-    if (authority.revision !== receiptAuthorityRevision || authority.snapshotHash !== receiptAuthorityHash) {
-      throw new AppError("APPROVAL_INVALID", "Ledger authority changed before native idempotency recovery.", {
-        httpStatus: 409,
-        retryable: false,
-        details: { reasonCode: "RECOVERY_AUTHORITY_DRIFT" },
       });
     }
     const recoveryFirstAttemptAt = firstAttemptAt;
@@ -707,7 +668,7 @@ export class XeroMutationService {
       !recoveryFirstAttemptAt || !recoveryTargetSessionId || !recoveryAgentId ||
       !(recoveryTargetSessionExpiresAt instanceof Date)
     ) {
-      throw new AppError("WRITE_RESULT_UNKNOWN", "Native idempotency recovery authority is incomplete.", {
+      throw new AppError("WRITE_RESULT_UNKNOWN", "Native idempotency recovery binding is incomplete.", {
         httpStatus: 409,
         retryable: false,
       });
@@ -728,52 +689,18 @@ export class XeroMutationService {
       this.#providerCapabilityEvaluator.evaluate(context, actionId),
       Promise.resolve(lookupAgentFacingXeroCapabilityDecision(actionId)),
     ]);
-    const validationReceiptHash = request.validationReceipt?.receiptHash;
-    const caseVersion = authorityReceipt.caseVersion;
-    const sourceRevisionHash = objectPreparationSourceRevisionHash(preparation);
-    const decision = evaluateAutonomousLedgerWrite({
-      actionId,
-      canonicalPayloadHash: request.canonicalPayloadHash,
-      sourceRevisionHash,
-      caseVersion: typeof caseVersion === "number" ? caseVersion : -1,
-      authoritySnapshotRevision: authority.revision,
-      authoritySnapshotHash: authority.snapshotHash,
-      principal: {
-        actorId: oauth.actorId,
-        workspaceId: oauth.workspaceId,
-        agentId: oauth.agentId,
-        installationId: oauth.oauthInstallationId,
-        bindingId: oauth.bindingId,
-        bindingRevision: oauth.bindingRevision,
-        connectionId: oauth.connectionId,
-      },
-      target: {
-        providerId: "xero",
-        tenantId: binding.tenantId,
-        targetSessionId: oauth.targetSessionId,
-        targetSessionExpiresAt: oauth.targetSessionExpiresAt,
-      },
-      standingDelegations: authority.standingDelegations,
-      writeKillSwitchEnabled: authority.writeKillSwitchEnabled,
-      staticActionReleased: actionPolicy.knownAction && actionPolicy.policyAllowsExecution,
-      transportScopeAllowed: oauth.scopes.includes("xero.draft.write"),
-      providerAccessDenyReasons: providerCapability.denyReasons,
-      providerCapabilityReceiptHash: providerCapability.receiptHash,
-      ...(authorityReceipt.firmGovernanceClaim
-        ? { firmGovernanceClaim: authorityReceipt.firmGovernanceClaim as LedgerFirmGovernanceClaim }
-        : {}),
-      firmGovernanceRequired: authorityReceipt.firmGovernanceClaim !== undefined,
-      validation: {
-        passed: true,
-        ...(typeof validationReceiptHash === "string" ? { receiptHash: validationReceiptHash } : {}),
-      },
+    const denyReasons = this.#currentWriteGateDenyReasons(
+      oauth,
+      actionPolicy.knownAction && actionPolicy.policyAllowsExecution,
+      providerCapability.denyReasons,
+      providerCapability.receiptHash,
       now,
-    });
-    if (!decision.allowed) {
+    );
+    if (denyReasons.length > 0) {
       throw xeroCapabilityDenied(
-        "The current authority is not effective for native idempotency recovery.",
-        decision.denyReasons,
-        { providerAccessDenyReasons: decision.providerAccessDenyReasons },
+        "The current OAuth-bound write gate is not effective for native idempotency recovery.",
+        denyReasons,
+        { providerAccessDenyReasons: providerCapability.denyReasons },
       );
     }
     const claim: XeroNativeIdempotencyRecoveryClaim = {
@@ -812,12 +739,9 @@ export class XeroMutationService {
     };
   }
 
-  /**
-   * Read-only whole-case authority preflight. It proves the current effective
-   * action intersection without creating a preparation, receipt, claim or
-   * provider mutation. Execution repeats the same checks at the final write
-   * boundary, so this is an early all-or-nothing gate rather than authority.
-   */
+  /** Read-only whole-case capability preflight. This is not user approval or
+   * standing authority; every operation repeats the same current OAuth target,
+   * release gate, action-policy and Provider-capability checks before claim. */
   async preflightAutonomousActions(
     context: RequestContext,
     actionIds: readonly XeroAutonomousWriteAction[],
@@ -846,53 +770,34 @@ export class XeroMutationService {
       ]);
       return { actionId, providerCapability, actionPolicy };
     }));
-    const authoritySnapshot = await this.#resolveAuthoritySnapshot();
     const now = this.#currentTime();
     for (const { actionId, providerCapability, actionPolicy } of capabilityChecks) {
-      const decision = evaluateAutonomousLedgerWrite({
-        actionId,
-        canonicalPayloadHash: hashObject({ preflight: actionId }),
-        sourceRevisionHash: hashObject({ preflightSource: actionId }),
-        caseVersion: 1,
-        authoritySnapshotRevision: authoritySnapshot.revision,
-        authoritySnapshotHash: authoritySnapshot.snapshotHash,
-        principal: {
-          actorId: oauth.actorId,
-          workspaceId: oauth.workspaceId,
-          agentId: oauth.agentId,
-          installationId: oauth.oauthInstallationId,
-          bindingId: oauth.bindingId,
-          bindingRevision: oauth.bindingRevision,
-          connectionId: oauth.connectionId,
-        },
-        target: {
-          providerId: "xero",
-          tenantId: binding.tenantId,
-          targetSessionId: oauth.targetSessionId,
-          targetSessionExpiresAt: oauth.targetSessionExpiresAt,
-        },
-        standingDelegations: authoritySnapshot.standingDelegations,
-        writeKillSwitchEnabled: authoritySnapshot.writeKillSwitchEnabled,
-        staticActionReleased: actionPolicy.knownAction && actionPolicy.policyAllowsExecution,
-        transportScopeAllowed: oauth.scopes.includes("xero.draft.write"),
-        providerAccessDenyReasons: providerCapability.denyReasons,
-        providerCapabilityReceiptHash: providerCapability.receiptHash,
-        validation: { passed: true, receiptHash: hashObject({ validationPreflight: actionId }) },
+      const denyReasons = this.#currentWriteGateDenyReasons(
+        oauth,
+        actionPolicy.knownAction && actionPolicy.policyAllowsExecution,
+        providerCapability.denyReasons,
+        providerCapability.receiptHash,
         now,
-      });
-      if (!decision.allowed) {
+      );
+      if (denyReasons.length > 0) {
         throw xeroCapabilityDenied(
-          "The standing autonomous Xero authority is not effective for the full Accounting Case.",
-          decision.denyReasons,
-          { providerAccessDenyReasons: decision.providerAccessDenyReasons },
+          "The current Xero write gate is not effective for the full Accounting Case.",
+          denyReasons,
+          { providerAccessDenyReasons: providerCapability.denyReasons },
         );
       }
       checks.push({
         actionId,
-        delegationId: decision.delegation.delegationId,
-        delegationRevision: decision.delegation.revision,
-        providerCapabilityReceiptHash: decision.receipt.providerCapabilityReceiptHash,
-        kernelDecisionReceiptHash: decision.receipt.receiptHash,
+        providerCapabilityReceiptHash: providerCapability.receiptHash,
+        writeGateReceiptHash: hashObject({
+          receiptType: "XERO_CASE_WRITE_PREFLIGHT_CHECK",
+          actionId,
+          tenantId: binding.tenantId,
+          targetSessionId: oauth.targetSessionId,
+          bindingRevision: oauth.bindingRevision,
+          providerCapabilityReceiptHash: providerCapability.receiptHash,
+          checkedAt: now.toISOString(),
+        }),
       });
     }
     const unsigned = {
@@ -900,26 +805,22 @@ export class XeroMutationService {
       tenantId: binding.tenantId,
       targetSessionId: oauth.targetSessionId,
       bindingRevision: oauth.bindingRevision,
-      authoritySnapshotRevision: authoritySnapshot.revision,
-      authoritySnapshotHash: authoritySnapshot.snapshotHash,
       checkedAt: now.toISOString(),
       checks,
     };
     return Object.freeze({ ...unsigned, receiptHash: hashObject(unsigned) });
   }
 
-  /**
-   * Atomically consumes a deterministically validated immutable preparation
-   * and claims the provider-write slot under standing delegation. The Agent
-   * supplies no payload, tenant, validation receipt, or authority material.
-   */
+  /** Atomically consumes a deterministically validated immutable preparation
+   * and claims the one-shot Provider-write slot under the current OAuth-bound
+   * target and process write gate. The Agent supplies no authority material. */
   async authoriseAutonomous(
     context: RequestContext,
     rawInput: AuthoriseAutonomousXeroMutationInput,
     expectation: XeroMutationConfirmationExpectation,
     rawValidationReceipt: DeterministicValidationReceipt,
     beforeProviderClaimValidation?: () => Promise<void>,
-    sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
+    _sealedFirmGovernanceExpectation?: XeroFirmGovernanceExpectation,
   ): Promise<AutonomousXeroMutationClaim> {
     const input = parseStrict(
       authoriseAutonomousXeroMutationSchema,
@@ -985,62 +886,20 @@ export class XeroMutationService {
         ["DETERMINISTIC_VALIDATION_FAILED"],
       );
     }
-    const authoritySnapshot = await this.#resolveAuthoritySnapshot();
     const now = this.#currentTime();
-    const firmGovernanceExpectation = resolveXeroFirmGovernanceExpectation(
-      preparation,
-      sealedFirmGovernanceExpectation,
-    );
-    const firmGovernanceClaim = firmGovernanceExpectation
-      ? selectXeroFirmGovernanceClaim(authoritySnapshot, {
-          actionId,
-          tenantId: binding.tenantId,
-          workspaceId: oauth.workspaceId,
-          agentId: oauth.agentId,
-          installationId: oauth.oauthInstallationId,
-          expectation: firmGovernanceExpectation,
-        })
-      : undefined;
-    const decision = evaluateAutonomousLedgerWrite({
-      actionId,
-      canonicalPayloadHash: preparation.canonicalPayloadHash,
-      sourceRevisionHash,
-      caseVersion: validationReceipt.caseVersion,
-      authoritySnapshotRevision: authoritySnapshot.revision,
-      authoritySnapshotHash: authoritySnapshot.snapshotHash,
-      principal: {
-        actorId: oauth.actorId,
-        workspaceId: oauth.workspaceId,
-        agentId: oauth.agentId,
-        installationId: oauth.oauthInstallationId,
-        bindingId: oauth.bindingId,
-        bindingRevision: oauth.bindingRevision,
-        connectionId: oauth.connectionId,
-      },
-      target: {
-        providerId: "xero",
-        tenantId: binding.tenantId,
-        targetSessionId: oauth.targetSessionId,
-        targetSessionExpiresAt: oauth.targetSessionExpiresAt,
-      },
-      standingDelegations: authoritySnapshot.standingDelegations,
-      writeKillSwitchEnabled: authoritySnapshot.writeKillSwitchEnabled,
-      staticActionReleased: actionPolicy.knownAction && actionPolicy.policyAllowsExecution,
-      transportScopeAllowed: oauth.scopes.includes("xero.draft.write"),
-      providerAccessDenyReasons: providerCapability.denyReasons,
-      providerCapabilityReceiptHash: providerCapability.receiptHash,
-      ...(firmGovernanceClaim ? { firmGovernanceClaim } : {}),
-      firmGovernanceRequired: firmGovernanceExpectation !== undefined,
-      validation: { passed: true, receiptHash: validationReceipt.receiptHash },
+    const denyReasons = this.#currentWriteGateDenyReasons(
+      oauth,
+      actionPolicy.knownAction && actionPolicy.policyAllowsExecution,
+      providerCapability.denyReasons,
+      providerCapability.receiptHash,
       now,
-    });
-    if (!decision.allowed) {
+    );
+    if (denyReasons.length > 0) {
       throw xeroCapabilityDenied(
-        "The standing autonomous Xero authority is not effective.",
-        decision.denyReasons,
+        "The current OAuth-bound Xero write gate is not effective.",
+        denyReasons,
         {
-          providerAccessDenyReasons: decision.providerAccessDenyReasons,
-          validationReasonCodes: decision.validationReasonCodes,
+          providerAccessDenyReasons: providerCapability.denyReasons,
         },
       );
     }
@@ -1049,17 +908,15 @@ export class XeroMutationService {
     // validation and immediately before the durable WRITE_IN_FLIGHT claim.
     // A failure here creates neither a mutation request nor a provider permit.
     await beforeProviderClaimValidation?.();
-    if (this.#authoritySnapshotResolver.claimConsistency === "TEST_RESOLVER_GUARDED") {
-      const adjacent = await this.#resolveAuthoritySnapshot();
-      if (
-        adjacent.revision !== authoritySnapshot.revision ||
-        adjacent.snapshotHash !== authoritySnapshot.snapshotHash
-      ) {
-        throw new AppError("APPROVAL_INVALID", "Ledger authority changed before the provider-write claim.", {
-          httpStatus: 409,
-        });
-      }
-    }
+    const authorizationReceipt = this.#currentWriteAuthorizationReceipt({
+      actionId,
+      preparation,
+      oauth,
+      targetSessionId: oauth.targetSessionId,
+      validationReceipt,
+      providerCapabilityReceiptHash: providerCapability.receiptHash,
+      issuedAt: now,
+    });
     const result = await this.repository.confirmXeroMutationPreparation({
       ...binding,
       mutationRequestId: xeroMutationRequestIdForPreparation(input.preparationId),
@@ -1079,8 +936,8 @@ export class XeroMutationService {
       // to or supplied by the Agent on the autonomous path.
       confirmationPhraseHash: preparation.confirmationPhraseHash,
       authorizationReceipt: canonicalJsonRecord(
-        decision.receipt as unknown as Record<string, unknown>,
-        "Autonomous mutation authority receipt",
+        authorizationReceipt as unknown as Record<string, unknown>,
+        "OAuth-bound mutation write receipt",
         MAX_CONFIRMATION_DETAILS_BYTES,
       ),
       successfulValidationReceipt: canonicalJsonRecord(
@@ -1089,11 +946,6 @@ export class XeroMutationService {
         MAX_CONFIRMATION_DETAILS_BYTES,
       ),
       claimForWrite: true,
-      ...(this.#authoritySnapshotResolver.claimConsistency === "REPOSITORY_ATOMIC" ? {
-        expectedAuthoritySnapshotRevision: authoritySnapshot.revision,
-        expectedAuthoritySnapshotHash: authoritySnapshot.snapshotHash,
-        ...(firmGovernanceClaim ? { expectedFirmGovernanceClaim: firmGovernanceClaim } : {}),
-      } : {}),
       now,
     });
     if (!result) {
@@ -1103,7 +955,7 @@ export class XeroMutationService {
     }
     const request = result.request;
     if (!result.created && request.state !== "READBACK_VERIFIED") {
-      const current = decision.receipt;
+      const current = authorizationReceipt;
       const existing = request.authorizationReceipt;
       const stableClaims = [
         "receiptType", "kernelVersion", "actionId", "providerId", "tenantId",
@@ -1117,7 +969,7 @@ export class XeroMutationService {
       if (stableClaims.some((key) => stableStringify(existing[key]) !== stableStringify(current[key]))) {
         throw new AppError(
           "APPROVAL_INVALID",
-          "The existing autonomous operation was authorised under a different authority revision.",
+          "The existing operation was claimed under a different OAuth target or sealed payload.",
           { httpStatus: 409 },
         );
       }
@@ -1211,7 +1063,10 @@ export class XeroMutationService {
     const completion = await this.#readbackCompletion(context, rawInput);
     if (
       completion.repositoryInput.readbackPayloadHash !== completion.request.canonicalPayloadHash ||
-      completion.repositoryInput.readbackStatus !== XERO_MUTATION_EXPECTED_READBACK_STATUS[completion.request.objectType]
+      completion.repositoryInput.readbackStatus !== expectedXeroMutationReadbackStatus(
+        completion.request.objectType,
+        completion.request.operation,
+      )
     ) {
       await this.repository.markXeroMutationReadbackMismatch(completion.repositoryInput);
       throw new AppError("READBACK_MISMATCH", "Xero readback does not match the confirmed mutation payload.", {
@@ -1228,7 +1083,10 @@ export class XeroMutationService {
     const completion = await this.#readbackCompletion(context, rawInput);
     if (
       completion.repositoryInput.readbackPayloadHash === completion.request.canonicalPayloadHash &&
-      completion.repositoryInput.readbackStatus === XERO_MUTATION_EXPECTED_READBACK_STATUS[completion.request.objectType]
+      completion.repositoryInput.readbackStatus === expectedXeroMutationReadbackStatus(
+        completion.request.objectType,
+        completion.request.operation,
+      )
     ) {
       return {
         outcome: "READBACK_VERIFIED",
@@ -1487,25 +1345,70 @@ export class XeroMutationService {
       .digest("hex");
   }
 
-  async #resolveAuthoritySnapshot(): Promise<LedgerAuthoritySnapshot> {
-    let snapshot: LedgerAuthoritySnapshot;
-    try {
-      snapshot = await this.#authoritySnapshotResolver.resolveCurrent();
-    } catch (error) {
-      throw new AppError("CONFIGURATION_ERROR", "The current ledger authority snapshot is unavailable.", {
-        httpStatus: 503,
-        cause: error,
-      });
-    }
+  #currentWriteGateDenyReasons(
+    oauth: OAuthBoundRequestContext,
+    actionReleased: boolean,
+    providerAccessDenyReasons: readonly string[],
+    providerCapabilityReceiptHash: string,
+    now: Date,
+  ): string[] {
+    const denyReasons: string[] = [];
+    if (!this.#writeEnabled) denyReasons.push("WRITE_KILL_SWITCH_DISABLED");
+    if (!actionReleased) denyReasons.push("STATIC_ACTION_NOT_RELEASED");
+    if (!oauth.scopes.includes("xero.draft.write")) denyReasons.push("TRANSPORT_SCOPE_MISSING");
     if (
-      snapshot.providerId !== "xero" ||
-      snapshot.snapshotHash !== ledgerAuthoritySnapshotHash(snapshot)
+      !oauth.targetSessionId ||
+      !oauth.targetSessionHash ||
+      !(oauth.targetSessionExpiresAt instanceof Date)
     ) {
-      throw new AppError("CONFIGURATION_ERROR", "The current ledger authority snapshot failed integrity checks.", {
-        httpStatus: 503,
-      });
+      denyReasons.push("TARGET_SESSION_REQUIRED");
+    } else if (oauth.targetSessionExpiresAt <= now) {
+      denyReasons.push("TARGET_SESSION_EXPIRED");
     }
-    return snapshot;
+    if (providerAccessDenyReasons.length > 0) denyReasons.push(...providerAccessDenyReasons);
+    if (!/^[a-f0-9]{64}$/u.test(providerCapabilityReceiptHash)) {
+      denyReasons.push("PROVIDER_CAPABILITY_RECEIPT_MISSING");
+    }
+    return [...new Set(denyReasons)];
+  }
+
+  #currentWriteAuthorizationReceipt(input: {
+    actionId: XeroAutonomousWriteAction;
+    preparation: XeroMutationPreparation;
+    oauth: OAuthBoundRequestContext;
+    targetSessionId: string;
+    validationReceipt: DeterministicValidationReceipt;
+    providerCapabilityReceiptHash: string;
+    issuedAt: Date;
+  }): LedgerAutonomousAuthorizationReceipt {
+    const unsigned = {
+      receiptType: "LEDGER_AUTONOMOUS_AUTHORIZATION" as const,
+      kernelVersion: LEDGER_CONTROL_KERNEL_VERSION,
+      actionId: input.actionId,
+      providerId: "xero",
+      tenantId: input.preparation.tenantId,
+      actorId: input.oauth.actorId,
+      workspaceId: input.oauth.workspaceId,
+      agentId: input.oauth.agentId,
+      installationId: input.oauth.oauthInstallationId,
+      bindingId: input.oauth.bindingId,
+      bindingRevision: input.oauth.bindingRevision,
+      connectionId: input.oauth.connectionId,
+      targetSessionId: input.targetSessionId,
+      // Compatibility-only fields retained in the persisted receipt format;
+      // no Standing Delegation or authority snapshot is resolved or consulted.
+      delegationId: CURRENT_WRITE_GATE_DELEGATION_ID,
+      delegationRevision: CURRENT_WRITE_GATE_REVISION,
+      canonicalPayloadHash: input.preparation.canonicalPayloadHash,
+      sourceRevisionHash: objectPreparationSourceRevisionHash(input.preparation),
+      caseVersion: input.validationReceipt.caseVersion,
+      authoritySnapshotRevision: CURRENT_WRITE_GATE_REVISION,
+      authoritySnapshotHash: CURRENT_WRITE_GATE_COMPATIBILITY_HASH,
+      deterministicValidationReceiptHash: input.validationReceipt.receiptHash,
+      providerCapabilityReceiptHash: input.providerCapabilityReceiptHash,
+      issuedAt: input.issuedAt.toISOString(),
+    };
+    return Object.freeze({ ...unsigned, receiptHash: hashObject(unsigned) });
   }
 
   #currentTime(): Date {

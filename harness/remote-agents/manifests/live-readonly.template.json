@@ -1,7 +1,7 @@
 {
   "version": 1,
   "name": "agent2-live-v0.4.0-rc.1-multi-persona-readonly-template",
-  "releaseContract": "0.4.0-rc.1 / 28 public tools",
+  "releaseContract": "0.4.0-rc.1 / manifest-derived public tools",
   "settings": {
     "concurrency": 2,
     "repeats": 1,

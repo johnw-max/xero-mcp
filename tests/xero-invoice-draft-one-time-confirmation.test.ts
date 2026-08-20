@@ -298,6 +298,7 @@ function harness(initialNow = fixedNow) {
   };
   const mutations = new XeroMutationService(repository, {
     confirmationSecret: "invoice-confirmation-secret-that-is-at-least-32-bytes",
+    writeEnabled: true,
     authoritySnapshotResolver,
     now: () => currentNow,
     providerCapabilityEvaluator,
@@ -1084,7 +1085,7 @@ describe("Sales Invoice standing autonomous execution", () => {
     expect(createDraftSalesInvoice).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects native recovery after authority revision drift and never replays", async () => {
+  it("does not treat historical authority snapshot revision drift as a current write gate", async () => {
     const {
       repository,
       context,
@@ -1131,11 +1132,8 @@ describe("Sales Invoice standing autonomous execution", () => {
     });
 
     await expect(service.executePreparedSalesInvoiceDraft(context, command))
-      .rejects.toMatchObject({
-        code: "APPROVAL_INVALID",
-        details: { reasonCode: "RECOVERY_AUTHORITY_DRIFT" },
-      });
-    expect(createDraftSalesInvoice).toHaveBeenCalledOnce();
+      .rejects.toMatchObject({ code: "READBACK_MISMATCH" });
+    expect(createDraftSalesInvoice).toHaveBeenCalledTimes(2);
   });
 
   it("rejects native recovery when current Provider capability is denied", async () => {
@@ -1183,7 +1181,7 @@ describe("Sales Invoice standing autonomous execution", () => {
 
     await expect(service.executePreparedSalesInvoiceDraft(context, command))
       .rejects.toMatchObject({
-        code: "ACTION_UNSUPPORTED",
+        code: "SCOPE_MISSING",
         details: {
           providerAccessDenyReasons: ["MISSING_XERO_OAUTH_SCOPE"],
           providerMutationPossible: false,

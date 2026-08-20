@@ -12,13 +12,36 @@ import type {
   AccountingCaseOperation,
   AccountingCaseTarget,
   AccountingFact,
+  BalancedJournalFact,
+  BalancedJournalRoute,
   CommercialDocumentFact,
   CommercialDocumentRoute,
+  DraftDocumentUpdateAction,
   ContactDurableIdentity,
   NativeDocumentFact,
   NativeDocumentRoute,
   OriginalTransactionEvidenceFact,
+  LedgerStateTransitionRoute,
+  LedgerAdjustmentRoute,
+  PaymentBankLedgerRoute,
+  PaymentBankLedgerAction,
+  ReferenceDataRoute,
+  TrackingReferenceDataAction,
 } from "../domain/accountingCase.js";
+import {
+  ledgerAdjustmentObjectType,
+  ledgerAdjustmentOperation,
+  ledgerAdjustmentTargetId,
+  type LedgerAdjustmentAction,
+} from "../domain/xeroLedgerAdjustment.js";
+import {
+  buildPurchaseOrderDraftPrimitive,
+  buildQuoteDraftPrimitive,
+} from "../domain/xeroQuotePurchaseOrderDraft.js";
+import {
+  buildCreditNoteDraftPrimitive,
+  buildManualJournalDraftPrimitive,
+} from "../domain/xeroCreditNoteManualJournalDraft.js";
 import type {
   AccountingCaseBinding,
   CreateOrAdvanceAccountingCaseInput,
@@ -80,6 +103,11 @@ import { hashObject, safeEqual, sha256, stableStringify } from "../security/hash
 import { requireOAuthBoundRequestContext, type RequestContext } from "../security/requestContext.js";
 import type { AccountingService } from "./accountingService.js";
 import type {
+  PrepareContactUpdateMutationInput,
+  PrepareItemCreateMutationInput,
+  PrepareItemUpdateMutationInput,
+} from "../domain/xeroContactItemMutationSchemas.js";
+import type {
   AutonomousActionsPreflightReceipt,
   XeroMutationService,
 } from "./xeroMutationService.js";
@@ -87,6 +115,7 @@ import { xeroMutationRequestIdForPreparation } from "./xeroMutationService.js";
 import type { XeroMutationRequest } from "../domain/xeroMutation.js";
 import { resolveStableXeroTaxRate } from "../policy/xeroTaxRateResolver.js";
 import {
+  evaluateXeroBalancedJournalRouteContract,
   evaluateXeroCommercialDocumentRouteContract,
   evaluateXeroNativeRouteContract,
 } from "../policy/xeroNativeRouteContract.js";
@@ -127,6 +156,7 @@ import {
   createXeroOriginalTransactionEvidence,
   XeroOriginalTransactionEvidenceError,
 } from "../policy/xeroOriginalTransactionEvidence.js";
+import type { DraftDocumentUpdateEnvelope } from "./xeroDraftDocumentUpdateService.js";
 
 type CaseMutationProjectionState =
   | "WRITE_IN_FLIGHT"
@@ -140,6 +170,7 @@ type CasePreparationProviderReferences = {
   contact?: ContactSummary;
   creditLineAccountIds?: readonly string[];
   ledgerBinding?: XeroDeclaredLedgerBinding;
+  draftUpdateEnvelope?: DraftDocumentUpdateEnvelope;
 };
 
 type ContactResolution = Readonly<{
@@ -251,6 +282,16 @@ export interface AccountingCaseSummary {
 /** Cap for xero_list_accounting_cases: newest (by version updated_at) first. */
 export const ACCOUNTING_CASE_ATTENTION_LIST_LIMIT = 50;
 
+/**
+ * A host may dispatch prepare and execute from one tool batch before the
+ * prepare transaction is visible to the next repository read. Retrying only
+ * the initial execute lookup keeps this narrow race recoverable without
+ * changing status/recovery semantics or retrying any provider mutation.
+ * The delays total 2.55s, covering the observed ~1.95s host-batch visibility
+ * gap while keeping the fallback bounded and read-only.
+ */
+const ACCOUNTING_CASE_EXECUTE_LOOKUP_RETRY_DELAYS_MS = [50, 100, 200, 400, 800, 1000] as const;
+
 export interface AccountingCaseAttentionListSummary {
   cases: Array<{
     case_id: string;
@@ -307,8 +348,13 @@ function declaredLedgerCoordinates(
   const accountCodes = new Set<string>();
   const taxTypes = new Set<string>();
   for (const fact of facts) {
-    if (fact.kind !== "NATIVE_DOCUMENT") continue;
-    for (const line of fact.lines) {
+    const document = fact.kind === "NATIVE_DOCUMENT"
+      ? fact
+      : fact.kind === "DRAFT_DOCUMENT_UPDATE" && fact.replacement.kind === "NATIVE_DOCUMENT"
+        ? fact.replacement
+        : undefined;
+    if (!document) continue;
+    for (const line of document.lines) {
       accountCodes.add(line.accountCode);
       taxTypes.add(line.taxType);
     }
@@ -856,6 +902,40 @@ export class XeroAccountingCaseService {
         httpStatus: 503,
       });
     }
+    if (this.#isBalancedJournalRoute(operation.nativeRoute)) {
+      // Same GL-duplicate-engine gap as commercial documents, for a different
+      // reason: xeroBusinessCoordinateHistory only knows how to list/get
+      // invoices and credit notes, and Xero's ManualJournal carries no
+      // natural unique number to key such a check on regardless (see
+      // BalancedJournalRoute). #preflightBalancedJournal and
+      // #executeBalancedJournal never call this -- defensive, type-forced.
+      throw new AppError("PERSISTENCE_FAILURE", "Provider document history is unavailable for balanced-journal operations.", {
+        httpStatus: 503,
+      });
+    }
+    if (this.#isReferenceDataRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "Provider document history is unavailable for reference-data operations.", {
+        httpStatus: 503,
+      });
+    }
+    if (this.#isDraftDocumentUpdateRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A DRAFT update has no create-document governance coordinate.", {
+        httpStatus: 503,
+      });
+    }
+    if (this.#isLedgerStateTransitionRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "Provider create-history is unavailable for ledger-state transitions.", {
+        httpStatus: 503,
+      });
+    }
+    if (operation.nativeRoute === "LEDGER_ADJUSTMENT") {
+      throw new AppError("PERSISTENCE_FAILURE", "Provider create-history is unavailable for ledger adjustments.", {
+        httpStatus: 503,
+      });
+    }
+    if (operation.nativeRoute === "PAYMENT_BANK_LEDGER") {
+      throw new AppError("PERSISTENCE_FAILURE", "Provider create-history is unavailable for Payment/Bank ledger actions.", { httpStatus: 503 });
+    }
     const nativeRoute = operation.nativeRoute;
     const result = await lookupXeroProviderBusinessCoordinate({
       reader: this.provider as XeroBusinessCoordinateHistoryReadPort,
@@ -990,6 +1070,39 @@ export class XeroAccountingCaseService {
       // is ever called for them -- so this is a defensive, type-forced
       // rejection, not a live code path.
       throw new AppError("PERSISTENCE_FAILURE", "A commercial-document operation has no firm-governance document coordinate.", {
+        httpStatus: 503,
+      });
+    }
+    if (this.#isBalancedJournalRoute(operation.nativeRoute)) {
+      // Same firm-governance-is-a-GL-write-control gap as commercial
+      // documents, for a different reason: XeroFirmGovernanceExpectation.route
+      // is NativeDocumentRoute, and a balanced journal is never routed through
+      // #executeNativeDocument. #executeBalancedJournal never calls this --
+      // defensive, type-forced rejection, not a live code path.
+      throw new AppError("PERSISTENCE_FAILURE", "A balanced-journal operation has no firm-governance document coordinate.", {
+        httpStatus: 503,
+      });
+    }
+    if (this.#isLedgerStateTransitionRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A ledger-state transition has no create-document governance coordinate.", {
+        httpStatus: 503,
+      });
+    }
+    if (operation.nativeRoute === "LEDGER_ADJUSTMENT") {
+      throw new AppError("PERSISTENCE_FAILURE", "A ledger adjustment has no create-document governance coordinate.", {
+        httpStatus: 503,
+      });
+    }
+    if (operation.nativeRoute === "PAYMENT_BANK_LEDGER") {
+      throw new AppError("PERSISTENCE_FAILURE", "Payment/Bank ledger actions have no create-document governance coordinate.", { httpStatus: 503 });
+    }
+    if (this.#isReferenceDataRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A reference-data operation has no firm-governance document coordinate.", {
+        httpStatus: 503,
+      });
+    }
+    if (this.#isDraftDocumentUpdateRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A DRAFT update has no create-document governance coordinate.", {
         httpStatus: 503,
       });
     }
@@ -1444,8 +1557,13 @@ export class XeroAccountingCaseService {
     const facts = structuredClone([...publicFacts]) as AccountingFact[];
     const bindings = new Map<string, ReturnType<typeof createXeroOriginalTransactionEvidence>["binding"]>();
     const evidenceFacts: OriginalTransactionEvidenceFact[] = [];
-    for (const fact of facts) {
-      if (fact.kind !== "NATIVE_DOCUMENT" || fact.documentKind !== "CREDIT_NOTE") continue;
+    for (const owningFact of facts) {
+      const fact = owningFact.kind === "NATIVE_DOCUMENT"
+        ? owningFact
+        : owningFact.kind === "DRAFT_DOCUMENT_UPDATE" && owningFact.replacement.kind === "NATIVE_DOCUMENT"
+          ? owningFact.replacement
+          : undefined;
+      if (!fact || fact.documentKind !== "CREDIT_NOTE") continue;
       const contactBinding = contactBindings.get(fact.factId);
       if (!contactBinding) {
         throw new AppError("VALIDATION_FAILED", "Historical credit evidence requires one exact active Xero contact.", {
@@ -1678,6 +1796,18 @@ export class XeroAccountingCaseService {
             : {}),
         });
         mergeRequest(this.#contactResolutionKey(identity), identity);
+      } else if (
+        fact.kind === "DRAFT_DOCUMENT_UPDATE" &&
+        (fact.replacement.kind === "NATIVE_DOCUMENT" || fact.replacement.kind === "COMMERCIAL_DOCUMENT")
+      ) {
+        const replacement = fact.replacement;
+        const identity = normalizeXeroContactIdentity({
+          name: replacement.contactName,
+          ...(replacement.contactDurableIdentity !== undefined
+            ? { durableIdentity: replacement.contactDurableIdentity }
+            : {}),
+        });
+        mergeRequest(this.#contactResolutionKey(identity), identity);
       }
     }
     const needsCollisionIndex = [...requests.values()].some(({ identity }) =>
@@ -1736,6 +1866,25 @@ export class XeroAccountingCaseService {
         const identity = normalizeXeroContactIdentity({
           name: fact.contactName,
           ...(fact.contactDurableIdentity !== undefined ? { durableIdentity: fact.contactDurableIdentity } : {}),
+        });
+        const resolution = resolutions.get(this.#contactResolutionKey(identity));
+        if (resolution) {
+          contactBindings.set(fact.factId, Object.freeze({
+            contactId: resolution.contactId,
+            identity: resolution.identity,
+          }));
+        }
+      }
+      if (
+        fact.kind === "DRAFT_DOCUMENT_UPDATE" &&
+        (fact.replacement.kind === "NATIVE_DOCUMENT" || fact.replacement.kind === "COMMERCIAL_DOCUMENT")
+      ) {
+        const replacement = fact.replacement;
+        const identity = normalizeXeroContactIdentity({
+          name: replacement.contactName,
+          ...(replacement.contactDurableIdentity !== undefined
+            ? { durableIdentity: replacement.contactDurableIdentity }
+            : {}),
         });
         const resolution = resolutions.get(this.#contactResolutionKey(identity));
         if (resolution) {
@@ -1861,18 +2010,10 @@ export class XeroAccountingCaseService {
     const input = executeAccountingCaseSchema.parse(raw);
     const resolved = await this.provider.resolveContext(context);
     const currentAccessBinding = caseBinding(context, resolved.tenantId);
-    const exact = await this.repository.getBoundAccountingCase({
-      binding: currentAccessBinding,
-      caseId: input.case_id,
-      version: input.case_version,
-    });
-    let accessible = exact ?? await this.repository.getAccessibleAccountingCase({
+    let { exact, accessible } = await this.#lookupExecutableAccountingCase(
       currentAccessBinding,
-      caseId: input.case_id,
-      version: input.case_version,
-      mode: "STATUS",
-      now: this.#now(),
-    });
+      input,
+    );
     if (!accessible) throw new AppError("NOT_FOUND", "Accounting Case was not found.", { httpStatus: 404 });
     let recoveryOnly = accessible.state === "RECOVERY_REQUIRED";
     const expiredExecutingRecoveryCandidate = !exact && accessible.state === "EXECUTING";
@@ -2033,9 +2174,9 @@ export class XeroAccountingCaseService {
         now: checkedAt,
       })).record;
     } else if (record.state === "PREFLIGHTED" || record.state === "READY_TO_RESUME") {
-      // A durable preflight does not grant timeless authority. Re-evaluate the
-      // live standing delegation/provider capability before the Case claim;
-      // every operation repeats it again at the one-shot write boundary.
+      // A durable preflight does not grant timeless write access. Re-evaluate
+      // the current OAuth target, release gate and Provider capability before
+      // the Case claim; every operation repeats them at the one-shot boundary.
       const remainingPrepared = record.operations.filter((operation) => operation.state === "PREPARED");
       const authorityReceipt = await this.mutations.preflightAutonomousActions(
         context,
@@ -2243,6 +2384,48 @@ export class XeroAccountingCaseService {
     return summary(record, this.#continuationSecret);
   }
 
+  /**
+   * Look up an executable Case without performing any mutation. The first
+   * miss is the only place where we tolerate a short visibility race between
+   * a prepare COMMIT and the next tool call. Once a Case is visible, all
+   * existing execute semantics are unchanged.
+   */
+  async #lookupExecutableAccountingCase(
+    currentAccessBinding: AccountingCaseBinding,
+    input: ExecuteAccountingCaseInput,
+  ): Promise<{
+    exact: AccountingCaseVersionRecord | undefined;
+    accessible: AccountingCaseVersionRecord | undefined;
+  }> {
+    const read = async (): Promise<{
+      exact: AccountingCaseVersionRecord | undefined;
+      accessible: AccountingCaseVersionRecord | undefined;
+    }> => {
+      const exact = await this.repository.getBoundAccountingCase({
+        binding: currentAccessBinding,
+        caseId: input.case_id,
+        version: input.case_version,
+      });
+      const accessible = exact ?? await this.repository.getAccessibleAccountingCase({
+        currentAccessBinding,
+        caseId: input.case_id,
+        version: input.case_version,
+        mode: "STATUS",
+        now: this.#now(),
+      });
+      return { exact, accessible };
+    };
+
+    let result = await read();
+    if (result.accessible) return result;
+    for (const delayMs of ACCOUNTING_CASE_EXECUTE_LOOKUP_RETRY_DELAYS_MS) {
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      result = await read();
+      if (result.accessible) return result;
+    }
+    return result;
+  }
+
   #validateStoredOperations(record: AccountingCaseVersionRecord): void {
     const providerContract = createXeroAccountingCaseProviderContractFromProjection(
       record.compiled.providerProjection,
@@ -2261,15 +2444,25 @@ export class XeroAccountingCaseService {
           httpStatus: 503,
         });
       }
-      if (operation.nativeRoute === "QUOTE" || operation.nativeRoute === "PURCHASE_ORDER") {
-        // Cannot be re-derived from the source fact here the way native
-        // documents are just below: that needs the counterparty-contact
-        // binding resolved when the Case was compiled
+      if (
+        operation.nativeRoute === "QUOTE" || operation.nativeRoute === "PURCHASE_ORDER" ||
+        operation.nativeRoute === "MANUAL_JOURNAL" || this.#isLedgerStateTransitionRoute(operation.nativeRoute) ||
+        this.#isLedgerAdjustmentRoute(operation.nativeRoute) ||
+        this.#isPaymentBankLedgerRoute(operation.nativeRoute) ||
+        this.#isReferenceDataRoute(operation.nativeRoute) || operation.nativeRoute === "DRAFT_DOCUMENT_UPDATE"
+      ) {
+        // Commercial documents cannot be re-derived from the source fact
+        // here the way native documents are just below: that needs the
+        // counterparty-contact binding resolved when the Case was compiled
         // (AccountingCaseCommercialContactBinding), which is not part of the
-        // sealed provider projection this function rehydrates from. The
-        // canonicalPayloadHash check above already guards payload tampering;
-        // this guards the business-identity/reservation fields it does not
-        // cover.
+        // sealed provider projection this function rehydrates from. A
+        // balanced journal has no such dependency -- operationForBalancedJournal
+        // is a pure function of the fact and needs no resolved binding -- but
+        // is checked the same lighter way here rather than re-derived, for
+        // consistency with the commercial-document path. The
+        // canonicalPayloadHash check above already guards payload tampering
+        // for both; this guards the business-identity/reservation fields it
+        // does not cover.
         const reservation = operation.businessReservation;
         const reservationCoordinate = {
           schemaVersion: reservation.schemaVersion,
@@ -2283,7 +2476,7 @@ export class XeroAccountingCaseService {
         ) {
           throw new AppError(
             "PERSISTENCE_FAILURE",
-            "Accounting Case commercial-document operation integrity verification failed.",
+            "Accounting Case commercial-document, balanced-journal, or reference-data operation integrity verification failed.",
             { httpStatus: 503 },
           );
         }
@@ -2409,8 +2602,37 @@ export class XeroAccountingCaseService {
         continue;
       }
 
+      if (this.#isReferenceDataRoute(operation.nativeRoute)) {
+        results.push(await this.#preflightReferenceData(context, record, operationRecord));
+        continue;
+      }
+
+      if (operation.nativeRoute === "DRAFT_DOCUMENT_UPDATE") {
+        results.push(await this.#preflightDraftDocumentUpdate(context, record, operationRecord));
+        continue;
+      }
+
+      if (this.#isLedgerStateTransitionRoute(operation.nativeRoute)) {
+        results.push(await this.#preflightLedgerStateTransition(context, record, operationRecord));
+        continue;
+      }
+
+      if (this.#isLedgerAdjustmentRoute(operation.nativeRoute)) {
+        results.push(await this.#preflightLedgerAdjustment(context, record, operationRecord));
+        continue;
+      }
+      if (this.#isPaymentBankLedgerRoute(operation.nativeRoute)) {
+        results.push(await this.#preflightPaymentBankLedger(context, record, operationRecord));
+        continue;
+      }
+
       if (operation.nativeRoute === "QUOTE" || operation.nativeRoute === "PURCHASE_ORDER") {
         results.push(await this.#preflightCommercialDocument(context, record, operationRecord));
+        continue;
+      }
+
+      if (operation.nativeRoute === "MANUAL_JOURNAL") {
+        results.push(await this.#preflightBalancedJournal(context, record, operationRecord));
         continue;
       }
 
@@ -2529,6 +2751,376 @@ export class XeroAccountingCaseService {
   }
 
   /**
+   * Balanced-journal counterpart of #preflightCommercialDocument / the
+   * native-document preflight branch above. Deliberately has no
+   * #resolveContactIdentity/#sealedContactIdentity step at all: a balanced
+   * journal has no counterparty (see BalancedJournalFact), so there is
+   * nothing to resolve -- inventing one to reuse the native-document
+   * preflight shape would fabricate a fact the source never asserted. Also
+   * does not call #providerBusinessCoordinateHistory, for the same reason
+   * #preflightCommercialDocument does not: factDisposition already says so
+   * explicitly via EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE.
+   */
+  async #preflightBalancedJournal(
+    context: RequestContext,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<AccountingCaseOperationPreflight> {
+    const operation = operationRecord.operation;
+    this.#assertBalancedJournalRouteContract(record, operation);
+    const preparationId = await this.#prepareBalancedJournalOperation(context, record, operationRecord);
+    return this.#preparedOperationEvidence(record, operation, preparationId);
+  }
+
+  async #preflightLedgerStateTransition(
+    context: RequestContext,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<AccountingCaseOperationPreflight> {
+    const operation = operationRecord.operation;
+    if (!this.#isLedgerStateTransitionRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A non-transition route reached transition preflight.", {
+        httpStatus: 500,
+      });
+    }
+    const targetXeroObjectId = operation.actionId === "manual_journal.post"
+      ? this.#stringField(operation.canonicalPayload, "manualJournalId")
+      : this.#stringField(operation.canonicalPayload, "invoiceId");
+    const prepared = await this.accounting.prepareLedgerStateTransition(context, {
+      actionId: operation.actionId as
+        | "customer_invoice.authorise"
+        | "supplier_bill.authorise"
+        | "manual_journal.post",
+      targetXeroObjectId,
+      sourceRef: `case:${record.compiled.caseId}`,
+      sourceUnitKey: operation.operationId,
+      sourceSha256: this.#operationSourceHash(record, operation),
+    });
+    return this.#preparedOperationEvidence(record, operation, prepared.preparation_id);
+  }
+
+  async #preflightLedgerAdjustment(
+    context: RequestContext,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<AccountingCaseOperationPreflight> {
+    const operation = operationRecord.operation;
+    if (!this.#isLedgerAdjustmentRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A non-adjustment route reached ledger-adjustment preflight.", {
+        httpStatus: 500,
+      });
+    }
+    const prepared = await this.accounting.prepareLedgerAdjustment(context, {
+      actionId: operation.actionId as LedgerAdjustmentAction,
+      payload: operation.canonicalPayload as never,
+      sourceRef: `case:${record.compiled.caseId}`,
+      sourceUnitKey: operation.operationId,
+      sourceSha256: this.#operationSourceHash(record, operation),
+    });
+    return this.#preparedOperationEvidence(record, operation, prepared.preparation_id);
+  }
+
+  async #preflightPaymentBankLedger(context: RequestContext, record: AccountingCaseVersionRecord, operationRecord: AccountingCaseOperationRecord) {
+    const operation = operationRecord.operation;
+    const prepared = await this.accounting.preparePaymentBankCase(context, {
+      actionId: operation.actionId as PaymentBankLedgerAction,
+      payload: operation.canonicalPayload,
+      sourceRef: `case:${record.compiled.caseId}`,
+      sourceUnitKey: operation.operationId,
+      sourceSha256: this.#operationSourceHash(record, operation),
+    });
+    return this.#preparedOperationEvidence(record, operation, prepared.preparation_id);
+  }
+
+  /**
+   * Reuses the existing safe Contact/Item mutation service. The Case owns the
+   * public action, source hash, plan and projection; the primitive service
+   * continues to own its reviewed exact-read/version/duplicate preflight and
+   * provider-specific receipt/read-back implementation.
+   */
+  async #preflightReferenceData(
+    context: RequestContext,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<AccountingCaseOperationPreflight> {
+    const operation = operationRecord.operation;
+    if (!this.#isReferenceDataRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A non-reference-data route reached the reference-data preflight.", {
+        httpStatus: 500,
+      });
+    }
+    const route = operation.nativeRoute;
+    const payload = operation.canonicalPayload;
+    const source = {
+      source_ref: `case:${record.compiled.caseId}`,
+      source_unit_key: operation.operationId,
+      source_sha256: this.#operationSourceHash(record, operation),
+    };
+    const preparation = (() => {
+      switch (route) {
+        case "CONTACT_BASIC_UPDATE":
+          return this.accounting.prepareContactUpdate(context, {
+            ...source,
+            contact_id: this.#stringField(payload, "contactId"),
+            patch: this.#recordField(payload, "patch"),
+          } as PrepareContactUpdateMutationInput);
+        case "ITEM_BASIC_CREATE_UNTRACKED":
+          return this.accounting.prepareItemCreate(context, {
+            ...source,
+            ...this.#recordField(payload, "item"),
+          } as PrepareItemCreateMutationInput);
+        case "ITEM_BASIC_UPDATE_UNTRACKED":
+          return this.accounting.prepareItemUpdate(context, {
+            ...source,
+            item_id: this.#stringField(payload, "itemId"),
+            patch: this.#recordField(payload, "patch"),
+          } as PrepareItemUpdateMutationInput);
+        case "TRACKING_REFERENCE_DATA":
+          return this.accounting.prepareTrackingCaseMutation(context, {
+            actionId: operation.actionId as TrackingReferenceDataAction,
+            payload: this.#referenceDataCaseInput(route, payload),
+            sourceRef: source.source_ref,
+            sourceUnitKey: source.source_unit_key,
+            sourceSha256: source.source_sha256,
+          });
+        default: {
+          const unreachable: never = route;
+          throw new AppError("PERSISTENCE_FAILURE", `Unhandled reference-data Case route: ${String(unreachable)}`, {
+            httpStatus: 500,
+          });
+        }
+      }
+    })();
+    const prepared = await preparation;
+    return this.#preparedOperationEvidence(record, operation, prepared.preparation_id);
+  }
+
+  async #preflightDraftDocumentUpdate(
+    context: RequestContext,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<AccountingCaseOperationPreflight> {
+    const operation = operationRecord.operation;
+    if (!this.#isDraftDocumentUpdateRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A non-update route reached DRAFT update preflight.", {
+        httpStatus: 500,
+      });
+    }
+    const envelope = await this.#providerDraftUpdateEnvelope(context, operationRecord);
+    const prepared = await this.accounting.prepareDraftDocumentUpdate(context, {
+      actionId: operation.actionId as DraftDocumentUpdateAction,
+      ...envelope,
+      sourceRef: `case:${record.compiled.caseId}`,
+      sourceUnitKey: operation.operationId,
+      sourceSha256: this.#operationSourceHash(record, operation),
+    });
+    return this.#preparedOperationEvidence(record, operation, prepared.preparation_id, {
+      draftUpdateEnvelope: envelope,
+    });
+  }
+
+  async #providerDraftUpdateEnvelope(
+    context: RequestContext,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<DraftDocumentUpdateEnvelope> {
+    const operation = operationRecord.operation;
+    if (!this.#isDraftDocumentUpdateRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A non-update route cannot produce a provider DRAFT replacement.", {
+        httpStatus: 500,
+      });
+    }
+    const targetXeroObjectId = this.#stringField(operation.canonicalPayload, "targetXeroObjectId").toLowerCase();
+    const expectedUpdatedAt = this.#stringField(operation.canonicalPayload, "expectedUpdatedAt");
+    const replacement = this.#recordField(operation.canonicalPayload, "replacement");
+    const actionId = operation.actionId as DraftDocumentUpdateAction;
+    await this.#assertDraftUpdateReplacementReferences(context, actionId, replacement);
+    const manualJournalAccounts = actionId === "manual_journal.update_draft"
+      ? await this.accounting.listAccounts(context, {})
+      : [];
+    const source = {
+      source_ref: `case:${operation.caseId}`,
+      source_unit_key: operation.operationId,
+      source_sha256: this.#operationSourceHashForProjection(operation),
+    };
+    const providerReplacement: Record<string, unknown> = (() => {
+      switch (actionId) {
+        case "customer_invoice.update_draft":
+        case "supplier_bill.update_draft":
+          return replacement;
+        case "quote.update_draft":
+        case "purchase_order.update_draft": {
+          const lines = this.#payloadLines(replacement).map((line, index) => ({
+            description: this.#stringField(line, "description"),
+            quantity: fixedNumber(line.quantity, `replacement.lines[${index}].quantity`),
+            unit_amount: fixedNumber(line.unitAmount, `replacement.lines[${index}].unitAmount`),
+            account_code: this.#stringField(line, "accountCode"),
+            tax_type: this.#stringField(line, "taxType"),
+          }));
+          const common = {
+            ...source,
+            contact_id: this.#stringField(replacement, "xeroContactId"),
+            currency: this.#stringField(replacement, "currency"),
+            reference: this.#stringField(replacement, "reference"),
+            line_amount_type: lineAmountType(replacement.lineAmountType),
+            lines,
+          };
+          return actionId === "quote.update_draft"
+            ? buildQuoteDraftPrimitive({
+                ...common,
+                quote_date: this.#stringField(replacement, "documentDate"),
+                expiry_date: this.#stringField(replacement, "expiryDate"),
+              }).canonicalPayload as unknown as Record<string, unknown>
+            : buildPurchaseOrderDraftPrimitive({
+                ...common,
+                purchase_order_date: this.#stringField(replacement, "documentDate"),
+                ...(typeof replacement.expectedArrivalDate === "string"
+                  ? { expected_arrival_date: replacement.expectedArrivalDate }
+                  : {}),
+                ...(typeof replacement.deliveryDate === "string"
+                  ? { delivery_date: replacement.deliveryDate }
+                  : {}),
+              }).canonicalPayload as unknown as Record<string, unknown>;
+        }
+        case "credit_note.update_draft": {
+          const route = this.#stringField(replacement, "route");
+          const lines = this.#payloadLines(replacement).map((line, index) => ({
+            description: this.#stringField(line, "description"),
+            quantity: fixedNumber(line.quantity, `replacement.lines[${index}].quantity`),
+            unit_amount: fixedNumber(line.unitAmount, `replacement.lines[${index}].unitAmount`),
+            account_id: this.#stringField(line, "accountId"),
+            account_code: this.#stringField(line, "accountCode"),
+            tax_type: this.#stringField(line, "taxType"),
+          }));
+          return buildCreditNoteDraftPrimitive({
+            ...source,
+            reason: this.#stringField(replacement, "reference"),
+            credit_note_type: route === "SUPPLIER_CREDIT" ? "ACCPAYCREDIT" : "ACCRECCREDIT",
+            contact_id: this.#stringField(replacement, "xeroContactId"),
+            credit_note_date: this.#stringField(replacement, "documentDate"),
+            currency: this.#stringField(replacement, "currency"),
+            reference: this.#stringField(replacement, "reference"),
+            authoritative_provider_field: this.#stringField(
+              replacement,
+              "authoritativeProviderField",
+            ) as "CREDIT_NOTE_NUMBER" | "REFERENCE",
+            line_amount_type: lineAmountType(replacement.lineAmountType),
+            lines,
+          }).canonicalPayload as unknown as Record<string, unknown>;
+        }
+        case "manual_journal.update_draft": {
+          const lines = this.#payloadLines(replacement).map((line, index) => {
+            const accountCode = this.#stringField(line, "accountCode");
+            const accountMatches = manualJournalAccounts.filter((account) =>
+              account.code === accountCode && account.status === "ACTIVE" &&
+              account.type !== "BANK" && !account.systemAccount && account.accountId);
+            if (accountMatches.length !== 1 || !accountMatches[0]?.accountId) {
+              throw new AppError("STALE_PREFLIGHT", `replacement.lines[${index}] account cannot be resolved exactly.`, {
+                httpStatus: 409,
+              });
+            }
+            const hasDebit = typeof line.debit === "string";
+            const hasCredit = typeof line.credit === "string";
+            if (hasDebit === hasCredit) {
+              throw new AppError("VALIDATION_FAILED", `replacement.lines[${index}] must have one debit or credit.`, {
+                httpStatus: 422,
+              });
+            }
+            return {
+              account_id: accountMatches[0].accountId,
+              account_code: accountCode,
+              description: this.#stringField(line, "description"),
+              line_amount: hasDebit
+                ? fixedNumber(line.debit, `replacement.lines[${index}].debit`)
+                : -fixedNumber(line.credit, `replacement.lines[${index}].credit`),
+            };
+          });
+          return buildManualJournalDraftPrimitive({
+            ...source,
+            journal_date: this.#stringField(replacement, "date"),
+            narration: this.#stringField(replacement, "narration"),
+            lines,
+          }).canonicalPayload as unknown as Record<string, unknown>;
+        }
+        default: {
+          const unreachable: never = actionId;
+          throw new AppError("PERSISTENCE_FAILURE", `Unhandled DRAFT update action: ${String(unreachable)}`, {
+            httpStatus: 500,
+          });
+        }
+      }
+    })();
+    return Object.freeze({ targetXeroObjectId, expectedUpdatedAt, replacement: providerReplacement });
+  }
+
+  #operationSourceHashForProjection(operation: AccountingCaseOperation): string {
+    return hashObject({
+      semantics: "accounting-case-draft-update-provider-projection:v1",
+      caseId: operation.caseId,
+      caseVersion: operation.caseVersion,
+      operationId: operation.operationId,
+      canonicalPayloadHash: operation.canonicalPayloadHash,
+    });
+  }
+
+  async #assertDraftUpdateReplacementReferences(
+    context: RequestContext,
+    actionId: DraftDocumentUpdateAction,
+    replacement: Record<string, unknown>,
+  ): Promise<void> {
+    const isManualJournal = actionId === "manual_journal.update_draft";
+    if (!isManualJournal) {
+      const contactId = this.#stringField(replacement, "xeroContactId");
+      const contactName = this.#stringField(replacement, "contactName");
+      const sealedIdentity = this.#sealedContactIdentityFromPayload(replacement);
+      const [byId, byIdentity] = await Promise.all([
+        this.accounting.getContact(context, { contact_id: contactId }).catch((error: unknown) => {
+          if (error instanceof AppError && error.code === "NOT_FOUND") return undefined;
+          throw error;
+        }),
+        this.#resolveContactIdentity(context, sealedIdentity.requested),
+      ]);
+      if (!byId || byId.status !== "ACTIVE" || byId.contactId !== contactId ||
+          !exactName(byId.name, contactName) || byIdentity?.contact.contactId !== contactId ||
+          stableStringify(byIdentity.decision) !== stableStringify(sealedIdentity)) {
+        throw new AppError("STALE_PREFLIGHT", "The exact DRAFT replacement contact binding changed.", {
+          httpStatus: 409,
+          retryable: false,
+          details: { reasonCodes: ["CONTACT_BINDING_ID_MISMATCH"], providerMutationPossible: false },
+        });
+      }
+    }
+    const [accounts, taxes] = await Promise.all([
+      this.accounting.listAccounts(context, {}),
+      isManualJournal ? Promise.resolve([]) : this.accounting.listTaxRates(context),
+    ]);
+    for (const [index, line] of this.#payloadLines(replacement).entries()) {
+      const accountCode = this.#stringField(line, "accountCode");
+      const suppliedAccountId = typeof line.accountId === "string" ? line.accountId : undefined;
+      const matches = accounts.filter((account) =>
+        account.code === accountCode && account.status === "ACTIVE" && account.type !== "BANK" && !account.systemAccount &&
+        (!suppliedAccountId || account.accountId?.toLowerCase() === suppliedAccountId.toLowerCase()));
+      if (matches.length !== 1 || !matches[0]?.accountId) {
+        throw new AppError("STALE_PREFLIGHT", `DRAFT replacement line ${index + 1} account binding is unavailable.`, {
+          httpStatus: 409,
+          retryable: false,
+          details: { reasonCodes: ["XERO_DECLARED_LEDGER_BINDING_DRIFT"], providerMutationPossible: false },
+        });
+      }
+      if (isManualJournal) {
+        continue;
+      }
+      const taxType = this.#stringField(line, "taxType");
+      const tax = resolveStableXeroTaxRate({ taxRates: taxes, taxType, account: matches[0] });
+      if (!tax.ok) {
+        throw new AppError("VALIDATION_FAILED", `${tax.message} [${tax.code}]`, {
+          httpStatus: 422,
+          details: { path: `replacement.lines[${index}].taxType`, providerMutationPossible: false },
+        });
+      }
+    }
+  }
+
+  /**
    * QUOTE/PURCHASE_ORDER carry no sealed live-account binding: they skip the
    * requireXeroDeclaredLedgerAccount machinery entirely (see
    * #prepareCommercialDocumentOperation), so #serverCoaExecutionConstraints
@@ -2539,6 +3131,50 @@ export class XeroAccountingCaseService {
     route: AccountingCaseOperation["nativeRoute"],
   ): route is CommercialDocumentRoute {
     return route === "QUOTE" || route === "PURCHASE_ORDER";
+  }
+
+  /**
+   * MANUAL_JOURNAL carries no sealed live-account binding either, for a
+   * different reason than QUOTE/PURCHASE_ORDER: declaredLedgerCoordinates
+   * only scans NATIVE_DOCUMENT facts (see #prepareBalancedJournalOperation).
+   * Every call site that already excludes CONTACT_CREATE and
+   * #isCommercialDocumentRoute for that structural reason must also exclude
+   * this.
+   */
+  #isBalancedJournalRoute(
+    route: AccountingCaseOperation["nativeRoute"],
+  ): route is BalancedJournalRoute {
+    return route === "MANUAL_JOURNAL";
+  }
+
+  #isDraftDocumentUpdateRoute(
+    route: AccountingCaseOperation["nativeRoute"],
+  ): route is "DRAFT_DOCUMENT_UPDATE" {
+    return route === "DRAFT_DOCUMENT_UPDATE";
+  }
+
+  #isReferenceDataRoute(
+    route: AccountingCaseOperation["nativeRoute"],
+  ): route is ReferenceDataRoute {
+    return route === "CONTACT_BASIC_UPDATE" ||
+      route === "ITEM_BASIC_CREATE_UNTRACKED" ||
+      route === "ITEM_BASIC_UPDATE_UNTRACKED" ||
+      route === "TRACKING_REFERENCE_DATA";
+  }
+
+  #isLedgerStateTransitionRoute(
+    route: AccountingCaseOperation["nativeRoute"],
+  ): route is LedgerStateTransitionRoute {
+    return route === "LEDGER_STATE_TRANSITION";
+  }
+
+  #isLedgerAdjustmentRoute(
+    route: AccountingCaseOperation["nativeRoute"],
+  ): route is LedgerAdjustmentRoute {
+    return route === "LEDGER_ADJUSTMENT";
+  }
+  #isPaymentBankLedgerRoute(route: AccountingCaseOperation["nativeRoute"]): route is PaymentBankLedgerRoute {
+    return route === "PAYMENT_BANK_LEDGER";
   }
 
   #casePreflightReceipt(
@@ -2567,7 +3203,11 @@ export class XeroAccountingCaseService {
         const preflight = byId.get(recorded.operation.operationId);
         if (!preflight) throw new AppError("PERSISTENCE_FAILURE", "Accounting Case preflight is incomplete.");
         const serverCoaExecutionConstraints = recorded.operation.nativeRoute === "CONTACT_CREATE" ||
-            this.#isCommercialDocumentRoute(recorded.operation.nativeRoute)
+            this.#isCommercialDocumentRoute(recorded.operation.nativeRoute) ||
+            this.#isBalancedJournalRoute(recorded.operation.nativeRoute) ||
+            this.#isLedgerStateTransitionRoute(recorded.operation.nativeRoute) ||
+            this.#isReferenceDataRoute(recorded.operation.nativeRoute) ||
+            this.#isDraftDocumentUpdateRoute(recorded.operation.nativeRoute)
           ? undefined
           : this.#serverCoaExecutionConstraints(record, recorded.operation);
         return {
@@ -2645,6 +3285,63 @@ export class XeroAccountingCaseService {
         case "SUPPLIER_CREDIT": return { actionId: "credit_note.create_draft", objectType: "CREDIT_NOTE", operation: "CREATE_DRAFT" } as const;
         case "QUOTE": return { actionId: "quote.create_draft", objectType: "QUOTE", operation: "CREATE_DRAFT" } as const;
         case "PURCHASE_ORDER": return { actionId: "purchase_order.create_draft", objectType: "PURCHASE_ORDER", operation: "CREATE_DRAFT" } as const;
+        case "MANUAL_JOURNAL": return { actionId: "manual_journal.create_draft", objectType: "MANUAL_JOURNAL", operation: "CREATE_DRAFT" } as const;
+        case "CONTACT_BASIC_UPDATE": return { actionId: "contact.update_basic", objectType: "CONTACT", operation: "UPDATE" } as const;
+        case "ITEM_BASIC_CREATE_UNTRACKED": return { actionId: "item.create_basic_untracked", objectType: "ITEM", operation: "CREATE" } as const;
+        case "ITEM_BASIC_UPDATE_UNTRACKED": return { actionId: "item.update_basic_untracked", objectType: "ITEM", operation: "UPDATE" } as const;
+        case "TRACKING_REFERENCE_DATA": {
+          switch (operation.actionId) {
+            case "tracking_category.create": return { actionId: operation.actionId, objectType: "TRACKING_CATEGORY", operation: "CREATE" } as const;
+            case "tracking_category.update": return { actionId: operation.actionId, objectType: "TRACKING_CATEGORY", operation: "UPDATE" } as const;
+            case "tracking_option.create": return { actionId: operation.actionId, objectType: "TRACKING_OPTION", operation: "CREATE" } as const;
+            case "tracking_option.update": return { actionId: operation.actionId, objectType: "TRACKING_OPTION", operation: "UPDATE" } as const;
+            default:
+              throw new AppError("PERSISTENCE_FAILURE", "Tracking reference-data route has an unsupported action.", { httpStatus: 503 });
+          }
+        }
+        case "DRAFT_DOCUMENT_UPDATE": {
+          const objectType = operation.actionId === "customer_invoice.update_draft" ? "SALES_INVOICE"
+            : operation.actionId === "supplier_bill.update_draft" ? "SUPPLIER_BILL"
+              : operation.actionId === "quote.update_draft" ? "QUOTE"
+                : operation.actionId === "purchase_order.update_draft" ? "PURCHASE_ORDER"
+                  : operation.actionId === "credit_note.update_draft" ? "CREDIT_NOTE"
+                    : operation.actionId === "manual_journal.update_draft" ? "MANUAL_JOURNAL"
+                      : undefined;
+          if (!objectType) {
+            throw new AppError("PERSISTENCE_FAILURE", "DRAFT update route has an unsupported action.", { httpStatus: 503 });
+          }
+          return { actionId: operation.actionId, objectType, operation: "UPDATE" } as const;
+        }
+        case "LEDGER_STATE_TRANSITION": {
+          switch (operation.actionId) {
+            case "customer_invoice.authorise":
+              return { actionId: operation.actionId, objectType: "SALES_INVOICE", operation: "AUTHORISE" } as const;
+            case "supplier_bill.authorise":
+              return { actionId: operation.actionId, objectType: "SUPPLIER_BILL", operation: "AUTHORISE" } as const;
+            case "manual_journal.post":
+              return { actionId: operation.actionId, objectType: "MANUAL_JOURNAL", operation: "POST" } as const;
+            default:
+              throw new AppError("PERSISTENCE_FAILURE", "Ledger-state route has an unsupported action.", { httpStatus: 503 });
+          }
+        }
+        case "LEDGER_ADJUSTMENT": {
+          const actionId = operation.actionId as LedgerAdjustmentAction;
+          return {
+            actionId,
+            objectType: ledgerAdjustmentObjectType(actionId),
+            operation: ledgerAdjustmentOperation(actionId),
+          } as const;
+        }
+        case "PAYMENT_BANK_LEDGER": {
+          switch (operation.actionId) {
+            case "payment.create": return { actionId: operation.actionId, objectType: "PAYMENT", operation: "CREATE" } as const;
+            case "payment.reverse": return { actionId: operation.actionId, objectType: "PAYMENT", operation: "REVERSE" } as const;
+            case "bank_transaction.create": return { actionId: operation.actionId, objectType: "BANK_TRANSACTION", operation: "CREATE" } as const;
+            case "bank_transaction.update": return { actionId: operation.actionId, objectType: "BANK_TRANSACTION", operation: "UPDATE" } as const;
+            case "bank_transaction.reverse": return { actionId: operation.actionId, objectType: "BANK_TRANSACTION", operation: "REVERSE" } as const;
+            default: throw new AppError("PERSISTENCE_FAILURE", "Payment/Bank route has an unsupported action.", { httpStatus: 503 });
+          }
+        }
       }
     })();
     const envelopeMismatches = [
@@ -2663,14 +3360,32 @@ export class XeroAccountingCaseService {
     ];
     if (envelopeMismatches.length > 0) fail(envelopeMismatches);
 
+    if (this.#isDraftDocumentUpdateRoute(operation.nativeRoute)) {
+      const expectedEnvelope = providerReferences.draftUpdateEnvelope;
+      if (!expectedEnvelope || preparation.targetXeroObjectId !== expectedEnvelope.targetXeroObjectId ||
+          stableStringify(preparation.canonicalPayload) !== stableStringify(expectedEnvelope)) {
+        fail(["canonicalPayload.draftUpdateEnvelope"]);
+      }
+      return;
+    }
+
     const payload = preparation.canonicalPayload;
     const casePayload = operation.canonicalPayload;
     // Commercial documents (QUOTE/PURCHASE_ORDER) carry no monetaryRule in
     // their canonicalPayload -- there is no accounting-policy tax-rate
     // reconciliation for them (see CommercialDocumentFact) -- so they are
-    // excluded here the same way CONTACT_CREATE is.
+    // excluded here the same way CONTACT_CREATE is. Balanced journals
+    // (MANUAL_JOURNAL) carry no currency at all -- a journal has no
+    // declaredNet/Tax/Gross and no invoiceRate to reconcile either (see
+    // BalancedJournalFact) -- so they are excluded for the same reason.
     const isCommercialDocument = this.#isCommercialDocumentRoute(operation.nativeRoute);
-    const nativeCurrency = operation.nativeRoute === "CONTACT_CREATE" || isCommercialDocument
+    const isBalancedJournal = this.#isBalancedJournalRoute(operation.nativeRoute);
+    const isLedgerStateTransition = this.#isLedgerStateTransitionRoute(operation.nativeRoute);
+    const isLedgerAdjustment = this.#isLedgerAdjustmentRoute(operation.nativeRoute);
+    const isPaymentBankLedger = this.#isPaymentBankLedgerRoute(operation.nativeRoute);
+    const nativeCurrency = operation.nativeRoute === "CONTACT_CREATE" || isCommercialDocument || isBalancedJournal ||
+      isLedgerStateTransition || isLedgerAdjustment || isPaymentBankLedger ||
+      this.#isReferenceDataRoute(operation.nativeRoute)
       ? undefined
       : this.#stringField(casePayload, "currency");
     const monetaryRule = nativeCurrency === undefined
@@ -2679,13 +3394,82 @@ export class XeroAccountingCaseService {
     if (
       operation.nativeRoute !== "CONTACT_CREATE" &&
       !isCommercialDocument &&
+      !isBalancedJournal &&
+      !isLedgerStateTransition &&
+      !isLedgerAdjustment &&
+      !isPaymentBankLedger &&
+      !this.#isReferenceDataRoute(operation.nativeRoute) &&
       !monetaryRule
     ) fail(["canonicalPayload.monetaryRule"]);
     let expectedProjection: Record<string, unknown> | undefined;
     let actualProjection: Record<string, unknown> | undefined;
 
     try {
-      if (operation.nativeRoute === "CONTACT_CREATE") {
+      if (isPaymentBankLedger) {
+        const isUpdate = operation.actionId === "bank_transaction.update";
+        const preparedCanonical = isUpdate ? this.#recordField(payload, "replacement") : payload;
+        expectedProjection = {
+          route: operation.nativeRoute, actionId: expectedRoute.actionId, objectType: expectedRoute.objectType,
+          operation: expectedRoute.operation, canonicalPayload: casePayload,
+        };
+        actualProjection = {
+          route: operation.nativeRoute, actionId: operation.actionId, objectType: preparation.objectType,
+          operation: preparation.operation, canonicalPayload: preparedCanonical,
+        };
+      } else if (isLedgerAdjustment) {
+        expectedProjection = {
+          route: operation.nativeRoute,
+          actionId: expectedRoute.actionId,
+          objectType: expectedRoute.objectType,
+          operation: expectedRoute.operation,
+          targetXeroObjectId: ledgerAdjustmentTargetId(casePayload as never),
+          canonicalPayload: casePayload,
+        };
+        actualProjection = {
+          route: operation.nativeRoute,
+          actionId: operation.actionId,
+          objectType: preparation.objectType,
+          operation: preparation.operation,
+          targetXeroObjectId: preparation.targetXeroObjectId,
+          canonicalPayload: payload,
+        };
+      } else if (isLedgerStateTransition) {
+        expectedProjection = {
+          route: operation.nativeRoute,
+          actionId: expectedRoute.actionId,
+          objectType: expectedRoute.objectType,
+          operation: expectedRoute.operation,
+          targetXeroObjectId: operation.actionId === "manual_journal.post"
+            ? this.#stringField(casePayload, "manualJournalId")
+            : this.#stringField(casePayload, "invoiceId"),
+          canonicalPayload: casePayload,
+        };
+        actualProjection = {
+          route: operation.nativeRoute,
+          actionId: operation.actionId,
+          objectType: preparation.objectType,
+          operation: preparation.operation,
+          targetXeroObjectId: preparation.targetXeroObjectId,
+          canonicalPayload: payload,
+        };
+      } else if (this.#isReferenceDataRoute(operation.nativeRoute)) {
+        const caseInput = this.#referenceDataCaseInput(operation.nativeRoute, casePayload);
+        const preparedInput = this.#referenceDataPreparedInput(operation.nativeRoute, casePayload, payload);
+        expectedProjection = {
+          route: operation.nativeRoute,
+          actionId: expectedRoute.actionId,
+          objectType: expectedRoute.objectType,
+          operation: expectedRoute.operation,
+          input: caseInput,
+        };
+        actualProjection = {
+          route: operation.nativeRoute,
+          actionId: operation.actionId,
+          objectType: preparation.objectType,
+          operation: preparation.operation,
+          input: preparedInput,
+        };
+      } else if (operation.nativeRoute === "CONTACT_CREATE") {
         const target = payload.target;
         if (!target || typeof target !== "object" || Array.isArray(target)) fail(["canonicalPayload.target"]);
         const externalReferenceRaw = payload.externalReference;
@@ -2890,6 +3674,55 @@ export class XeroAccountingCaseService {
           lineAmountType: payload.lineAmountType,
           lines: actualLines,
         };
+      } else if (operation.nativeRoute === "MANUAL_JOURNAL") {
+        // No providerReferences.contact here at all: a balanced journal has
+        // no counterparty (see BalancedJournalFact), unlike every other
+        // branch in this function.
+        const expectedLines = this.#payloadLines(casePayload).map((line, index) => {
+          const hasDebit = typeof line.debit === "string";
+          const hasCredit = typeof line.credit === "string";
+          if (hasDebit === hasCredit) fail([`canonicalPayload.lines[${index}]`]);
+          return {
+            description: this.#stringField(line, "description"),
+            accountCode: this.#stringField(line, "accountCode"),
+            taxType: this.#stringField(line, "taxType"),
+            signedAmount: hasDebit
+              ? fixedFourScaled(scaledCaseDecimal(line.debit, `case.lines[${index}].debit`))
+              : `-${fixedFourScaled(scaledCaseDecimal(line.credit, `case.lines[${index}].credit`))}`,
+          };
+        });
+        const actualLines = this.#payloadLines(payload).map((line, index) => {
+          const expectedLine = expectedLines[index]!;
+          if (!expectedLine) fail([`canonicalPayload.lines[${index}]`]);
+          return {
+            description: this.#stringField(line, "description"),
+            accountCode: this.#stringField(line, "accountCode"),
+            taxType: this.#stringField(line, "taxType"),
+            signedAmount: this.#stringField(line, "lineAmount"),
+          };
+        });
+        expectedProjection = {
+          route: operation.nativeRoute,
+          actionId: expectedRoute.actionId,
+          schemaVersion: "xero-controlled-draft:v1",
+          objectType: expectedRoute.objectType,
+          operation: expectedRoute.operation,
+          status: "DRAFT",
+          date: this.#stringField(casePayload, "date"),
+          narration: this.#stringField(casePayload, "narration"),
+          lines: expectedLines,
+        };
+        actualProjection = {
+          route: operation.nativeRoute,
+          actionId: operation.actionId,
+          schemaVersion: payload.schemaVersion,
+          objectType: payload.objectType,
+          operation: payload.operation,
+          status: payload.status,
+          date: payload.journalDate,
+          narration: payload.narration,
+          lines: actualLines,
+        };
       } else {
         const contact = providerReferences.contact;
         const accountIds = providerReferences.creditLineAccountIds;
@@ -3057,6 +3890,42 @@ export class XeroAccountingCaseService {
       case "quote.create_draft":
       case "purchase_order.create_draft":
         return this.#executeCommercialDocument(context, binding, record, operationRecord);
+      case "manual_journal.create_draft":
+        return this.#executeBalancedJournal(context, binding, record, operationRecord);
+      case "customer_invoice.update_draft":
+      case "supplier_bill.update_draft":
+      case "quote.update_draft":
+      case "purchase_order.update_draft":
+      case "credit_note.update_draft":
+      case "manual_journal.update_draft":
+        return this.#executeDraftDocumentUpdate(context, binding, record, operationRecord);
+      case "customer_invoice.authorise":
+      case "supplier_bill.authorise":
+      case "manual_journal.post":
+        return this.#executeLedgerStateTransition(context, binding, record, operationRecord);
+      case "customer_invoice.void":
+      case "supplier_bill.void":
+      case "credit_note.authorise":
+      case "credit_note.allocate":
+      case "credit_note.refund":
+      case "credit_note.void":
+      case "credit_note.unallocate":
+      case "manual_journal.void":
+        return this.#executeLedgerAdjustment(context, binding, record, operationRecord);
+      case "payment.create":
+      case "payment.reverse":
+      case "bank_transaction.create":
+      case "bank_transaction.update":
+      case "bank_transaction.reverse":
+        return this.#executePaymentBankLedger(context, binding, record, operationRecord);
+      case "contact.update_basic":
+      case "item.create_basic_untracked":
+      case "item.update_basic_untracked":
+      case "tracking_category.create":
+      case "tracking_category.update":
+      case "tracking_option.create":
+      case "tracking_option.update":
+        return this.#executeReferenceData(context, binding, record, operationRecord);
       case "customer_invoice.create_draft":
       case "supplier_bill.create_draft":
       case "credit_note.create_draft":
@@ -3068,6 +3937,55 @@ export class XeroAccountingCaseService {
         });
       }
     }
+  }
+
+  async #executeDraftDocumentUpdate(
+    context: RequestContext,
+    binding: AccountingCaseBinding,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<AccountingCaseVersionRecord> {
+    const operation = operationRecord.operation;
+    if (!this.#isDraftDocumentUpdateRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A non-update route reached the DRAFT update executor.", {
+        httpStatus: 500,
+      });
+    }
+    const preparationId = operationRecord.preparationId;
+    if (!preparationId) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case DRAFT update has no sealed preparation.", {
+        httpStatus: 503,
+      });
+    }
+    const actionId = operation.actionId as DraftDocumentUpdateAction;
+    const written = await this.accounting.executeDraftDocumentUpdate(context, {
+      preparation_id: preparationId,
+      request_id: this.#operationRequestId(record, operation),
+      actionId,
+    }, async (sealedEnvelope) => {
+      const currentEnvelope = await this.#providerDraftUpdateEnvelope(context, operationRecord);
+      if (stableStringify(currentEnvelope) !== stableStringify(sealedEnvelope)) {
+        throw new AppError("STALE_PREFLIGHT", "The DRAFT replacement provider projection changed before write.", {
+          httpStatus: 409,
+          retryable: false,
+          details: {
+            reasonCodes: ["DRAFT_UPDATE_PROVIDER_PROJECTION_DRIFT"],
+            providerMutationPossible: false,
+          },
+        });
+      }
+    });
+    return this.repository.projectAccountingCaseOperationFromMutation({
+      binding,
+      caseId: record.compiled.caseId,
+      version: record.compiled.version,
+      operationId: operation.operationId,
+      requestId: this.#executionRequestId(record),
+      expectedStates: ["PREPARED"],
+      desiredState: "READBACK_VERIFIED",
+      mutationRequestId: written.mutation_request_id,
+      now: this.#now(),
+    });
   }
 
   #contactLifecycleScanIncomplete(message: string): AppError {
@@ -3512,6 +4430,44 @@ export class XeroAccountingCaseService {
     }
   }
 
+  /**
+   * Balanced-journal counterpart of #assertNativeRouteContract /
+   * #assertCommercialDocumentRouteContract. Re-derives JOURNAL_NOT_BALANCED
+   * and MANUAL_JOURNAL_TAX_TYPE_UNSUPPORTED from the immutable source fact at
+   * both preflight and execute time (see #preflightBalancedJournal,
+   * #executeBalancedJournal) -- the compiler already refused to emit an
+   * ELIGIBLE_FOR_PREFLIGHT operation for either, so a failure here means the
+   * source fact or the route-contract rules changed after compilation, not
+   * that the check is newly discovering a problem.
+   */
+  #assertBalancedJournalRouteContract(
+    record: AccountingCaseVersionRecord,
+    operation: AccountingCaseOperation,
+  ): void {
+    const event = record.compiled.events.find((candidate) => candidate.eventId === operation.eventId);
+    const fact = record.compiled.activeFacts.find((candidate): candidate is BalancedJournalFact =>
+      candidate.kind === "BALANCED_JOURNAL" && candidate.factId === event?.primaryFactId);
+    if (!fact) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case balanced-journal route has no immutable source fact.", {
+        httpStatus: 503,
+      });
+    }
+    const decision = evaluateXeroBalancedJournalRouteContract(fact);
+    if (!decision.adapterCanPrepare) {
+      throw new AppError("VALIDATION_FAILED", "The compiled Accounting Case route is not supported by the released Xero adapter.", {
+        httpStatus: 422,
+        retryable: false,
+        details: {
+          failureLayer: "ACCOUNTING_CASE_PREFLIGHT",
+          reasonCodes: decision.reasonCodes.length > 0
+            ? decision.reasonCodes
+            : ["XERO_BALANCED_JOURNAL_ROUTE_MISMATCH"],
+          providerMutationPossible: false,
+        },
+      });
+    }
+  }
+
   #contactResolution(
     requestedName: string,
     contact: ContactSummary,
@@ -3536,7 +4492,11 @@ export class XeroAccountingCaseService {
   }
 
   #sealedContactIdentity(operation: AccountingCaseOperation): XeroContactIdentityDecision {
-    const raw = operation.canonicalPayload.xeroContactIdentity;
+    return this.#sealedContactIdentityFromPayload(operation.canonicalPayload);
+  }
+
+  #sealedContactIdentityFromPayload(payload: Record<string, unknown>): XeroContactIdentityDecision {
+    const raw = payload.xeroContactIdentity;
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       throw new AppError("PERSISTENCE_FAILURE", "The compiled Xero contact identity decision is missing.", {
         httpStatus: 503,
@@ -3738,18 +4698,24 @@ export class XeroAccountingCaseService {
     operationRecord: AccountingCaseOperationRecord,
   ): Promise<AccountingCaseVersionRecord> {
     const operation = operationRecord.operation;
-    if (operation.nativeRoute === "QUOTE" || operation.nativeRoute === "PURCHASE_ORDER") {
+    if (operation.nativeRoute === "CONTACT_CREATE" ||
+      this.#isCommercialDocumentRoute(operation.nativeRoute) ||
+      this.#isBalancedJournalRoute(operation.nativeRoute) ||
+      this.#isLedgerStateTransitionRoute(operation.nativeRoute) ||
+      this.#isLedgerAdjustmentRoute(operation.nativeRoute) ||
+      this.#isPaymentBankLedgerRoute(operation.nativeRoute) ||
+      this.#isReferenceDataRoute(operation.nativeRoute) ||
+      this.#isDraftDocumentUpdateRoute(operation.nativeRoute)) {
       // Dispatched earlier, in #executeOperation by actionId, to
-      // #executeCommercialDocument. The type says a commercial-document
-      // route could reach this function, so it is answered rather than
-      // assumed away -- same idiom as the CUSTOMER_CREDIT/SUPPLIER_CREDIT/
-      // CONTACT_CREATE branch inside executePrepared below.
+      // their typed executor. This boundary handles native ledger documents
+      // only; a route from another family must never be narrowed into one.
       throw new AppError(
         "PERSISTENCE_FAILURE",
         `Route ${operation.nativeRoute} is dispatched before the native document write boundary.`,
         { httpStatus: 500 },
       );
     }
+    const nativeRoute = operation.nativeRoute;
     // Repeat the deployment profile + live AccountID/code/type/class binding at
     // the final Case write boundary. Drift is zero-write and requires a new Case.
     await this.#assertCurrentOrganisationPolicy(context, record);
@@ -3761,7 +4727,7 @@ export class XeroAccountingCaseService {
     }
     await this.#assertSealedContactBinding(context, operationRecord);
     const serverCoaConstraints = this.#serverCoaExecutionConstraints(record, operation);
-    if (operation.nativeRoute === "SUPPLIER_CREDIT" || operation.nativeRoute === "CUSTOMER_CREDIT") {
+    if (nativeRoute === "SUPPLIER_CREDIT" || nativeRoute === "CUSTOMER_CREDIT") {
       return this.#executeCreditNote(context, binding, record, operationRecord, serverCoaConstraints);
     }
     const preparationId = operationRecord.preparationId;
@@ -3783,7 +4749,7 @@ export class XeroAccountingCaseService {
     // routes - but only by accident of that earlier guard. Any route added to
     // NativeDocumentRoute would have fallen into the else branch and executed as
     // a sales invoice, silently and with no type error. Now it fails to compile.
-    const executePrepared = (route: NativeDocumentRoute | "CONTACT_CREATE") => {
+    const executePrepared = (route: NativeDocumentRoute) => {
       const request = { preparation_id: preparationId, request_id: requestId };
       switch (route) {
         case "SUPPLIER_BILL":
@@ -3798,10 +4764,8 @@ export class XeroAccountingCaseService {
           );
         case "CUSTOMER_CREDIT":
         case "SUPPLIER_CREDIT":
-        case "CONTACT_CREATE":
-          // Both are dispatched earlier - credits just above, contact creation in
-          // #executeOperation by actionId - so neither reaches this boundary. The
-          // type says they can, so they are answered rather than assumed away.
+          // Credits are dispatched earlier, just above, to #executeCreditNote.
+          // The type says they can reach this switch, so they are answered.
           throw new AppError(
             "PERSISTENCE_FAILURE",
             `Route ${route} is dispatched before the native document write boundary.`,
@@ -3815,7 +4779,7 @@ export class XeroAccountingCaseService {
         }
       }
     };
-    const written = await executePrepared(operation.nativeRoute);
+    const written = await executePrepared(nativeRoute);
     const receipt = written.providerReceipt;
     if (!receipt) throw new AppError("WRITE_RESULT_UNKNOWN", "Xero returned no durable provider receipt.", { httpStatus: 502 });
     const projected = await this.repository.projectAccountingCaseOperationFromMutation({
@@ -3918,6 +4882,213 @@ export class XeroAccountingCaseService {
       now: this.#now(),
     });
     return projected;
+  }
+
+  /**
+   * Balanced-journal counterpart of #executeNativeDocument /
+   * #executeCommercialDocument. No #assertSealedContactBinding at all -- a
+   * balanced journal has no counterparty (see BalancedJournalFact), so there
+   * is no sealed contact identity to re-verify. #assertCurrentOrganisationPolicy
+   * IS still called here, unlike #executeCommercialDocument: a manual journal
+   * posts to the general ledger and is subject to the same period-lock/tax
+   * drift an invoice is (see DOCUMENT_DATE_IN_PERIOD_LOCK in
+   * accountingCaseCompiler.ts), even though -- like a quote or purchase order
+   * -- it has no sealed live-account binding to re-verify:
+   * declaredLedgerCoordinates only scans NATIVE_DOCUMENT facts, so a
+   * journal's declared accounts contribute nothing to the sealed binding and
+   * re-deriving it live is a no-op for a journal-only Case (or exactly the
+   * invoice/bill's own binding in a mixed one).
+   */
+  async #executeBalancedJournal(
+    context: RequestContext,
+    binding: AccountingCaseBinding,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<AccountingCaseVersionRecord> {
+    const operation = operationRecord.operation;
+    await this.#assertCurrentOrganisationPolicy(context, record);
+    this.#assertBalancedJournalRouteContract(record, operation);
+    const preparationId = operationRecord.preparationId;
+    if (!preparationId) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case execution has no sealed balanced-journal preparation.", {
+        httpStatus: 503,
+      });
+    }
+    const written = await this.accounting.createManualJournalDraft(context, {
+      preparation_id: preparationId,
+      request_id: this.#operationRequestId(record, operation),
+    });
+    const projected = await this.repository.projectAccountingCaseOperationFromMutation({
+      binding,
+      caseId: record.compiled.caseId,
+      version: record.compiled.version,
+      operationId: operation.operationId,
+      requestId: this.#executionRequestId(record),
+      expectedStates: ["PREPARED"],
+      desiredState: "READBACK_VERIFIED",
+      mutationRequestId: written.mutation_request_id,
+      now: this.#now(),
+    });
+    return projected;
+  }
+
+  async #executeLedgerStateTransition(
+    context: RequestContext,
+    binding: AccountingCaseBinding,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<AccountingCaseVersionRecord> {
+    const operation = operationRecord.operation;
+    if (!this.#isLedgerStateTransitionRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A non-transition route reached transition execution.", {
+        httpStatus: 500,
+      });
+    }
+    const preparationId = operationRecord.preparationId;
+    if (!preparationId) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case execution has no sealed transition preparation.", {
+        httpStatus: 503,
+      });
+    }
+    const written = await this.accounting.executeLedgerStateTransition(context, {
+      preparation_id: preparationId,
+      request_id: this.#operationRequestId(record, operation),
+      actionId: operation.actionId as
+        | "customer_invoice.authorise"
+        | "supplier_bill.authorise"
+        | "manual_journal.post",
+    });
+    return this.repository.projectAccountingCaseOperationFromMutation({
+      binding,
+      caseId: record.compiled.caseId,
+      version: record.compiled.version,
+      operationId: operation.operationId,
+      requestId: this.#executionRequestId(record),
+      expectedStates: ["PREPARED"],
+      desiredState: "READBACK_VERIFIED",
+      mutationRequestId: written.mutation_request_id,
+      now: this.#now(),
+    });
+  }
+
+  async #executeLedgerAdjustment(
+    context: RequestContext,
+    binding: AccountingCaseBinding,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<AccountingCaseVersionRecord> {
+    const operation = operationRecord.operation;
+    if (!this.#isLedgerAdjustmentRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A non-adjustment route reached ledger-adjustment execution.", {
+        httpStatus: 500,
+      });
+    }
+    const preparationId = operationRecord.preparationId;
+    if (!preparationId) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case execution has no sealed ledger-adjustment preparation.", {
+        httpStatus: 503,
+      });
+    }
+    const written = await this.accounting.executeLedgerAdjustment(context, {
+      preparation_id: preparationId,
+      request_id: this.#operationRequestId(record, operation),
+      actionId: operation.actionId as LedgerAdjustmentAction,
+    });
+    return this.repository.projectAccountingCaseOperationFromMutation({
+      binding,
+      caseId: record.compiled.caseId,
+      version: record.compiled.version,
+      operationId: operation.operationId,
+      requestId: this.#executionRequestId(record),
+      expectedStates: ["PREPARED"],
+      desiredState: "READBACK_VERIFIED",
+      mutationRequestId: written.mutation_request_id,
+      now: this.#now(),
+    });
+  }
+
+  async #executePaymentBankLedger(context: RequestContext, binding: AccountingCaseBinding, record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord): Promise<AccountingCaseVersionRecord> {
+    const operation = operationRecord.operation;
+    if (!this.#isPaymentBankLedgerRoute(operation.nativeRoute) || !operationRecord.preparationId) {
+      throw new AppError("PERSISTENCE_FAILURE", "Payment/Bank execution has no sealed typed preparation.", { httpStatus: 503 });
+    }
+    const written = await this.accounting.executePaymentBankCase(context, {
+      preparation_id: operationRecord.preparationId,
+      request_id: this.#operationRequestId(record, operation),
+      actionId: operation.actionId as PaymentBankLedgerAction,
+    });
+    return this.repository.projectAccountingCaseOperationFromMutation({ binding, caseId: record.compiled.caseId,
+      version: record.compiled.version, operationId: operation.operationId, requestId: this.#executionRequestId(record),
+      expectedStates: ["PREPARED"], desiredState: "READBACK_VERIFIED", mutationRequestId: written.mutation_request_id,
+      now: this.#now() });
+  }
+
+  async #executeReferenceData(
+    context: RequestContext,
+    binding: AccountingCaseBinding,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<AccountingCaseVersionRecord> {
+    const operation = operationRecord.operation;
+    if (!this.#isReferenceDataRoute(operation.nativeRoute)) {
+      throw new AppError("PERSISTENCE_FAILURE", "A non-reference-data route reached the reference-data executor.", {
+        httpStatus: 500,
+      });
+    }
+    const route = operation.nativeRoute;
+    const preparationId = operationRecord.preparationId;
+    if (!preparationId) {
+      throw new AppError("PERSISTENCE_FAILURE", "Accounting Case execution has no sealed reference-data preparation.", {
+        httpStatus: 503,
+      });
+    }
+    const request = {
+      preparation_id: preparationId,
+      request_id: this.#operationRequestId(record, operation),
+    };
+    const written = (() => {
+      switch (route) {
+        case "CONTACT_BASIC_UPDATE":
+          if (operation.actionId !== "contact.update_basic") {
+            throw new AppError("PERSISTENCE_FAILURE", "Reference-data route and action are inconsistent.", { httpStatus: 500 });
+          }
+          return this.accounting.updateContact(context, request);
+        case "ITEM_BASIC_CREATE_UNTRACKED":
+          if (operation.actionId !== "item.create_basic_untracked") {
+            throw new AppError("PERSISTENCE_FAILURE", "Reference-data route and action are inconsistent.", { httpStatus: 500 });
+          }
+          return this.accounting.createItem(context, request);
+        case "ITEM_BASIC_UPDATE_UNTRACKED":
+          if (operation.actionId !== "item.update_basic_untracked") {
+            throw new AppError("PERSISTENCE_FAILURE", "Reference-data route and action are inconsistent.", { httpStatus: 500 });
+          }
+          return this.accounting.updateItem(context, request);
+        case "TRACKING_REFERENCE_DATA":
+          return this.accounting.executeTrackingCaseMutation(context, {
+            ...request,
+            actionId: operation.actionId as TrackingReferenceDataAction,
+          });
+        default: {
+          const unreachable: never = route;
+          throw new AppError("PERSISTENCE_FAILURE", `Unhandled reference-data Case route: ${String(unreachable)}`, {
+            httpStatus: 500,
+          });
+        }
+      }
+    })();
+    const result = await written;
+    return this.repository.projectAccountingCaseOperationFromMutation({
+      binding,
+      caseId: record.compiled.caseId,
+      version: record.compiled.version,
+      operationId: operation.operationId,
+      requestId: this.#executionRequestId(record),
+      expectedStates: ["PREPARED"],
+      desiredState: "READBACK_VERIFIED",
+      mutationRequestId: result.mutation_request_id,
+      now: this.#now(),
+    });
   }
 
   async #prepareNativeDocumentOperation(
@@ -4165,6 +5336,88 @@ export class XeroAccountingCaseService {
     return prepared.preparation_id;
   }
 
+  /**
+   * Balanced-journal counterpart of #prepareNativeDocumentOperation /
+   * #prepareCommercialDocumentOperation. Unlike either, the released Xero
+   * manual-journal adapter (prepareManualJournalDraftInputSchema in
+   * xeroCreditNoteManualJournalDraft.ts) requires an exact accountId per
+   * line, not just accountCode -- it shares its adapter with credit notes
+   * (XeroCreditNoteManualJournalProvider), which need the same. Resolved
+   * here, once, against the live chart of accounts, but deliberately without
+   * #prepareNativeDocumentOperation's sealed-live-account-binding replay
+   * protection (requireXeroDeclaredLedgerAccount / #serverCoaExecutionConstraints):
+   * declaredLedgerCoordinates only scans NATIVE_DOCUMENT facts, so no such
+   * seal exists for a journal line to check against. The freshness
+   * protection quotes/purchase orders get from validateDocumentReferences on
+   * every call, a balanced journal gets from #validateManualJournalReferences
+   * instead (xeroCreditNoteManualJournalService.ts), called again
+   * independently inside prepareManualJournalDraft and inside
+   * createManualJournalDraft's own non-recovery path.
+   *
+   * No tax-rate resolution: MANUAL_JOURNAL_TAX_TYPE_UNSUPPORTED in
+   * #assertBalancedJournalRouteContract already refuses anything but
+   * declared taxType "NONE" before this method is ever reached, and the
+   * adapter's own line schema has no tax_type field to populate regardless.
+   */
+  async #prepareBalancedJournalOperation(
+    context: RequestContext,
+    record: AccountingCaseVersionRecord,
+    operationRecord: AccountingCaseOperationRecord,
+  ): Promise<string> {
+    const operation = operationRecord.operation;
+    const payload = operation.canonicalPayload;
+    const accounts = await this.accounting.listAccounts(context, {});
+    const lines = this.#payloadLines(payload).map((line, index) => {
+      const code = this.#stringField(line, "accountCode");
+      const matches = accounts.filter((account) =>
+        account.code === code && account.status === "ACTIVE" &&
+        account.type !== "BANK" && !account.systemAccount);
+      if (matches.length !== 1) {
+        throw new AppError(
+          "VALIDATION_FAILED",
+          `Balanced-journal line ${index + 1} has no exact active unprotected Xero account for code ${code}.`,
+          {
+            httpStatus: 422,
+            details: { reasonCodes: ["XERO_ACCOUNT_CODE_NOT_RESOLVED"], path: `lines[${index}].accountCode` },
+          },
+        );
+      }
+      const account = matches[0]!;
+      if (!account.accountId) {
+        throw new AppError("VALIDATION_FAILED", `Balanced-journal line ${index + 1} Xero account has no stable account ID.`, {
+          httpStatus: 422,
+        });
+      }
+      const hasDebit = typeof line.debit === "string";
+      const hasCredit = typeof line.credit === "string";
+      if (hasDebit === hasCredit) {
+        throw new AppError(
+          "VALIDATION_FAILED",
+          `Balanced-journal line ${index + 1} must declare exactly one of debit or credit.`,
+          { httpStatus: 422 },
+        );
+      }
+      const lineAmount = hasDebit
+        ? fixedNumber(line.debit, `lines[${index}].debit`)
+        : -fixedNumber(line.credit, `lines[${index}].credit`);
+      return {
+        account_id: account.accountId,
+        account_code: code,
+        description: this.#stringField(line, "description"),
+        line_amount: lineAmount,
+      };
+    });
+    const prepared = await this.accounting.prepareManualJournalDraft(context, {
+      source_ref: `case:${record.compiled.caseId}`,
+      source_unit_key: operation.operationId,
+      source_sha256: this.#operationSourceHash(record, operation),
+      journal_date: this.#stringField(payload, "date"),
+      narration: this.#stringField(payload, "narration"),
+      lines,
+    });
+    return prepared.preparation_id;
+  }
+
   #payloadLines(payload: Record<string, unknown>): Array<Record<string, unknown>> {
     if (!Array.isArray(payload.lines) || payload.lines.some((line) => !line || typeof line !== "object" || Array.isArray(line))) {
       throw new AppError("VALIDATION_FAILED", "Accounting Case native document lines are invalid.", { httpStatus: 422 });
@@ -4192,12 +5445,163 @@ export class XeroAccountingCaseService {
     return createXeroDeclaredLedgerExecutionConstraints(ledgerBinding, lines);
   }
 
+  #referenceDataCaseInput(
+    route: ReferenceDataRoute,
+    payload: Record<string, unknown>,
+  ): Record<string, unknown> {
+    switch (route) {
+      case "CONTACT_BASIC_UPDATE":
+        return {
+          contactId: this.#stringField(payload, "contactId"),
+          patch: this.#recordField(payload, "patch"),
+        };
+      case "ITEM_BASIC_CREATE_UNTRACKED":
+        return { item: this.#recordField(payload, "item") };
+      case "ITEM_BASIC_UPDATE_UNTRACKED":
+        return {
+          itemId: this.#stringField(payload, "itemId"),
+          patch: this.#recordField(payload, "patch"),
+        };
+      case "TRACKING_REFERENCE_DATA":
+        return {
+          actionId: this.#stringField(payload, "actionId"),
+          name: this.#stringField(payload, "name"),
+          ...(typeof payload.trackingCategoryId === "string" ? { trackingCategoryId: payload.trackingCategoryId } : {}),
+          ...(typeof payload.trackingOptionId === "string" ? { trackingOptionId: payload.trackingOptionId } : {}),
+        };
+      default: {
+        const unreachable: never = route;
+        throw new AppError("PERSISTENCE_FAILURE", `Unhandled reference-data Case route: ${String(unreachable)}`, {
+          httpStatus: 500,
+        });
+      }
+    }
+  }
+
+  #referenceDataPreparedInput(
+    route: ReferenceDataRoute,
+    casePayload: Record<string, unknown>,
+    preparedPayload: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const target = this.#recordField(preparedPayload, "target");
+    const projectContactPatch = (patch: Record<string, unknown>): Record<string, unknown> => {
+      const projected: Record<string, unknown> = {};
+      const scalarFields: Readonly<Record<string, string>> = {
+        name: "name",
+        first_name: "firstName",
+        last_name: "lastName",
+        email: "email",
+        company_number: "companyNumber",
+        account_number: "accountNumber",
+      };
+      for (const [publicField, providerField] of Object.entries(scalarFields)) {
+        if (Object.prototype.hasOwnProperty.call(patch, publicField)) {
+          projected[publicField] = target[providerField];
+        }
+      }
+      if (Array.isArray(patch.phones)) {
+        const byType = new Map(
+          (Array.isArray(target.phones) ? target.phones : [])
+            .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value))
+            .map((phone) => [phone.phoneType, phone]),
+        );
+        projected.phones = patch.phones.map((value) => {
+          const input = value as Record<string, unknown>;
+          const current = byType.get(input.phone_type);
+          if (!current) throw new AppError("PERSISTENCE_FAILURE", "Prepared contact has no requested phone patch.", { httpStatus: 503 });
+          return {
+            phone_type: current.phoneType,
+            ...(Object.prototype.hasOwnProperty.call(input, "phone_number") ? { phone_number: current.phoneNumber } : {}),
+            ...(Object.prototype.hasOwnProperty.call(input, "area_code") ? { area_code: current.areaCode } : {}),
+            ...(Object.prototype.hasOwnProperty.call(input, "country_code") ? { country_code: current.countryCode } : {}),
+          };
+        });
+      }
+      if (Array.isArray(patch.addresses)) {
+        const byType = new Map(
+          (Array.isArray(target.addresses) ? target.addresses : [])
+            .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value))
+            .map((address) => [address.addressType, address]),
+        );
+        const fields: Readonly<Record<string, string>> = {
+          line_1: "line1", line_2: "line2", line_3: "line3", line_4: "line4",
+          city: "city", region: "region", postal_code: "postalCode", country: "country", attention_to: "attentionTo",
+        };
+        projected.addresses = patch.addresses.map((value) => {
+          const input = value as Record<string, unknown>;
+          const current = byType.get(input.address_type);
+          if (!current) throw new AppError("PERSISTENCE_FAILURE", "Prepared contact has no requested address patch.", { httpStatus: 503 });
+          const address: Record<string, unknown> = { address_type: current.addressType };
+          for (const [publicField, providerField] of Object.entries(fields)) {
+            if (Object.prototype.hasOwnProperty.call(input, publicField)) address[publicField] = current[providerField];
+          }
+          return address;
+        });
+      }
+      return projected;
+    };
+    const projectItem = (item: Record<string, unknown>): Record<string, unknown> => ({
+      code: target.code,
+      ...(Object.prototype.hasOwnProperty.call(item, "name") ? { name: target.name } : {}),
+      ...(Object.prototype.hasOwnProperty.call(item, "description") ? { description: target.description } : {}),
+      ...(Object.prototype.hasOwnProperty.call(item, "purchase_description")
+        ? { purchase_description: target.purchaseDescription }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(item, "is_sold") ? { is_sold: target.isSold } : {}),
+      ...(Object.prototype.hasOwnProperty.call(item, "is_purchased") ? { is_purchased: target.isPurchased } : {}),
+    });
+    switch (route) {
+      case "CONTACT_BASIC_UPDATE": {
+        const patch = this.#recordField(casePayload, "patch");
+        return {
+          contactId: preparedPayload.contactId,
+          patch: projectContactPatch(patch),
+        };
+      }
+      case "ITEM_BASIC_CREATE_UNTRACKED":
+        return { item: projectItem(this.#recordField(casePayload, "item")) };
+      case "ITEM_BASIC_UPDATE_UNTRACKED": {
+        const patch = this.#recordField(casePayload, "patch");
+        const item = projectItem({ code: target.code, ...patch });
+        delete item.code;
+        return { itemId: preparedPayload.itemId, patch: item };
+      }
+      case "TRACKING_REFERENCE_DATA":
+        return {
+          actionId: this.#stringField(preparedPayload, "actionId"),
+          name: this.#stringField(preparedPayload, "name"),
+          ...(typeof preparedPayload.trackingCategoryId === "string"
+            ? { trackingCategoryId: preparedPayload.trackingCategoryId }
+            : {}),
+          ...(typeof preparedPayload.trackingOptionId === "string"
+            ? { trackingOptionId: preparedPayload.trackingOptionId }
+            : {}),
+        };
+      default: {
+        const unreachable: never = route;
+        throw new AppError("PERSISTENCE_FAILURE", `Unhandled reference-data Case route: ${String(unreachable)}`, {
+          httpStatus: 500,
+        });
+      }
+    }
+  }
+
   #stringField(payload: Record<string, unknown>, field: string): string {
     const value = payload[field];
     if (typeof value !== "string" || value.length === 0 || value !== value.trim()) {
       throw new AppError("VALIDATION_FAILED", `Accounting Case ${field} is missing or non-canonical.`, { httpStatus: 422 });
     }
     return value;
+  }
+
+  #recordField(payload: Record<string, unknown>, field: string): Record<string, unknown> {
+    const value = payload[field];
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new AppError("VALIDATION_FAILED", `Accounting Case ${field} is missing or non-canonical.`, {
+        httpStatus: 422,
+      });
+    }
+    return value as Record<string, unknown>;
   }
 
   #operationSourceHash(
@@ -4629,6 +6033,15 @@ export class XeroAccountingCaseService {
       case "contact.create_basic":
         await this.accounting.createContact(context, input);
         return;
+      case "contact.update_basic":
+        await this.accounting.updateContact(context, input);
+        return;
+      case "item.create_basic_untracked":
+        await this.accounting.createItem(context, input);
+        return;
+      case "item.update_basic_untracked":
+        await this.accounting.updateItem(context, input);
+        return;
       case "supplier_bill.create_draft":
         await this.accounting.executePreparedSupplierBillDraft(context, input);
         return;
@@ -4643,6 +6056,60 @@ export class XeroAccountingCaseService {
         return;
       case "purchase_order.create_draft":
         await this.accounting.createPurchaseOrderDraft(context, input);
+        return;
+      case "manual_journal.create_draft":
+        await this.accounting.createManualJournalDraft(context, input);
+        return;
+      case "customer_invoice.update_draft":
+      case "supplier_bill.update_draft":
+      case "quote.update_draft":
+      case "purchase_order.update_draft":
+      case "credit_note.update_draft":
+      case "manual_journal.update_draft":
+        await this.accounting.executeDraftDocumentUpdate(context, {
+          ...input,
+          actionId: operationRecord.operation.actionId,
+        }, async () => undefined);
+        return;
+      case "customer_invoice.authorise":
+      case "supplier_bill.authorise":
+      case "manual_journal.post":
+        await this.accounting.executeLedgerStateTransition(context, {
+          ...input,
+          actionId: operationRecord.operation.actionId,
+        });
+        return;
+      case "customer_invoice.void":
+      case "supplier_bill.void":
+      case "credit_note.authorise":
+      case "credit_note.allocate":
+      case "credit_note.refund":
+      case "credit_note.void":
+      case "credit_note.unallocate":
+      case "manual_journal.void":
+        await this.accounting.executeLedgerAdjustment(context, {
+          ...input,
+          actionId: operationRecord.operation.actionId,
+        });
+        return;
+      case "payment.create":
+      case "payment.reverse":
+      case "bank_transaction.create":
+      case "bank_transaction.update":
+      case "bank_transaction.reverse":
+        await this.accounting.executePaymentBankCase(context, {
+          ...input,
+          actionId: operationRecord.operation.actionId,
+        });
+        return;
+      case "tracking_category.create":
+      case "tracking_category.update":
+      case "tracking_option.create":
+      case "tracking_option.update":
+        await this.accounting.executeTrackingCaseMutation(context, {
+          ...input,
+          actionId: operationRecord.operation.actionId,
+        });
         return;
       default: {
         // Not TS-enforced (this switch returns void, so an unhandled case

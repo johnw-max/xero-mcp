@@ -582,6 +582,68 @@ describe("Quote and purchase-order draft schemas", () => {
     })).toEqual({ ok: false, reasons: ["MALFORMED_PROVIDER_READBACK"] });
   });
 
+  it("keeps a canonical zero unit amount economically zero in exact provider readback", () => {
+    const zeroQuote = buildQuoteDraftPrimitive({
+      ...quoteInput,
+      lines: [{ ...quoteInput.lines[0], unit_amount: 0 }],
+    });
+    const zeroQuoteReadback = {
+      ...quoteReadback(),
+      lineItems: [{ ...quoteReadback().lineItems[0], unitAmount: 0, lineAmount: 0 }],
+      subTotal: 0,
+      totalTax: 0,
+      total: 0,
+    };
+    expect(verifyQuoteDraftReadback(quoteId, zeroQuote.canonicalPayload, zeroQuoteReadback)).toMatchObject({ ok: true });
+    expect(verifyQuoteDraftReadback(quoteId, zeroQuote.canonicalPayload, {
+      ...zeroQuoteReadback,
+      lineItems: [{ ...zeroQuoteReadback.lineItems[0], lineAmount: 0.01 }],
+      subTotal: 0.01,
+      total: 0.01,
+    })).toEqual({ ok: false, reasons: ["PROVIDER_LINE_ECONOMICS_MISMATCH"] });
+    expect(verifyQuoteDraftReadback(quoteId, zeroQuote.canonicalPayload, {
+      ...zeroQuoteReadback,
+      subTotal: 0.01,
+      total: 0.01,
+    })).toEqual({ ok: false, reasons: ["PROVIDER_TOTALS_MISMATCH"] });
+
+    const zeroPurchaseOrder = buildPurchaseOrderDraftPrimitive({
+      ...purchaseOrderInput,
+      lines: [{ ...purchaseOrderInput.lines[0], unit_amount: 0 }],
+    });
+    const zeroPurchaseOrderReadback = {
+      ...purchaseOrderReadback(),
+      lineItems: [{ ...purchaseOrderReadback().lineItems[0], unitAmount: 0, lineAmount: 0 }],
+      subTotal: 0,
+      totalTax: 0,
+      total: 0,
+    };
+    expect(verifyPurchaseOrderDraftReadback(
+      purchaseOrderId,
+      zeroPurchaseOrder.canonicalPayload,
+      zeroPurchaseOrderReadback,
+    )).toMatchObject({ ok: true });
+    expect(verifyPurchaseOrderDraftReadback(
+      purchaseOrderId,
+      zeroPurchaseOrder.canonicalPayload,
+      {
+        ...zeroPurchaseOrderReadback,
+        lineItems: [{ ...zeroPurchaseOrderReadback.lineItems[0], lineAmount: 0.01 }],
+        subTotal: 0.01,
+        total: 0.01,
+      },
+    )).toEqual({ ok: false, reasons: ["PROVIDER_LINE_ECONOMICS_MISMATCH"] });
+    expect(verifyPurchaseOrderDraftReadback(
+      purchaseOrderId,
+      zeroPurchaseOrder.canonicalPayload,
+      {
+        ...zeroPurchaseOrderReadback,
+        subTotal: 0.01,
+        total: 0.01,
+      },
+    )).toEqual({ ok: false, reasons: ["PROVIDER_TOTALS_MISMATCH"] });
+  });
+
   it("fails exact verification for IDs, object type, status, contacts, dates, currency, references, line mode, and every line field", () => {
     const quote = buildQuoteDraftPrimitive(quoteInput);
     const purchaseOrder = buildPurchaseOrderDraftPrimitive(purchaseOrderInput);

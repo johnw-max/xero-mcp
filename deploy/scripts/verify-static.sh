@@ -46,16 +46,16 @@ do
 done
 node -e 'const fs=require("node:fs"); const p=JSON.parse(fs.readFileSync("package.json","utf8")); if(p.version!=="0.4.0-rc.1") process.exit(1)' \
   || fail "package version is not the reviewed 0.4.0-rc.1 candidate"
-node -e 'const fs=require("node:fs"),crypto=require("node:crypto"); const allow=JSON.parse(fs.readFileSync("config/tool-allowlist.json","utf8")).tools; const expected=JSON.parse(fs.readFileSync("tests/contract/expected-tools.json","utf8")); const required=["xero_prepare_accounting_case","xero_execute_accounting_case","xero_get_accounting_case_status"]; const legacy=allow.filter((name)=>/^(?:xero_prepare_(?:supplier_bill|sales_invoice|credit_note|manual_journal|quote|purchase_order|contact|item)|xero_create_|xero_update_)/u.test(name)); const hash=crypto.createHash("sha256").update(JSON.stringify(allow)).digest("hex"); if(allow.length!==30 || JSON.stringify(allow)!==JSON.stringify(expected) || required.some((name)=>!allow.includes(name)) || legacy.length || hash!=="ed6667e843ea916ad672ad260d0d7705df75ad4632c181e4e554250b82b076e5") process.exit(1)' \
-  || fail "30-tool Accounting Case allowlist or toolset hash drifted"
+node scripts/validate-capability-manifest.mjs --format fields \
+  || fail "capability manifest or public reachability drifted"
 
 sh -n deploy/scripts/switch-xero-upstream.sh
 sh -n deploy/scripts/admit-and-compose.sh
 node --check scripts/release/production-deployment-admission.mjs
-node --check deploy/scripts/governance-cutover-contract.mjs
 grep -Fq 'readonly GREEN_VERSION="0.4.0-rc.1"' deploy/scripts/switch-xero-upstream.sh
-grep -Fq 'readonly GREEN_TOOL_COUNT="28"' deploy/scripts/switch-xero-upstream.sh
-grep -Fq 'readonly GREEN_TOOLSET_HASH="ed6667e843ea916ad672ad260d0d7705df75ad4632c181e4e554250b82b076e5"' deploy/scripts/switch-xero-upstream.sh
+if grep -Eq 'GREEN_TOOL_COUNT="[0-9]+"|GREEN_TOOLSET_HASH="[a-f0-9]{64}"' deploy/scripts/switch-xero-upstream.sh; then
+  fail "cutover must derive capability identity from the manifest"
+fi
 for required_identity_guard in \
   'APP_IMAGE_MUST_USE_IMMUTABLE_REPO_DIGEST' \
   'GREEN_IMAGE_IDENTITY_MISMATCH' \
@@ -65,10 +65,7 @@ for required_identity_guard in \
   'PRODUCTION_DEPLOYMENT_ADMISSION_FAILED' \
   '/usr/bin/node scripts/release/production-deployment-admission.mjs --format fields' \
   'accepted_manifest_digest' \
-  'XERO_ADMITTED_GOVERNANCE_TRUST_BUNDLE_SHA256' \
-  'XERO_ADMITTED_GOVERNANCE_RECEIPTS_SHA256' \
-  'XERO_ADMITTED_GOVERNANCE_STATUS_SHA256' \
-  'deploy/scripts/governance-cutover-contract.mjs'
+  'XERO_ADMITTED_WRITE_ENABLED'
 do
   grep -Fq "$required_identity_guard" deploy/scripts/switch-xero-upstream.sh \
     || fail "cutover is missing OCI identity guard: $required_identity_guard"
@@ -114,16 +111,18 @@ for current_release_file in \
 do
   forbid_text "$current_release_file" "confirmation_phrase"
   forbid_text "$current_release_file" "user_confirmation"
+  forbid_text "$current_release_file" "Standing Delegation"
 done
 
-require_text docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md '当前候选：`0.4.0-rc.1` / 30 个公共工具 / Accounting Case / Standing Delegation'
-require_text docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md '尚未部署，Agent2 与 Work 的 0.4 写入验收尚未执行'
+require_text docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md 'xero-capability-manifest.json'
+require_text docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md '候选版本：`0.4.0-rc.1`，尚未上线'
+require_text docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md '`NO-GO`'
 forbid_text docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md '用户输入当前提案的一次性确认句'
 forbid_text docs/XERO-MCP-CURRENT-CAPABILITIES-ZH.md '补齐 Host 级签名确认'
 
 node -e 'const fs=require("node:fs"); const suite=JSON.parse(fs.readFileSync("harness/manifests/p0-suite.json","utf8")); const current=["harness/scenarios/accounting-case-deterministic.p0.json","harness/scenarios/accounting-case-agent2.p0.json","harness/scenarios/accounting-case-browser.p0.json"]; if(JSON.stringify(suite.scenario_manifests)!==JSON.stringify(current)) process.exit(1)' \
   || fail "P0 suite does not point exclusively to the three current Accounting Case manifests"
-require_text harness/remote-agents/manifests/agent2-xero-v040rc-accounting-case-uat.template.json '"releaseContract": "0.4.0-rc.1 / 28 public tools / Standing Delegation"'
+require_text harness/remote-agents/manifests/agent2-xero-v040rc-accounting-case-uat.template.json '"capabilityManifest": "config/xero-capability-manifest.json"'
 require_text harness/remote-agents/manifests/agent2-production-current-readonly-2026-08-06.json '"lifecycle": "HISTORICAL_0_3_READONLY_EVIDENCE_ONLY"'
 require_text harness/remote-agents/manifests/agent2-xero-v030-business-readonly-prepare-first-2026-08-08.json '"lifecycle": "HISTORICAL_0_3_EVIDENCE_ONLY"'
 require_text scripts/agent2_uat_write_gate_vps.sh 'HISTORICAL 0.3.1 UAT SCRIPT ONLY'
@@ -134,7 +133,6 @@ require_text deploy/env.vps.example "SHARED_TEST_USERS=true"
 require_text deploy/env.vps.example "HOST_OAUTH_CLIENTS_JSON="
 require_text deploy/env.vps.example "OAUTH_MANUAL_RETURN_CLIENT_IDS="
 require_text deploy/env.vps.example "XERO_WRITE_ENABLED=false"
-require_text deploy/env.vps.example "XERO_AUTHORITY_REVISION=1"
 require_text deploy/env.vps.example "XERO_TARGET_SESSION_REQUIRED=true"
 require_text deploy/env.vps.example "XERO_TARGET_SESSION_TTL_SECONDS=1800"
 
@@ -169,11 +167,14 @@ require_text src/db/postgresRepository.ts 'FROM unnest($1::text[]) AS required(v
 require_text scripts/release/release-bundle-lib.mjs '...REQUIRED_MIGRATION_RELEASE_FILES'
 require_text src/xeroRelease.ts 'requiredMigration: REQUIRED_MIGRATION_HEAD'
 require_text src/xeroRelease.ts 'ledgerAuthoritySnapshot: LEDGER_AUTHORITY_SNAPSHOT_SCHEMA_VERSION'
-require_text src/server.ts 'authoritySnapshotResolver: new RepositoryLedgerAuthoritySnapshotResolver(repository)'
+require_text src/server.ts 'writeEnabled: config.xeroWriteEnabled'
+require_text src/server.ts 'required: config.xeroTargetSessionRequired ?? false'
+require_text src/server.ts 'ttlMs: (config.xeroTargetSessionTtlSeconds ?? 1_800) * 1_000'
+forbid_text src/server.ts 'RepositoryLedgerAuthoritySnapshotResolver'
+forbid_text src/server.ts 'authoritySnapshotResolver'
 require_text src/db/postgresRepository.ts 'SELECT pg_advisory_xact_lock($1::integer, hashtext($2)::integer)'
 require_text src/http/app.ts 'authoritySnapshotRevision: evidence.authoritySnapshotRevision'
-require_text src/http/app.ts 'standingDelegationsConfigSha256: config.xeroStandingDelegationsConfigSha256 ?? null'
-require_text src/http/app.ts 'config.xeroWriteEnabled && evidence.authorityWriteKillSwitchEnabled === true'
+require_text src/http/app.ts 'processWriteGateEnabled: config.xeroWriteEnabled'
 require_text src/xeroRelease.ts 'accountingCaseReadbackValidator: ACCOUNTING_CASE_READBACK_VALIDATOR_VERSION'
 require_text src/xeroRelease.ts 'xeroNativeRouteContract: XERO_NATIVE_ROUTE_CONTRACT_VERSION'
 require_text src/xeroRelease.ts 'xeroContactIdentityContract: XERO_CONTACT_IDENTITY_CONTRACT_VERSION'
@@ -182,6 +183,13 @@ require_text deploy/host-nginx/mcp.jiayuanwang.xyz "location = /mcp"
 require_text deploy/host-nginx/mcp.jiayuanwang.xyz "location = /authorize"
 require_text deploy/host-nginx/mcp.jiayuanwang.xyz "location = /token"
 require_text deploy/host-nginx/mcp.jiayuanwang.xyz "location = /oauth/xero/callback"
+require_text deploy/host-nginx/mcp.jiayuanwang.xyz "location = /xero/organisation-switch"
+forbid_text deploy/host-nginx/mcp.jiayuanwang.xyz "/review/"
+forbid_text deploy/nginx/default.conf.template "/review/"
+forbid_text src/server.ts "ReviewService"
+if grep -Eq 'app\.(get|post)\("/review/' src/http/app.ts; then
+  fail "current application still publishes the legacy browser Review surface"
+fi
 
 for file in \
   package.json \

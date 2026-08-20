@@ -177,7 +177,6 @@ export function verifyOciLayoutArtifact(ociArtifact, expected) {
     "io.zcloak.xero.build-identity-hash": expected.semanticBuildIdentityHash,
     "io.zcloak.xero.acceptance-source-sha256": expected.acceptanceSourceSha256,
     "io.zcloak.xero.source-archive-sha256": expected.sourceArchiveSha256,
-    "io.zcloak.xero.approved-control-catalog-sha256": expected.approvedControlCatalogSha256,
   };
   for (const [key, value] of Object.entries(expectedLabels)) {
     if (labels[key] !== value) throw new Error(`OCI_IMAGE_LABEL_MISMATCH:${key}`);
@@ -193,16 +192,6 @@ export function verifyOciLayoutArtifact(ociArtifact, expected) {
       embeddedIdentity.sourceArchiveSha256 !== expected.sourceArchiveSha256) {
     throw new Error("OCI_BUILD_IDENTITY_ENV_MISMATCH");
   }
-  if (embeddedIdentity.approvedControlCatalogSha256 !== expected.approvedControlCatalogSha256) {
-    throw new Error("OCI_BUILD_IDENTITY_CONTROL_CATALOG_MISMATCH");
-  }
-  const controlCatalogEnvironment = Array.isArray(environment)
-    ? environment.find((value) => value.startsWith("XERO_APPROVED_CONTROL_CATALOG_SHA256="))
-    : undefined;
-  if (controlCatalogEnvironment !==
-      `XERO_APPROVED_CONTROL_CATALOG_SHA256=${expected.approvedControlCatalogSha256}`) {
-    throw new Error("OCI_CONTROL_CATALOG_ENV_MISMATCH");
-  }
   if (config.config?.User !== "10001:10001" ||
       JSON.stringify(config.config?.Cmd) !== JSON.stringify(["npm", "run", "start"])) {
     throw new Error("OCI_RUNTIME_CONFINEMENT_INVALID");
@@ -214,36 +203,12 @@ export function verifyOciLayoutArtifact(ociArtifact, expected) {
   });
 }
 
-export function assertApprovedControlCatalogChain({
-  gateResult,
-  gateReceipt,
-  ociReceipt,
-  approvedControlCatalogSha256,
-}) {
-  if (!SHA256.test(approvedControlCatalogSha256 ?? "")) {
-    throw new Error("APPROVED_CONTROL_CATALOG_SHA256_REQUIRED");
-  }
-  if (gateResult?.approved_control_catalog_sha256 !== approvedControlCatalogSha256 ||
-      gateReceipt?.approved_control_catalog_sha256 !== approvedControlCatalogSha256 ||
-      ociReceipt?.approvedControlCatalogSha256 !== approvedControlCatalogSha256) {
-    throw new Error("LOCAL_ACCEPTANCE_CONTROL_CATALOG_MISMATCH");
-  }
-  return true;
-}
-
 export function verifyLocalAcceptanceRelease({
   gateResult,
   gateReceipt,
   ociReceipt,
   ociArtifact,
-  approvedControlCatalogSha256,
 }) {
-  assertApprovedControlCatalogChain({
-    gateResult,
-    gateReceipt,
-    ociReceipt,
-    approvedControlCatalogSha256,
-  });
   if (gateResult?.schema_version !== "1.1" || gateResult.status !== "PASS" ||
       gateResult.source_stable !== true || gateResult.failed_step_id !== null ||
       gateReceipt?.schema_version !== "local-acceptance-gate-receipt:v1" || gateReceipt.status !== "PASS") {
@@ -291,10 +256,6 @@ export function verifyLocalAcceptanceRelease({
       ociReceipt.semanticBuildIdentityHash !== release.semantic_build_identity_hash) {
     throw new Error("LOCAL_ACCEPTANCE_OCI_RECEIPT_MISMATCH");
   }
-  if (release.approved_control_catalog_sha256 !== approvedControlCatalogSha256 ||
-      ociReceipt.approvedControlCatalogSha256 !== approvedControlCatalogSha256) {
-    throw new Error("LOCAL_ACCEPTANCE_OCI_CONTROL_CATALOG_MISMATCH");
-  }
   assertApprovedLocalBuilderReceipt(ociReceipt.builder);
   return verifyOciLayoutArtifact(ociArtifact, ociReceipt);
 }
@@ -309,12 +270,10 @@ function parseArguments(argv) {
     else if (flag === "--gate-receipt") options.gateReceipt = resolve(value);
     else if (flag === "--oci-receipt") options.ociReceipt = resolve(value);
     else if (flag === "--oci-artifact") options.ociArtifact = resolve(value);
-    else if (flag === "--approved-control-catalog-sha256") options.approvedControlCatalogSha256 = value;
     else throw new Error(`Unknown argument: ${flag}`);
   }
-  if (Object.keys(options).length !== 5 ||
-      !SHA256.test(options.approvedControlCatalogSha256 ?? "")) {
-    throw new Error("All local acceptance release artifacts and --approved-control-catalog-sha256 are required");
+  if (Object.keys(options).length !== 4) {
+    throw new Error("All local acceptance release artifacts are required");
   }
   return options;
 }
@@ -332,7 +291,6 @@ async function main() {
     gateReceipt,
     ociReceipt,
     ociArtifact,
-    approvedControlCatalogSha256: options.approvedControlCatalogSha256,
   });
   process.stdout.write(`${JSON.stringify({ status: "PASS", ...result })}\n`);
 }

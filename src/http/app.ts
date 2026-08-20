@@ -53,41 +53,18 @@ import {
 } from "../xeroRelease.js";
 
 const OAUTH_COOKIE = "zc_xero_oauth_session";
-const REVIEW_COOKIE = "zc_review_session";
 
 function runtimeWriteMode(enabled: boolean): XeroRuntimeWriteMode {
   return enabled ? "WRITE_ENABLED" : "READ_ONLY";
 }
 
-/**
- * Decides whether this build recognises the authority currently published, and
- * therefore whether it may write at all. Exported so the decision itself is
- * testable rather than only reachable through a live HTTP surface.
- */
+/** Internal snapshot availability for the atomic write claim; it is not a
+ * release-admission hash or a second authority source. */
 export function expectedAuthorityIdentityProven(
-  config: AppConfig,
+  _config: AppConfig,
   evidence: RepositoryReadinessEvidence,
 ): boolean {
-  const expectedSnapshot = config.xeroExpectedAuthoritySnapshotSha256;
-  const expectedGovernance = config.xeroExpectedFirmGovernanceAggregateSha256;
-  if (expectedSnapshot === undefined || expectedGovernance === undefined) {
-    return config.nodeEnv !== "production";
-  }
-  // The pin may name either the revision-independent content hash (durable:
-  // survives republication of the same authority at a higher revision, which is
-  // what a rollback is) or the older snapshot hash, which folded the revision in
-  // and therefore went stale the moment anything was republished. Accepting both
-  // keeps already-deployed envs working while the content hash becomes the pin
-  // worth writing down.
-  if (evidence.authorityContentHash !== expectedSnapshot &&
-      evidence.authoritySnapshotHash !== expectedSnapshot) {
-    return false;
-  }
-  return expectedGovernance === "NOT_REQUIRED"
-    ? evidence.firmGovernance.status === "NOT_REQUIRED" &&
-      evidence.firmGovernance.authorityAggregateHash === null
-    : evidence.firmGovernance.status === "CURRENT" &&
-      evidence.firmGovernance.authorityAggregateHash === expectedGovernance;
+  return evidence.authoritySnapshotRevision !== null && evidence.authoritySnapshotHash !== null;
 }
 
 function unknownReadinessEvidence(requiredMigration: string): RepositoryReadinessEvidence {
@@ -352,16 +329,6 @@ export function requireLegacySharedBearer(config: AppConfig) {
 export function isReviewOriginAllowed(config: Pick<AppConfig, "publicBaseUrl">, origin: string | undefined): boolean {
   const status = classifyBrokerBrowserOrigin(origin, config.publicBaseUrl);
   return status === "EXACT" || status === "CANONICAL_EQUIVALENT";
-}
-
-function requireReviewOrigin(config: AppConfig) {
-  return (request: Request, response: Response, next: NextFunction) => {
-    if (!isReviewOriginAllowed(config, request.headers.origin)) {
-      response.status(403).json({ error: { code: "FORBIDDEN", message: "Review POST must be same-origin." } });
-      return;
-    }
-    next();
-  };
 }
 
 export function isOrganisationSwitchOriginAllowed(
@@ -629,7 +596,8 @@ export function createHttpApp(options: {
   repository: AccountingRepository;
   accountingService: AccountingService;
   oauthService: XeroOAuthService;
-  reviewService: ReviewService;
+  /** Historical test seam only. The current application publishes no review UI. */
+  reviewService?: ReviewService;
   connectionTickets: ConnectionTicketService;
   logger: Logger;
   mcpOAuthProvider?: McpOAuthBrokerProvider;
@@ -642,7 +610,6 @@ export function createHttpApp(options: {
     repository,
     accountingService,
     oauthService,
-    reviewService,
     connectionTickets,
     logger,
     mcpOAuthProvider,
@@ -678,29 +645,19 @@ export function createHttpApp(options: {
       XERO_RELEASE_ATTESTATION.requiredMigration,
     );
     const buildIdentity = config.xeroBuildIdentity;
-    const firmGovernanceProven = evidence.firmGovernance.status === "CURRENT" ||
-      evidence.firmGovernance.status === "NOT_REQUIRED";
-    const authorityIdentityProven = expectedAuthorityIdentityProven(config, evidence);
-    const writeMode = runtimeWriteMode(
-      config.xeroWriteEnabled && evidence.authorityWriteKillSwitchEnabled === true && firmGovernanceProven &&
-        authorityIdentityProven,
-    );
+    const writeMode = runtimeWriteMode(config.xeroWriteEnabled);
     response.json({
       status: "ok",
       version: XERO_RELEASE_VERSION,
       writeMode,
       processWriteGateEnabled: config.xeroWriteEnabled,
-      configuredAuthorityRevision: config.xeroAuthorityRevision,
-      standingDelegationsConfigSha256: config.xeroStandingDelegationsConfigSha256 ?? null,
       authoritySnapshotRevision: evidence.authoritySnapshotRevision,
       authoritySnapshotHash: evidence.authoritySnapshotHash,
       authorityContentHash: evidence.authorityContentHash,
       authorityWriteKillSwitchEnabled: evidence.authorityWriteKillSwitchEnabled,
-      firmGovernance: evidence.firmGovernance,
       buildIdentityHash: buildIdentity ? xeroBuildIdentityHash(buildIdentity) : null,
       acceptanceSourceSha256: buildIdentity?.acceptanceSourceSha256 ?? null,
       sourceArchiveSha256: buildIdentity?.sourceArchiveSha256 ?? null,
-      approvedControlCatalogSha256: buildIdentity?.approvedControlCatalogSha256 ?? null,
       toolCount: TOOL_ALLOWLIST.length,
       toolsetHash: hashObject(TOOL_ALLOWLIST),
       attestation: XERO_RELEASE_ATTESTATION,
@@ -713,24 +670,13 @@ export function createHttpApp(options: {
     const buildIdentity = config.xeroBuildIdentity;
     const buildIdentityHash = buildIdentity ? xeroBuildIdentityHash(buildIdentity) : null;
     const evidence = await repositoryReadinessEvidence(repository, requiredMigration);
-    const firmGovernanceRequired = config.xeroWriteEnabled &&
-      evidence.authorityWriteKillSwitchEnabled === true;
-    const firmGovernanceProven = !firmGovernanceRequired ||
-      evidence.firmGovernance.status === "CURRENT" || evidence.firmGovernance.status === "NOT_REQUIRED";
-    const authorityIdentityProven = expectedAuthorityIdentityProven(config, evidence);
-    const writeMode = runtimeWriteMode(
-      config.xeroWriteEnabled && evidence.authorityWriteKillSwitchEnabled === true && firmGovernanceProven &&
-        authorityIdentityProven,
-    );
+    const writeMode = runtimeWriteMode(config.xeroWriteEnabled);
     const runtimeAttestation = createXeroRuntimeAttestation({
       buildIdentityHash,
       acceptanceSourceSha256: buildIdentity?.acceptanceSourceSha256 ?? null,
       sourceArchiveSha256: buildIdentity?.sourceArchiveSha256 ?? null,
-      approvedControlCatalogSha256: buildIdentity?.approvedControlCatalogSha256 ?? null,
       writeMode,
       processWriteGateEnabled: config.xeroWriteEnabled,
-      configuredAuthorityRevision: config.xeroAuthorityRevision,
-      standingDelegationsConfigSha256: config.xeroStandingDelegationsConfigSha256 ?? null,
       authoritySnapshotRevision: evidence.authoritySnapshotRevision,
       authoritySnapshotHash: evidence.authoritySnapshotHash,
       authorityWriteKillSwitchEnabled: evidence.authorityWriteKillSwitchEnabled,
@@ -741,28 +687,18 @@ export function createHttpApp(options: {
       migrationHead: evidence.migrationHead,
       activeAccountingCaseRecoveryProjection:
         evidence.activeAccountingCaseRecoveryProjection,
-      firmGovernance: evidence.firmGovernance,
     });
     const migrationProven =
       (evidence.storageMode === "POSTGRES" && evidence.requiredMigrationStatus === "APPLIED" &&
         typeof evidence.migrationHead === "string" && evidence.migrationHead.length > 0) ||
       (evidence.storageMode === "IN_MEMORY" && evidence.requiredMigrationStatus === "NOT_APPLICABLE");
     const buildIdentityProven = config.nodeEnv !== "production" || buildIdentity !== undefined;
-    const authorityConfigurationProven = config.nodeEnv !== "production" || (
-      evidence.authoritySnapshotRevision === config.xeroAuthorityRevision &&
-      typeof config.xeroStandingDelegationsConfigSha256 === "string" &&
-      /^[a-f0-9]{64}$/u.test(config.xeroStandingDelegationsConfigSha256) && authorityIdentityProven
-    );
-    const ready = evidence.ready && migrationProven && evidence.authoritySnapshotRevision !== null &&
-      evidence.authoritySnapshotHash !== null && buildIdentityProven && authorityConfigurationProven &&
-      firmGovernanceProven;
+    const ready = evidence.ready && migrationProven && buildIdentityProven;
     response.status(ready ? 200 : 503).json({
       status: ready ? "ready" : "not_ready",
       version: XERO_RELEASE_VERSION,
       writeMode,
       processWriteGateEnabled: config.xeroWriteEnabled,
-      configuredAuthorityRevision: config.xeroAuthorityRevision,
-      standingDelegationsConfigSha256: config.xeroStandingDelegationsConfigSha256 ?? null,
       authoritySnapshotRevision: evidence.authoritySnapshotRevision,
       authoritySnapshotHash: evidence.authoritySnapshotHash,
       authorityContentHash: evidence.authorityContentHash,
@@ -770,14 +706,12 @@ export function createHttpApp(options: {
       buildIdentityHash,
       acceptanceSourceSha256: buildIdentity?.acceptanceSourceSha256 ?? null,
       sourceArchiveSha256: buildIdentity?.sourceArchiveSha256 ?? null,
-      approvedControlCatalogSha256: buildIdentity?.approvedControlCatalogSha256 ?? null,
       storageMode: evidence.storageMode,
       requiredMigration,
       requiredMigrationStatus: evidence.requiredMigrationStatus,
       migrationHead: evidence.migrationHead,
       activeAccountingCaseRecoveryProjection:
         evidence.activeAccountingCaseRecoveryProjection,
-      firmGovernance: evidence.firmGovernance,
       toolsetHash: hashObject(TOOL_ALLOWLIST),
       attestationHash: hashObject(XERO_RELEASE_ATTESTATION),
       runtimeAttestation,
@@ -785,7 +719,6 @@ export function createHttpApp(options: {
     });
   });
 
-  const reviewOrigin = requireReviewOrigin(config);
   const organisationSwitchOrigin = requireOrganisationSwitchOrigin(config);
 
   if (brokerConfig?.enabled && mcpOAuthProvider) {
@@ -909,15 +842,8 @@ export function createHttpApp(options: {
       throw new AppError("FORBIDDEN", "OAuth callback is missing its state or browser session.", { httpStatus: 403 });
     }
     const queryString = request.originalUrl.includes("?") ? request.originalUrl.slice(request.originalUrl.indexOf("?") + 1) : "";
-    const { connected, reviewSession } = await completeTicketBoundXeroOAuth({
-      state,
-      browserSession,
-      queryString,
-      oauthService,
-      reviewService,
-    });
+    const connected = await oauthService.callback({ state, browserSession, queryString });
     response.clearCookie(OAUTH_COOKIE, { path: "/oauth/xero" });
-    response.cookie(REVIEW_COOKIE, reviewSession.session, reviewCookieOptions(config, reviewSession.expiresAt));
     setPrivateHtmlHeaders(response);
     const payload = { status: "connected", tenant: { id: connected.tenantId, name: connected.tenantName }, scopes: connected.scopes };
     if (request.accepts(["html", "json"]) === "html") {
@@ -964,73 +890,6 @@ export function createHttpApp(options: {
       }));
     });
   }
-
-  app.get("/review/:postingRequestId", async (request, response) => {
-    const postingRequestId = request.params.postingRequestId;
-    if (typeof postingRequestId !== "string") {
-      throw new AppError("VALIDATION_FAILED", "Posting request identifier is invalid.", { httpStatus: 400 });
-    }
-    const rawSession = parseCookie(request, REVIEW_COOKIE);
-    if (!rawSession) throw new AppError("AUTH_REQUIRED", "Operator review session is required.", { httpStatus: 401 });
-    const session = await reviewService.authenticate(rawSession);
-    const review = await reviewService.getReview(postingRequestId, session.actorId, session.sessionHash);
-    const view = {
-      postingRequestId: review.posting.postingRequestId,
-      state: review.posting.state,
-      action: review.action,
-      tenantId: review.posting.tenantId,
-      ...(review.tenantName ? { tenantName: review.tenantName } : {}),
-      ...(review.xeroBillUrl ? { xeroBillUrl: review.xeroBillUrl } : {}),
-      sourceRef: review.posting.sourceRef,
-      sourceSha256: review.posting.sourceSha256,
-      sourceEvidenceType: review.posting.sourceEvidenceType,
-      invoiceId: review.posting.xeroInvoiceId,
-      approvedPayloadHash: review.posting.providerPayloadHash,
-      bill: review.posting.readbackSnapshot,
-      transition: "DRAFT -> AUTHORISED",
-    };
-    setPrivateHtmlHeaders(response);
-    if (request.accepts(["html", "json"]) === "json") {
-      response.json({ review: view, ...(review.csrfToken ? { csrfToken: review.csrfToken } : {}) });
-      return;
-    }
-    response.type("html").send(renderReviewPage({
-      postingRequestId: review.posting.postingRequestId,
-      ...(review.csrfToken ? { csrfToken: review.csrfToken } : {}),
-      review: view,
-    }));
-  });
-
-  app.post("/review/:postingRequestId/reject", reviewOrigin, async (request, response) => {
-    const postingRequestId = request.params.postingRequestId;
-    if (typeof postingRequestId !== "string") {
-      throw new AppError("VALIDATION_FAILED", "Posting request identifier is invalid.", { httpStatus: 400 });
-    }
-    const rawSession = parseCookie(request, REVIEW_COOKIE);
-    if (!rawSession) throw new AppError("AUTH_REQUIRED", "Operator review session is required.", { httpStatus: 401 });
-    const session = await reviewService.authenticate(rawSession);
-    const csrfToken = typeof request.body?.csrf_token === "string" ? request.body.csrf_token : undefined;
-    if (!csrfToken) throw new AppError("FORBIDDEN", "Review CSRF token is required.", { httpStatus: 403 });
-    const result = await rejectReviewWithAudit({
-      accountingService,
-      reviewService,
-      actorId: session.actorId,
-      sessionHash: session.sessionHash,
-      csrfToken,
-      postingRequestId,
-    });
-    setPrivateHtmlHeaders(response);
-    if (request.accepts(["html", "json"]) === "html") {
-      response.type("html").send(renderResultPage({
-        title: "Bill rejected",
-        message: "Nothing was posted to the Xero ledger.",
-        postingRequestId: result.postingRequestId,
-        status: result.state,
-      }));
-      return;
-    }
-    response.json(result);
-  });
 
   app.use((error: unknown, request: Request, response: Response, _next: NextFunction) => {
     const httpError = error && typeof error === "object"

@@ -13,10 +13,16 @@ const configured = [
   "accounting.invoices.read",
   "accounting.invoices",
   "accounting.payments.read",
+  "accounting.payments",
   "accounting.manualjournals.read",
   "accounting.manualjournals",
   "accounting.banktransactions.read",
+  "accounting.banktransactions",
+  "accounting.journals.read",
   "accounting.reports.trialbalance.read",
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.balancesheet.read",
+  "accounting.reports.aged.read",
 ];
 
 describe("least-privilege Xero Broker scopes", () => {
@@ -25,13 +31,20 @@ describe("least-privilege Xero Broker scopes", () => {
     expect(scopes).toEqual(expect.arrayContaining(["openid", "profile", "email", "offline_access"]));
     expect(scopes).toContain("accounting.invoices.read");
     expect(scopes).toContain("accounting.payments.read");
+    expect(scopes).toEqual(expect.arrayContaining([
+      "accounting.reports.trialbalance.read",
+      "accounting.reports.profitandloss.read",
+      "accounting.reports.balancesheet.read",
+      "accounting.reports.aged.read",
+    ]));
     expect(scopes).not.toContain("accounting.invoices");
     expect(scopes).not.toContain("accounting.manualjournals");
     expect(scopes).not.toContain("accounting.contacts");
     expect(scopes).not.toContain("accounting.settings");
+    expect(scopes).not.toContain("accounting.journals.read");
   });
 
-  it("keeps read capabilities and requests only invoice/contact writes for draft write", () => {
+  it("keeps read capabilities and requests the complete released controlled-write scope bundle", () => {
     const scopes = leastPrivilegeXeroScopesForBroker(configured, ["xero.read", "xero.draft.write"]);
     expect(scopes).toEqual(expect.arrayContaining([
       "openid",
@@ -45,11 +58,17 @@ describe("least-privilege Xero Broker scopes", () => {
       "accounting.manualjournals.read",
       "accounting.banktransactions.read",
       "accounting.reports.trialbalance.read",
+      "accounting.reports.profitandloss.read",
+      "accounting.reports.balancesheet.read",
+      "accounting.reports.aged.read",
       "accounting.invoices",
       "accounting.contacts",
+      "accounting.settings",
+      "accounting.manualjournals",
+      "accounting.payments",
+      "accounting.banktransactions",
     ]));
-    expect(scopes).not.toContain("accounting.manualjournals");
-    expect(scopes).not.toContain("accounting.settings");
+    expect(scopes).not.toContain("accounting.journals.read");
     expect(scopes).not.toContain("accounting.transactions");
   });
 
@@ -62,27 +81,29 @@ describe("least-privilege Xero Broker scopes", () => {
       "offline_access",
       "accounting.invoices",
       "accounting.contacts",
+      "accounting.settings",
+      "accounting.manualjournals",
+      "accounting.payments",
+      "accounting.banktransactions",
     ]));
     expect(scopes).not.toContain("accounting.reports.trialbalance.read");
     expect(scopes).not.toContain("accounting.payments.read");
     expect(scopes).not.toContain("accounting.banktransactions.read");
     expect(scopes).not.toContain("accounting.invoices.read");
     expect(scopes).not.toContain("accounting.manualjournals.read");
-    expect(scopes).not.toContain("accounting.manualjournals");
-    expect(scopes).not.toContain("accounting.settings");
+    expect(scopes).not.toContain("accounting.journals.read");
   });
 
-  it("accepts draft write without manual-journal or settings write scopes", () => {
-    const scopes = leastPrivilegeXeroScopesForBroker(
-      configured.filter((scope) => scope !== "accounting.manualjournals" && scope !== "accounting.settings"),
+  it.each([
+    ["accounting.settings", /item create and update/i],
+    ["accounting.manualjournals", /manual journal draft write/i],
+    ["accounting.payments", /payment create.*reversal/i],
+    ["accounting.banktransactions", /bank transaction create.*reversal/i],
+  ])("fails closed when the released write bundle lacks %s", (missingScope, expectedMessage) => {
+    expect(() => leastPrivilegeXeroScopesForBroker(
+      configured.filter((scope) => scope !== missingScope),
       ["xero.draft.write"],
-    );
-    expect(scopes).toEqual(expect.arrayContaining([
-      "accounting.invoices",
-      "accounting.contacts",
-    ]));
-    expect(scopes).not.toContain("accounting.manualjournals");
-    expect(scopes).not.toContain("accounting.settings");
+    )).toThrow(expectedMessage);
   });
 
   it("fails closed when configured Xero scopes cannot satisfy the grant", () => {
@@ -102,13 +123,14 @@ describe("least-privilege Xero Broker scopes", () => {
     )).toThrow(expectedMessage);
   });
 
-  it("keeps legacy broad transaction compatibility without treating it as contact or settings write", () => {
+  it("keeps legacy broad transaction compatibility without treating it as contact write", () => {
     const legacyConfigured = [
       "openid",
       "profile",
       "email",
       "offline_access",
       "accounting.transactions",
+      "accounting.journals.read",
       "accounting.settings.read",
       "accounting.contacts",
       "accounting.settings",
@@ -122,21 +144,21 @@ describe("least-privilege Xero Broker scopes", () => {
       "accounting.transactions",
       "accounting.contacts",
     ]));
-    expect(scopes).not.toContain("accounting.settings");
+    expect(scopes).toContain("accounting.settings");
 
     expect(() => leastPrivilegeXeroScopesForBroker(
       legacyConfigured.filter((scope) => scope !== "accounting.contacts"),
       ["xero.read", "xero.draft.write"],
     )).toThrow(/contact create and update/i);
-    expect(leastPrivilegeXeroScopesForBroker(
+    expect(() => leastPrivilegeXeroScopesForBroker(
       legacyConfigured.filter((scope) => scope !== "accounting.settings"),
       ["xero.read", "xero.draft.write"],
-    )).toEqual(expect.arrayContaining(["accounting.transactions", "accounting.contacts"]));
+    )).toThrow(/item create and update/i);
   });
 
   it("fails closed when xero.read cannot obtain payment history read", () => {
     expect(() => leastPrivilegeXeroScopesForBroker(
-      configured.filter((scope) => scope !== "accounting.payments.read"),
+      configured.filter((scope) => !["accounting.payments.read", "accounting.payments"].includes(scope)),
       ["xero.read"],
     )).toThrow(/payment history read/i);
   });

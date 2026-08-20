@@ -539,6 +539,20 @@ export function accountingCaseMutationRoute(
   switch (operation.actionId) {
     case "contact.create_basic":
       return { objectType: "CONTACT", operation: "CREATE" };
+    case "contact.update_basic":
+      return { objectType: "CONTACT", operation: "UPDATE" };
+    case "item.create_basic_untracked":
+      return { objectType: "ITEM", operation: "CREATE" };
+    case "item.update_basic_untracked":
+      return { objectType: "ITEM", operation: "UPDATE" };
+    case "tracking_category.create":
+      return { objectType: "TRACKING_CATEGORY", operation: "CREATE" };
+    case "tracking_category.update":
+      return { objectType: "TRACKING_CATEGORY", operation: "UPDATE" };
+    case "tracking_option.create":
+      return { objectType: "TRACKING_OPTION", operation: "CREATE" };
+    case "tracking_option.update":
+      return { objectType: "TRACKING_OPTION", operation: "UPDATE" };
     case "customer_invoice.create_draft":
       return { objectType: "SALES_INVOICE", operation: "CREATE_DRAFT" };
     case "supplier_bill.create_draft":
@@ -549,6 +563,52 @@ export function accountingCaseMutationRoute(
       return { objectType: "QUOTE", operation: "CREATE_DRAFT" };
     case "purchase_order.create_draft":
       return { objectType: "PURCHASE_ORDER", operation: "CREATE_DRAFT" };
+    case "manual_journal.create_draft":
+      return { objectType: "MANUAL_JOURNAL", operation: "CREATE_DRAFT" };
+    case "customer_invoice.update_draft":
+      return { objectType: "SALES_INVOICE", operation: "UPDATE" };
+    case "supplier_bill.update_draft":
+      return { objectType: "SUPPLIER_BILL", operation: "UPDATE" };
+    case "quote.update_draft":
+      return { objectType: "QUOTE", operation: "UPDATE" };
+    case "purchase_order.update_draft":
+      return { objectType: "PURCHASE_ORDER", operation: "UPDATE" };
+    case "credit_note.update_draft":
+      return { objectType: "CREDIT_NOTE", operation: "UPDATE" };
+    case "manual_journal.update_draft":
+      return { objectType: "MANUAL_JOURNAL", operation: "UPDATE" };
+    case "customer_invoice.authorise":
+      return { objectType: "SALES_INVOICE", operation: "AUTHORISE" };
+    case "supplier_bill.authorise":
+      return { objectType: "SUPPLIER_BILL", operation: "AUTHORISE" };
+    case "manual_journal.post":
+      return { objectType: "MANUAL_JOURNAL", operation: "POST" };
+    case "customer_invoice.void":
+      return { objectType: "SALES_INVOICE", operation: "VOID" };
+    case "supplier_bill.void":
+      return { objectType: "SUPPLIER_BILL", operation: "VOID" };
+    case "credit_note.authorise":
+      return { objectType: "CREDIT_NOTE", operation: "AUTHORISE" };
+    case "credit_note.allocate":
+      return { objectType: "CREDIT_NOTE", operation: "ALLOCATE" };
+    case "credit_note.refund":
+      return { objectType: "CREDIT_NOTE", operation: "REFUND" };
+    case "credit_note.void":
+      return { objectType: "CREDIT_NOTE", operation: "VOID" };
+    case "credit_note.unallocate":
+      return { objectType: "CREDIT_NOTE", operation: "UNALLOCATE" };
+    case "manual_journal.void":
+      return { objectType: "MANUAL_JOURNAL", operation: "VOID" };
+    case "payment.create":
+      return { objectType: "PAYMENT", operation: "CREATE" };
+    case "payment.reverse":
+      return { objectType: "PAYMENT", operation: "REVERSE" };
+    case "bank_transaction.create":
+      return { objectType: "BANK_TRANSACTION", operation: "CREATE" };
+    case "bank_transaction.update":
+      return { objectType: "BANK_TRANSACTION", operation: "UPDATE" };
+    case "bank_transaction.reverse":
+      return { objectType: "BANK_TRANSACTION", operation: "REVERSE" };
   }
 }
 

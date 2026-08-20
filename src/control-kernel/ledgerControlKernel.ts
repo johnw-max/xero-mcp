@@ -354,6 +354,29 @@ function buildReceipt(
 }
 
 /**
+ * R1 has one server-side write gate, not a second business-authority system.
+ * The grant is derived only after the active OAuth binding, target session,
+ * released action, provider capability, and deterministic Case validation have
+ * all passed.  It is a receipt compatibility projection, never deployment
+ * configuration or a user-visible confirmation.
+ */
+function runtimeWriteGateGrant(
+  input: EvaluateAutonomousLedgerWriteInput & { target: LedgerOperationTarget },
+): LedgerStandingDelegation {
+  return Object.freeze({
+    delegationId: "xero-runtime-write-gate",
+    revision: input.authoritySnapshotRevision,
+    status: "ACTIVE",
+    providerId: input.target.providerId,
+    workspaceId: input.principal.workspaceId,
+    agentId: input.principal.agentId,
+    installationId: input.principal.installationId,
+    tenantIds: Object.freeze([input.target.tenantId]),
+    actionIds: Object.freeze([input.actionId]),
+  });
+}
+
+/**
  * Provider-neutral, fail-closed authority intersection for one ledger write.
  * It never calls a provider and never trusts model-supplied authority fields.
  */
@@ -388,25 +411,32 @@ export function evaluateAutonomousLedgerWrite(
     denyReasons.push("TARGET_BINDING_INVALID");
   }
 
+  // Empty is the only production form.  The non-empty branch remains solely
+  // for historical-record verification and its isolated regression tests; no
+  // current configuration or deployment path can populate it.
   const subjectDelegations = input.standingDelegations.filter((delegation) =>
     matchingSubject(delegation, input));
-  if (subjectDelegations.length === 0) {
-    denyReasons.push("STANDING_DELEGATION_MISSING");
-  }
   const targetDelegations = input.target
     ? subjectDelegations.filter((candidate) => candidate.tenantIds.includes(input.target!.tenantId))
     : [];
   const exactDelegations = targetDelegations.filter((candidate) => candidate.actionIds.includes(input.actionId));
-  if (subjectDelegations.length > 0 && targetDelegations.length === 0) {
-    denyReasons.push("STANDING_DELEGATION_TARGET_MISMATCH");
-  } else if (targetDelegations.length > 0 && exactDelegations.length === 0) {
-    denyReasons.push("STANDING_DELEGATION_ACTION_MISMATCH");
-  } else if (exactDelegations.length > 1) {
-    // Multiple grants for other tenants/actions are expected. Only duplicate
-    // authority over this exact provider/tenant/action is ambiguous.
-    denyReasons.push("STANDING_DELEGATION_AMBIGUOUS");
+  let delegation: LedgerStandingDelegation | undefined;
+  if (input.standingDelegations.length === 0 && input.target) {
+    delegation = runtimeWriteGateGrant(input as EvaluateAutonomousLedgerWriteInput & { target: LedgerOperationTarget });
+  } else {
+    if (subjectDelegations.length === 0) {
+      denyReasons.push("STANDING_DELEGATION_MISSING");
+    }
+    if (subjectDelegations.length > 0 && targetDelegations.length === 0) {
+      denyReasons.push("STANDING_DELEGATION_TARGET_MISMATCH");
+    } else if (targetDelegations.length > 0 && exactDelegations.length === 0) {
+      denyReasons.push("STANDING_DELEGATION_ACTION_MISMATCH");
+    } else if (exactDelegations.length > 1) {
+      // Historical records with duplicate grants remain ambiguous.
+      denyReasons.push("STANDING_DELEGATION_AMBIGUOUS");
+    }
+    delegation = exactDelegations.length === 1 ? exactDelegations[0] : undefined;
   }
-  const delegation = exactDelegations.length === 1 ? exactDelegations[0] : undefined;
   if (delegation) {
     if (delegation.status !== "ACTIVE") denyReasons.push("STANDING_DELEGATION_REVOKED");
     if (delegation.expiresAt && delegation.expiresAt.getTime() <= input.now.getTime()) {

@@ -12,9 +12,16 @@ export type XeroReadCapabilityId =
   | "ledger.reference.tax.read"
   | "ledger.reference.counterparty.read"
   | "ledger.reference.item.read"
+  | "ledger.reference.tracking.read"
+  | "ledger.reference.contact_group.read"
   | "ledger.transaction.search"
   | "ledger.object.read_exact"
-  | "ledger.report.trial_balance.read";
+  | "ledger.journal.read"
+  | "ledger.report.trial_balance.read"
+  | "ledger.report.profit_and_loss.read"
+  | "ledger.report.balance_sheet.read"
+  | "ledger.report.aged_receivables.read"
+  | "ledger.report.aged_payables.read";
 
 type XeroReadKind = "connection" | "target" | "collection" | "exact" | "report";
 
@@ -38,6 +45,7 @@ const XERO_READ_EVIDENCE_PROFILES: Partial<Record<AccountingToolName, XeroReadEv
   xero_list_invoices: { capabilityId: "ledger.transaction.search", kind: "collection" },
   xero_list_credit_notes: { capabilityId: "ledger.transaction.search", kind: "collection" },
   xero_list_payments: { capabilityId: "ledger.transaction.search", kind: "collection" },
+  xero_get_payment: { capabilityId: "ledger.object.read_exact", kind: "exact" },
   xero_list_quotes: { capabilityId: "ledger.transaction.search", kind: "collection" },
   xero_get_quote: { capabilityId: "ledger.object.read_exact", kind: "exact" },
   xero_list_purchase_orders: { capabilityId: "ledger.transaction.search", kind: "collection" },
@@ -48,9 +56,16 @@ const XERO_READ_EVIDENCE_PROFILES: Partial<Record<AccountingToolName, XeroReadEv
   xero_get_item: { capabilityId: "ledger.reference.item.read", kind: "exact" },
   xero_list_bank_transactions: { capabilityId: "ledger.transaction.search", kind: "collection" },
   xero_get_bank_transaction: { capabilityId: "ledger.object.read_exact", kind: "exact" },
+  xero_list_journals: { capabilityId: "ledger.journal.read", kind: "collection" },
+  xero_list_tracking_categories: { capabilityId: "ledger.reference.tracking.read", kind: "collection" },
+  xero_list_contact_groups: { capabilityId: "ledger.reference.contact_group.read", kind: "collection" },
   xero_get_invoice: { capabilityId: "ledger.object.read_exact", kind: "exact" },
   xero_get_supplier_bill: { capabilityId: "ledger.object.read_exact", kind: "exact" },
   xero_get_trial_balance: { capabilityId: "ledger.report.trial_balance.read", kind: "report" },
+  xero_get_profit_and_loss: { capabilityId: "ledger.report.profit_and_loss.read", kind: "report" },
+  xero_get_balance_sheet: { capabilityId: "ledger.report.balance_sheet.read", kind: "report" },
+  xero_get_aged_receivables: { capabilityId: "ledger.report.aged_receivables.read", kind: "report" },
+  xero_get_aged_payables: { capabilityId: "ledger.report.aged_payables.read", kind: "report" },
 };
 
 interface NormalizedXeroReadEvidenceBase {
@@ -551,6 +566,19 @@ function readQueryBounds(
     return {
       target_scope: "active_server_bound_xero_organisation",
       requested,
+    };
+  }
+  if (profile.capabilityId !== "ledger.report.trial_balance.read") {
+    return {
+      target_scope: "active_server_bound_xero_organisation",
+      requested,
+      effective_provider_query: {
+        report_capability: profile.capabilityId,
+        // The report methods map the reviewed input fields directly to the
+        // official SDK parameters. Keep this evidence descriptive rather than
+        // inventing Trial-Balance-only defaults for different report shapes.
+        reviewed_parameters: requested,
+      },
     };
   }
   const inputRecord = objectRecord(input);

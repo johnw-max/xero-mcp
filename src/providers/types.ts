@@ -1,4 +1,7 @@
 import type {
+  AgedPayablesInput,
+  AgedReceivablesInput,
+  BalanceSheetInput,
   CreditNoteType,
   CreateDraftSalesInvoiceInput,
   CreateDraftSupplierBillInput,
@@ -8,20 +11,25 @@ import type {
   ListInvoicesInput,
   ListPaymentsInput,
   PaymentType,
+  ProfitAndLossInput,
 } from "../domain/schemas.js";
 import type { LedgerProviderWritePermit } from "../control-kernel/ledgerProviderWritePermit.js";
 import type {
   ListBankTransactionsInput,
   ListItemsInput,
+  ListJournalsInput,
+  ListContactGroupsInput,
   ListManualJournalsInput,
   ListPurchaseOrdersInput,
   ListQuotesInput,
+  ListTrackingCategoriesInput,
 } from "../domain/extendedReadSchemas.js";
 import type { RequestContext } from "../security/requestContext.js";
 import type {
   BankTransactionSnapshot,
   BankTransactionSummary,
   ItemSummary,
+  JournalSummary,
   ManualJournalSnapshot,
   ManualJournalSummary,
   PurchaseOrderSnapshot,
@@ -297,6 +305,64 @@ export interface ManualJournalListResult {
   pagination: ReadPageEvidence;
 }
 
+/**
+ * `/Journals` pages by an offset on JournalNumber, not by page number, and
+ * proves exhaustion only by returning an empty page - so this is not
+ * `ReadPageEvidence` (there is no provider page/item count and no agent-facing
+ * page_size). `hasNextPage`/`hasNextPageIsEstimated`/`omittedInvalid` are kept
+ * in the same vocabulary as `ReadPageEvidence` on purpose, so the shared
+ * "collection" read-evidence completeness heuristic in xeroReadEvidence.ts
+ * reads this correctly without needing its own per-tool branch.
+ */
+export interface JournalPageEvidence {
+  requestedOffset: number;
+  returned: number;
+  /** The highest raw JournalNumber seen in this page; pass as `offset` to continue. Absent only when this page was empty. */
+  nextOffset?: number;
+  /** True only when this call itself returned zero journals - the one signal Xero proves exhaustion with. */
+  exhausted: boolean;
+  hasNextPage: boolean;
+  hasNextPageIsEstimated: boolean;
+  omittedInvalid: number;
+}
+
+export interface JournalListResult {
+  journals: JournalSummary[];
+  pagination: JournalPageEvidence;
+}
+
+export interface TrackingOptionSummary {
+  trackingOptionId: string;
+  name?: string;
+  status?: string;
+}
+
+export interface TrackingCategorySummary {
+  trackingCategoryId: string;
+  name?: string;
+  status?: string;
+  options: TrackingOptionSummary[];
+  optionCount: number;
+  optionsTruncated: boolean;
+  omittedInvalidOptions: number;
+}
+
+export interface TrackingCategoryListResult {
+  trackingCategories: TrackingCategorySummary[];
+  pagination: ReadPageEvidence;
+}
+
+export interface ContactGroupSummary {
+  contactGroupId: string;
+  name?: string;
+  status?: string;
+}
+
+export interface ContactGroupListResult {
+  contactGroups: ContactGroupSummary[];
+  pagination: ReadPageEvidence;
+}
+
 export interface ItemListResult {
   items: ItemSummary[];
   pagination: ReadPageEvidence;
@@ -416,4 +482,15 @@ export interface AccountingProvider {
     mutationRequestId?: string,
   ): Promise<ProviderSalesInvoiceWriteResult>;
   getTrialBalance(principal: AccountingPrincipal, date?: string): Promise<Record<string, unknown>>;
+  listJournals(principal: AccountingPrincipal, input: ListJournalsInput): Promise<JournalListResult>;
+  getProfitAndLoss(principal: AccountingPrincipal, input: ProfitAndLossInput): Promise<Record<string, unknown>>;
+  getBalanceSheet(principal: AccountingPrincipal, input: BalanceSheetInput): Promise<Record<string, unknown>>;
+  getAgedReceivables(principal: AccountingPrincipal, input: AgedReceivablesInput): Promise<Record<string, unknown>>;
+  getAgedPayables(principal: AccountingPrincipal, input: AgedPayablesInput): Promise<Record<string, unknown>>;
+  getPayment(principal: AccountingPrincipal, paymentId: string): Promise<PaymentSummary>;
+  listTrackingCategories(
+    principal: AccountingPrincipal,
+    input: ListTrackingCategoriesInput,
+  ): Promise<TrackingCategoryListResult>;
+  listContactGroups(principal: AccountingPrincipal, input: ListContactGroupsInput): Promise<ContactGroupListResult>;
 }

@@ -16,6 +16,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.harness.json --noEmit",
     "test": "vitest run",
+    "validate:capabilities": "node scripts/validate-capability-manifest.mjs --format fields",
     "test:watch": "vitest",
     "test:postgres:oauth-identity": "vitest run tests/postgres-oauth-identity.integration.test.ts",
     "test:postgres:oauth-broker-flow": "vitest run tests/postgres-oauth-broker-flow.integration.test.ts",

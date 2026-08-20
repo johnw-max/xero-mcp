@@ -113,11 +113,11 @@ describe("provider-neutral ledger control kernel", () => {
     expect(result.denyReasons).toContain("TARGET_SESSION_EXPIRED");
   });
 
-  it("does not treat transport scope as standing business authority", () => {
+  it("uses the internal write gate when no legacy delegation is present", () => {
     const result = evaluateAutonomousLedgerWrite(validInput({ standingDelegations: [] }));
-    expect(result.allowed).toBe(false);
-    if (result.allowed) throw new Error("expected a denied decision");
-    expect(result.denyReasons).toContain("STANDING_DELEGATION_MISSING");
+    expect(result.allowed).toBe(true);
+    if (!result.allowed) throw new Error("expected runtime write-gate authority");
+    expect(result.receipt.delegationId).toBe("xero-runtime-write-gate");
   });
 
   it("rejects the wrong tenant and the wrong action independently", () => {

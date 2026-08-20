@@ -17,9 +17,26 @@ import {
   buildPurchaseOrderDraftPrimitive,
   buildQuoteDraftPrimitive,
 } from "../src/domain/xeroQuotePurchaseOrderDraft.js";
+import {
+  canonicalBankTransactionCreatePayload,
+  canonicalBankTransactionReversePayload,
+  canonicalBankTransactionUpdatePayload,
+  canonicalPaymentCreatePayload,
+  canonicalPaymentReversePayload,
+} from "../src/domain/xeroPaymentBankTransaction.js";
+import {
+  canonicalTrackingCategoryCreatePayload,
+  canonicalTrackingCategoryUpdatePayload,
+  canonicalTrackingOptionCreatePayload,
+  canonicalTrackingOptionUpdatePayload,
+} from "../src/domain/xeroTrackingCanonical.js";
 import { XeroContactItemMutationProvider } from "../src/providers/xeroContactItemMutationProvider.js";
 import { XeroControlledMutationProvider } from "../src/providers/xeroControlledMutationProvider.js";
 import { XeroCreditNoteManualJournalProvider } from "../src/providers/xeroCreditNoteManualJournalProvider.js";
+import { XeroControlledLedgerTransitionProvider } from "../src/providers/xeroControlledLedgerTransitionProvider.js";
+import { XeroLedgerAdjustmentProvider } from "../src/providers/xeroLedgerAdjustmentProvider.js";
+import { XeroPaymentBankTransactionProvider } from "../src/providers/xeroPaymentBankTransactionProvider.js";
+import { XeroTrackingMutationProvider } from "../src/providers/xeroTrackingMutationProvider.js";
 import {
   XeroClientManager,
   type XeroProviderWriteAuthorization,
@@ -27,6 +44,7 @@ import {
 import { XeroAccountingProvider } from "../src/providers/xeroProvider.js";
 import type { AccountingPrincipal } from "../src/providers/types.js";
 import { consumeXeroProviderWritePermitAtMutationBoundary } from "../src/security/xeroProviderWritePermitContext.js";
+import { XERO_PROVIDER_WRITE_ADAPTER_OPERATIONS } from "../src/security/xeroProviderWritePermit.js";
 import type { LedgerProviderWritePermit } from "../src/control-kernel/ledgerProviderWritePermit.js";
 import type { XeroProviderWriteAdapterOperation } from "../src/security/xeroProviderWritePermit.js";
 import { Aes256GcmTokenCipher } from "../src/security/tokenCipher.js";
@@ -50,9 +68,13 @@ const requiredXeroScopes = [
   "accounting.invoices.read",
   "accounting.invoices",
   "accounting.payments.read",
+  "accounting.payments",
   "accounting.manualjournals.read",
   "accounting.manualjournals",
   "accounting.banktransactions.read",
+  "accounting.banktransactions",
+  "accounting.reports.read",
+  "accounting.journals.read",
   "accounting.reports.trialbalance.read",
 ] as const;
 
@@ -62,6 +84,7 @@ type WriterContract = Readonly<{
   mutationRequestId: string;
   canonicalPayload: unknown;
   sdkMutation: ReturnType<typeof vi.fn>;
+  sdkExposesIdempotencyKey?: boolean;
   invoke: (
     principal: AccountingPrincipal,
     permit: LedgerProviderWritePermit | undefined,
@@ -217,6 +240,23 @@ function rawWriterContracts(actualConnection: Readonly<{ tenantId: string; conne
   const contactId = "11111111-1111-4111-8111-111111111111";
   const itemId = "22222222-2222-4222-8222-222222222222";
   const accountId = "33333333-3333-4333-8333-333333333333";
+  const supplierBillUpdateId = "55555555-5555-4555-8555-555555555555";
+  const salesInvoiceUpdateId = "77777777-7777-4777-8777-777777777777";
+  const quoteUpdateId = "88888888-8888-4888-8888-888888888888";
+  const purchaseOrderUpdateId = "99999999-9999-4999-8999-999999999999";
+  const creditNoteUpdateId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const manualJournalUpdateId = "66666666-6666-4666-8666-666666666666";
+  const voidSalesInvoiceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const voidSupplierBillId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const adjustmentCreditNoteId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const allocationCreditNoteId = "14141414-1414-4141-8141-141414141414";
+  const allocationInvoiceId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const refundCreditNoteId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+  const voidCreditNoteId = "15151515-1515-4151-8151-151515151515";
+  const voidManualJournalId = "16161616-1616-4161-8161-161616161616";
+  const paymentId = "12121212-1212-4121-8121-121212121212";
+  const bankTransactionId = "13131313-1313-4131-8131-131313131313";
+  const expectedUpdatedAt = "2026-08-13T00:00:00.000Z";
   const makeSdkMutation = () => vi.fn(async () => {
     const error = new Error("SDK mutation reached") as Error & { code: string };
     error.code = "ETIMEDOUT";
@@ -232,6 +272,168 @@ function rawWriterContracts(actualConnection: Readonly<{ tenantId: string; conne
     updateContact: makeSdkMutation(),
     createItems: makeSdkMutation(),
     updateItem: makeSdkMutation(),
+    updateInvoice: makeSdkMutation(),
+    updateQuote: makeSdkMutation(),
+    updatePurchaseOrder: makeSdkMutation(),
+    updateCreditNote: makeSdkMutation(),
+    updateManualJournal: makeSdkMutation(),
+    createTrackingCategory: makeSdkMutation(),
+    updateTrackingCategory: makeSdkMutation(),
+    createTrackingOptions: makeSdkMutation(),
+    updateTrackingOptions: makeSdkMutation(),
+    createCreditNoteAllocation: makeSdkMutation(),
+    deleteCreditNoteAllocations: makeSdkMutation(),
+    createPayment: makeSdkMutation(),
+    deletePayment: makeSdkMutation(),
+    createBankTransactions: makeSdkMutation(),
+    updateBankTransaction: makeSdkMutation(),
+    getInvoices: vi.fn(async (
+      _tenantId: string,
+      _ifModifiedSince: unknown,
+      _where: unknown,
+      _order: unknown,
+      ids: string[] | undefined,
+    ) => ({
+      body: {
+        invoices: [{
+          invoiceID: ids?.[0],
+          type: ids?.[0] === supplierBillUpdateId || ids?.[0] === voidSupplierBillId ? "ACCPAY" : "ACCREC",
+          status: [voidSalesInvoiceId, voidSupplierBillId, allocationInvoiceId].includes(ids?.[0] ?? "")
+            ? "AUTHORISED"
+            : "DRAFT",
+          contact: { contactID: contactId, name: "Boundary Contact" },
+          invoiceNumber: "INV-BOUNDARY",
+          reference: "INV-BOUNDARY",
+          date: "2026-08-13",
+          dueDate: "2026-08-31",
+          currencyCode: "SGD",
+          lineAmountTypes: "Exclusive",
+          subTotal: 10,
+          totalTax: 0,
+          total: 10,
+          amountDue: 10,
+          amountPaid: 0,
+          amountCredited: 0,
+          payments: [],
+          creditNotes: [],
+          prepayments: [],
+          overpayments: [],
+          updatedDateUTCString: expectedUpdatedAt,
+          lineItems: [{
+            description: "Boundary line",
+            quantity: 1,
+            unitAmount: 10,
+            lineAmount: 10,
+            taxAmount: 0,
+            accountCode: "200",
+            taxType: "NONE",
+          }],
+        }],
+      },
+    })),
+    getQuote: vi.fn(async (_tenantId: string, id: string) => ({
+      body: { quotes: [{ quoteID: id, status: "DRAFT", updatedDateUTC: expectedUpdatedAt }] },
+    })),
+    getPurchaseOrder: vi.fn(async (_tenantId: string, id: string) => ({
+      body: { purchaseOrders: [{ purchaseOrderID: id, status: "DRAFT", updatedDateUTC: expectedUpdatedAt }] },
+    })),
+    getCreditNote: vi.fn(async (_tenantId: string, id: string) => ({
+      body: { creditNotes: [{
+        creditNoteID: id,
+        type: "ACCRECCREDIT",
+        status: [allocationCreditNoteId, refundCreditNoteId, voidCreditNoteId].includes(id)
+          ? "AUTHORISED"
+          : "DRAFT",
+        contact: { contactID: contactId },
+        currencyCode: "SGD",
+        remainingCredit: 10,
+        appliedAmount: 0,
+        allocations: id === allocationCreditNoteId ? [{
+          allocationID: allocationInvoiceId,
+          invoice: { invoiceID: allocationInvoiceId },
+          amount: 1,
+          date: "2026-08-13",
+        }] : [],
+        payments: [],
+        updatedDateUTC: new Date(expectedUpdatedAt),
+      }] },
+    })),
+    getManualJournal: vi.fn(async (_tenantId: string, id: string) => ({
+      body: { manualJournals: [{
+        manualJournalID: id,
+        narration: "Boundary journal",
+        status: id === manualJournalUpdateId ? "DRAFT" : "POSTED",
+        updatedDateUTC: new Date(expectedUpdatedAt),
+      }] },
+    })),
+    getTrackingCategories: vi.fn(async () => ({
+      body: {
+        trackingCategories: [{
+          trackingCategoryID: accountId,
+          name: "Boundary Tracking",
+          status: "ACTIVE",
+          options: [{
+            trackingOptionID: itemId,
+            name: "Boundary Option",
+            status: "ACTIVE",
+            trackingCategoryID: accountId,
+          }],
+        }],
+      },
+    })),
+    getTrackingCategory: vi.fn(async (_tenantId: string, id: string) => ({
+      body: {
+        trackingCategories: [{
+          trackingCategoryID: id,
+          name: "Boundary Tracking",
+          status: "ACTIVE",
+          options: [{
+            trackingOptionID: itemId,
+            name: "Boundary Option",
+            status: "ACTIVE",
+            trackingCategoryID: id,
+          }],
+        }],
+      },
+    })),
+    getPayment: vi.fn(async (_tenantId: string, id: string) => ({
+      body: {
+        payments: [{
+          paymentID: id,
+          status: "AUTHORISED",
+          paymentType: "ACCRECPAYMENT",
+          invoice: { invoiceID: allocationInvoiceId },
+          account: { accountID: accountId },
+          date: "2026-08-13",
+          amount: 10,
+        }],
+      },
+    })),
+    getBankTransaction: vi.fn(async (_tenantId: string, id: string) => ({
+      body: {
+        bankTransactions: [{
+          bankTransactionID: id,
+          type: "SPEND",
+          status: "AUTHORISED",
+          isReconciled: false,
+          updatedDateUTC: new Date(expectedUpdatedAt),
+        }],
+      },
+    })),
+    getContact: vi.fn(async (_tenantId: string, id: string) => ({
+      body: { contacts: [{ contactID: id, contactStatus: "ACTIVE" }] },
+    })),
+    getAccounts: vi.fn(async () => ({
+      body: {
+        accounts: [
+          { accountID: accountId, code: "090", type: "BANK", status: "ACTIVE", enablePaymentsToAccount: true },
+          { accountID: itemId, code: "400", type: "EXPENSE", status: "ACTIVE" },
+        ],
+      },
+    })),
+    getTaxRates: vi.fn(async () => ({
+      body: { taxRates: [{ taxType: "NONE", status: "ACTIVE" }, { taxType: "INPUT", status: "ACTIVE" }] },
+    })),
   };
   const connection = {
     provider: "xero" as const,
@@ -263,6 +465,10 @@ function rawWriterContracts(actualConnection: Readonly<{ tenantId: string; conne
   const controlledProvider = new XeroControlledMutationProvider(manager);
   const adjustmentProvider = new XeroCreditNoteManualJournalProvider(manager);
   const contactItemProvider = new XeroContactItemMutationProvider(manager, { contactNamespace: "zcboundary" });
+  const transitionProvider = new XeroControlledLedgerTransitionProvider(manager);
+  const trackingProvider = new XeroTrackingMutationProvider(manager);
+  const ledgerAdjustmentProvider = new XeroLedgerAdjustmentProvider(manager);
+  const paymentBankProvider = new XeroPaymentBankTransactionProvider(manager);
 
   const invoiceInput = {
     request_id: "invoice-boundary",
@@ -286,6 +492,7 @@ function rawWriterContracts(actualConnection: Readonly<{ tenantId: string; conne
     }],
   };
   const { user_confirmation: _confirmation, ...invoiceCanonical } = invoiceInput;
+  const invoiceUpdateReplacement = { ...invoiceCanonical, status: "DRAFT" as const };
   const quote = buildQuoteDraftPrimitive({
     source_ref: "work://quote-boundary",
     source_unit_key: "quote-boundary:1",
@@ -374,6 +581,118 @@ function rawWriterContracts(actualConnection: Readonly<{ tenantId: string; conne
     ...prepared,
     canonicalPayload: { ...prepared.canonicalPayload, boundaryTamper: true },
   });
+  const salesInvoiceAuthorisation = {
+    invoiceId: contactId,
+    invoiceType: "ACCREC" as const,
+    expectedStatus: "DRAFT" as const,
+  };
+  const supplierBillAuthorisation = {
+    invoiceId: "55555555-5555-4555-8555-555555555555",
+    invoiceType: "ACCPAY" as const,
+    expectedStatus: "DRAFT" as const,
+  };
+  const manualJournalPost = {
+    manualJournalId: manualJournalUpdateId,
+    expectedStatus: "DRAFT" as const,
+  };
+  const trackingCategoryCreate = canonicalTrackingCategoryCreatePayload({ name: "Boundary Tracking New" });
+  const trackingCategoryUpdate = canonicalTrackingCategoryUpdatePayload({
+    trackingCategoryId: accountId,
+    name: "Boundary Tracking Renamed",
+  });
+  const trackingOptionCreate = canonicalTrackingOptionCreatePayload({
+    trackingCategoryId: accountId,
+    name: "Boundary Option New",
+  });
+  const trackingOptionUpdate = canonicalTrackingOptionUpdatePayload({
+    trackingCategoryId: accountId,
+    trackingOptionId: itemId,
+    name: "Boundary Option Renamed",
+  });
+  const voidSalesInvoice = {
+    invoiceId: voidSalesInvoiceId,
+    invoiceType: "ACCREC" as const,
+    expectedStatus: "AUTHORISED" as const,
+  };
+  const voidSupplierBill = {
+    invoiceId: voidSupplierBillId,
+    invoiceType: "ACCPAY" as const,
+    expectedStatus: "AUTHORISED" as const,
+  };
+  const authoriseCreditNote = {
+    creditNoteId: adjustmentCreditNoteId,
+    creditNoteType: "ACCRECCREDIT" as const,
+    expectedStatus: "DRAFT" as const,
+  };
+  const allocateCreditNote = {
+    creditNoteId: allocationCreditNoteId,
+    creditNoteType: "ACCRECCREDIT" as const,
+    targetInvoiceId: allocationInvoiceId,
+    targetInvoiceType: "ACCREC" as const,
+    amount: "1.0000",
+    allocationDate: "2026-08-13",
+    expectedCreditStatus: "AUTHORISED" as const,
+    expectedTargetStatus: "AUTHORISED" as const,
+  };
+  const unallocateCreditNote = {
+    creditNoteId: allocationCreditNoteId,
+    allocationId: allocationInvoiceId,
+    expectedStatus: "AUTHORISED" as const,
+  };
+  const refundCreditNote = {
+    creditNoteId: refundCreditNoteId,
+    creditNoteType: "ACCRECCREDIT" as const,
+    bankAccountId: accountId,
+    amount: "1.0000",
+    refundDate: "2026-08-13",
+    expectedStatus: "AUTHORISED" as const,
+  };
+  const voidCreditNote = {
+    creditNoteId: voidCreditNoteId,
+    creditNoteType: "ACCRECCREDIT" as const,
+    expectedStatus: "AUTHORISED" as const,
+  };
+  const voidManualJournal = {
+    manualJournalId: voidManualJournalId,
+    expectedStatus: "POSTED" as const,
+  };
+  const paymentCreate = canonicalPaymentCreatePayload({
+    invoiceId: allocationInvoiceId,
+    invoiceType: "ACCREC",
+    bankAccountId: accountId,
+    paymentDate: "2026-08-13",
+    amount: "1.0000",
+    reference: "PAY-BOUNDARY",
+  });
+  const paymentReverse = canonicalPaymentReversePayload({ paymentId });
+  const bankTransactionCreate = canonicalBankTransactionCreatePayload({
+    type: "SPEND",
+    contactId,
+    bankAccountId: accountId,
+    transactionDate: "2026-08-13",
+    reference: "BANK-BOUNDARY",
+    lineAmountType: "EXCLUSIVE",
+    lines: [{
+      description: "Boundary expense",
+      quantity: "1",
+      unitAmount: "1",
+      accountCode: "400",
+      taxType: "NONE",
+      trackingOptionIds: [itemId],
+    }],
+  });
+  const bankTransactionUpdate = canonicalBankTransactionUpdatePayload({
+    bankTransactionId,
+    expectedUpdatedAt,
+    type: bankTransactionCreate.type,
+    contactId: bankTransactionCreate.contactId,
+    bankAccountId: bankTransactionCreate.bankAccountId,
+    transactionDate: bankTransactionCreate.transactionDate,
+    reference: bankTransactionCreate.reference,
+    lineAmountType: bankTransactionCreate.lineAmountType,
+    lines: bankTransactionCreate.lines,
+  });
+  const bankTransactionReverse = canonicalBankTransactionReversePayload({ bankTransactionId });
 
   return [
     {
@@ -407,6 +726,74 @@ function rawWriterContracts(actualConnection: Readonly<{ tenantId: string; conne
       ),
     },
     {
+      name: "supplier bill DRAFT update",
+      adapterOperation: "XeroAccountingProvider.updateDraftSupplierBill",
+      mutationRequestId: "xmr-boundary-ap-update",
+      canonicalPayload: {
+        targetXeroObjectId: supplierBillUpdateId,
+        expectedUpdatedAt,
+        replacement: invoiceUpdateReplacement,
+      },
+      sdkMutation: sdk.updateInvoice,
+      invoke: (principal, permit, tamper) => invoiceProvider.updateDraftSupplierBill(
+        principal,
+        supplierBillUpdateId,
+        expectedUpdatedAt,
+        tamper ? { ...invoiceUpdateReplacement, reference: "AP-UPDATE-TAMPERED" } : invoiceUpdateReplacement,
+        "xmr-boundary-ap-update",
+        async () => undefined,
+        permit,
+        "xmr-boundary-ap-update",
+      ),
+    },
+    {
+      name: "sales invoice DRAFT update",
+      adapterOperation: "XeroAccountingProvider.updateDraftSalesInvoice",
+      mutationRequestId: "xmr-boundary-ar-update",
+      canonicalPayload: {
+        targetXeroObjectId: salesInvoiceUpdateId,
+        expectedUpdatedAt,
+        replacement: invoiceUpdateReplacement,
+      },
+      sdkMutation: sdk.updateInvoice,
+      invoke: (principal, permit, tamper) => invoiceProvider.updateDraftSalesInvoice(
+        principal,
+        salesInvoiceUpdateId,
+        expectedUpdatedAt,
+        tamper ? { ...invoiceUpdateReplacement, reference: "AR-UPDATE-TAMPERED" } : invoiceUpdateReplacement,
+        "xmr-boundary-ar-update",
+        async () => undefined,
+        permit,
+        "xmr-boundary-ar-update",
+      ),
+    },
+    {
+      name: "sales invoice authorise",
+      adapterOperation: "XeroControlledLedgerTransitionProvider.authoriseSalesInvoice",
+      mutationRequestId: "xmr-boundary-ar-authorise",
+      canonicalPayload: salesInvoiceAuthorisation,
+      sdkMutation: sdk.updateInvoice,
+      invoke: (principal, permit, tamper) => transitionProvider.authoriseSalesInvoice(
+        principal,
+        tamper ? { ...salesInvoiceAuthorisation, invoiceId: "77777777-7777-4777-8777-777777777777" } : salesInvoiceAuthorisation,
+        "xmr-boundary-ar-authorise",
+        permit,
+      ),
+    },
+    {
+      name: "supplier bill authorise",
+      adapterOperation: "XeroControlledLedgerTransitionProvider.authoriseSupplierBill",
+      mutationRequestId: "xmr-boundary-ap-authorise",
+      canonicalPayload: supplierBillAuthorisation,
+      sdkMutation: sdk.updateInvoice,
+      invoke: (principal, permit, tamper) => transitionProvider.authoriseSupplierBill(
+        principal,
+        tamper ? { ...supplierBillAuthorisation, invoiceId: "88888888-8888-4888-8888-888888888888" } : supplierBillAuthorisation,
+        "xmr-boundary-ap-authorise",
+        permit,
+      ),
+    },
+    {
       name: "quote",
       adapterOperation: "XeroControlledMutationProvider.createQuoteDraft",
       mutationRequestId: "xmr-boundary-quote",
@@ -416,6 +803,21 @@ function rawWriterContracts(actualConnection: Readonly<{ tenantId: string; conne
         principal,
         tamper ? { ...quote, reference: "Q-TAMPERED" } : quote,
         "xmr-boundary-quote",
+        permit,
+      ),
+    },
+    {
+      name: "quote DRAFT update",
+      adapterOperation: "XeroControlledMutationProvider.updateQuoteDraft",
+      mutationRequestId: "xmr-boundary-quote-update",
+      canonicalPayload: { targetXeroObjectId: quoteUpdateId, expectedUpdatedAt, replacement: quote },
+      sdkMutation: sdk.updateQuote,
+      invoke: (principal, permit, tamper) => controlledProvider.updateQuoteDraft(
+        principal,
+        quoteUpdateId,
+        expectedUpdatedAt,
+        tamper ? { ...quote, reference: "Q-UPDATE-TAMPERED" } : quote,
+        "xmr-boundary-quote-update",
         permit,
       ),
     },
@@ -433,6 +835,21 @@ function rawWriterContracts(actualConnection: Readonly<{ tenantId: string; conne
       ),
     },
     {
+      name: "purchase order DRAFT update",
+      adapterOperation: "XeroControlledMutationProvider.updatePurchaseOrderDraft",
+      mutationRequestId: "xmr-boundary-po-update",
+      canonicalPayload: { targetXeroObjectId: purchaseOrderUpdateId, expectedUpdatedAt, replacement: purchaseOrder },
+      sdkMutation: sdk.updatePurchaseOrder,
+      invoke: (principal, permit, tamper) => controlledProvider.updatePurchaseOrderDraft(
+        principal,
+        purchaseOrderUpdateId,
+        expectedUpdatedAt,
+        tamper ? { ...purchaseOrder, reference: "PO-UPDATE-TAMPERED" } : purchaseOrder,
+        "xmr-boundary-po-update",
+        permit,
+      ),
+    },
+    {
       name: "credit note",
       adapterOperation: "XeroCreditNoteManualJournalProvider.createCreditNoteDraft",
       mutationRequestId: "xmr-boundary-credit",
@@ -446,6 +863,21 @@ function rawWriterContracts(actualConnection: Readonly<{ tenantId: string; conne
       ),
     },
     {
+      name: "credit note DRAFT update",
+      adapterOperation: "XeroCreditNoteManualJournalProvider.updateCreditNoteDraft",
+      mutationRequestId: "xmr-boundary-credit-update",
+      canonicalPayload: { targetXeroObjectId: creditNoteUpdateId, expectedUpdatedAt, replacement: creditNote },
+      sdkMutation: sdk.updateCreditNote,
+      invoke: (principal, permit, tamper) => adjustmentProvider.updateCreditNoteDraft(
+        principal,
+        creditNoteUpdateId,
+        expectedUpdatedAt,
+        tamper ? { ...creditNote, reference: "CN-UPDATE-TAMPERED" } : creditNote,
+        "xmr-boundary-credit-update",
+        permit,
+      ),
+    },
+    {
       name: "manual journal",
       adapterOperation: "XeroCreditNoteManualJournalProvider.createManualJournalDraft",
       mutationRequestId: "xmr-boundary-journal",
@@ -455,6 +887,260 @@ function rawWriterContracts(actualConnection: Readonly<{ tenantId: string; conne
         principal,
         tamper ? { ...manualJournal, narration: "Tampered" } : manualJournal,
         "xmr-boundary-journal",
+        permit,
+      ),
+    },
+    {
+      name: "manual journal DRAFT update",
+      adapterOperation: "XeroCreditNoteManualJournalProvider.updateManualJournalDraft",
+      mutationRequestId: "xmr-boundary-journal-update",
+      canonicalPayload: { targetXeroObjectId: manualJournalUpdateId, expectedUpdatedAt, replacement: manualJournal },
+      sdkMutation: sdk.updateManualJournal,
+      invoke: (principal, permit, tamper) => adjustmentProvider.updateManualJournalDraft(
+        principal,
+        manualJournalUpdateId,
+        expectedUpdatedAt,
+        tamper ? { ...manualJournal, narration: "Update tampered" } : manualJournal,
+        "xmr-boundary-journal-update",
+        permit,
+      ),
+    },
+    {
+      name: "manual journal post",
+      adapterOperation: "XeroControlledLedgerTransitionProvider.postManualJournal",
+      mutationRequestId: "xmr-boundary-journal-post",
+      canonicalPayload: manualJournalPost,
+      sdkMutation: sdk.updateManualJournal,
+      invoke: (principal, permit, tamper) => transitionProvider.postManualJournal(
+        principal,
+        tamper ? { ...manualJournalPost, manualJournalId: "99999999-9999-4999-8999-999999999999" } : manualJournalPost,
+        "xmr-boundary-journal-post",
+        permit,
+      ),
+    },
+    {
+      name: "tracking category create",
+      adapterOperation: "XeroTrackingMutationProvider.createCategory",
+      mutationRequestId: "xmr-boundary-tracking-category-create",
+      canonicalPayload: trackingCategoryCreate,
+      sdkMutation: sdk.createTrackingCategory,
+      invoke: (principal, permit, tamper) => trackingProvider.createCategory(
+        principal,
+        tamper ? { ...trackingCategoryCreate, name: "Tracking tampered" } : trackingCategoryCreate,
+        "xmr-boundary-tracking-category-create",
+        (permit ?? {}) as never,
+      ),
+    },
+    {
+      name: "tracking category update",
+      adapterOperation: "XeroTrackingMutationProvider.updateCategory",
+      mutationRequestId: "xmr-boundary-tracking-category-update",
+      canonicalPayload: trackingCategoryUpdate,
+      sdkMutation: sdk.updateTrackingCategory,
+      invoke: (principal, permit, tamper) => trackingProvider.updateCategory(
+        principal,
+        tamper ? { ...trackingCategoryUpdate, name: "Tracking update tampered" } : trackingCategoryUpdate,
+        "xmr-boundary-tracking-category-update",
+        (permit ?? {}) as never,
+      ),
+    },
+    {
+      name: "tracking option create",
+      adapterOperation: "XeroTrackingMutationProvider.createOption",
+      mutationRequestId: "xmr-boundary-tracking-option-create",
+      canonicalPayload: trackingOptionCreate,
+      sdkMutation: sdk.createTrackingOptions,
+      invoke: (principal, permit, tamper) => trackingProvider.createOption(
+        principal,
+        tamper ? { ...trackingOptionCreate, name: "Option tampered" } : trackingOptionCreate,
+        "xmr-boundary-tracking-option-create",
+        (permit ?? {}) as never,
+      ),
+    },
+    {
+      name: "tracking option update",
+      adapterOperation: "XeroTrackingMutationProvider.updateOption",
+      mutationRequestId: "xmr-boundary-tracking-option-update",
+      canonicalPayload: trackingOptionUpdate,
+      sdkMutation: sdk.updateTrackingOptions,
+      invoke: (principal, permit, tamper) => trackingProvider.updateOption(
+        principal,
+        tamper ? { ...trackingOptionUpdate, name: "Option update tampered" } : trackingOptionUpdate,
+        "xmr-boundary-tracking-option-update",
+        (permit ?? {}) as never,
+      ),
+    },
+    {
+      name: "sales invoice void",
+      adapterOperation: "XeroLedgerAdjustmentProvider.voidSalesInvoice",
+      mutationRequestId: "xmr-boundary-sales-invoice-void",
+      canonicalPayload: voidSalesInvoice,
+      sdkMutation: sdk.updateInvoice,
+      invoke: (principal, permit, tamper) => ledgerAdjustmentProvider.voidSalesInvoice(
+        principal,
+        tamper ? { ...voidSalesInvoice, invoiceId: voidSupplierBillId } : voidSalesInvoice,
+        "xmr-boundary-sales-invoice-void",
+        permit,
+      ),
+    },
+    {
+      name: "supplier bill void",
+      adapterOperation: "XeroLedgerAdjustmentProvider.voidSupplierBill",
+      mutationRequestId: "xmr-boundary-supplier-bill-void",
+      canonicalPayload: voidSupplierBill,
+      sdkMutation: sdk.updateInvoice,
+      invoke: (principal, permit, tamper) => ledgerAdjustmentProvider.voidSupplierBill(
+        principal,
+        tamper ? { ...voidSupplierBill, invoiceId: voidSalesInvoiceId } : voidSupplierBill,
+        "xmr-boundary-supplier-bill-void",
+        permit,
+      ),
+    },
+    {
+      name: "credit note authorise",
+      adapterOperation: "XeroLedgerAdjustmentProvider.authoriseCreditNote",
+      mutationRequestId: "xmr-boundary-credit-note-authorise",
+      canonicalPayload: authoriseCreditNote,
+      sdkMutation: sdk.updateCreditNote,
+      invoke: (principal, permit, tamper) => ledgerAdjustmentProvider.authoriseCreditNote(
+        principal,
+        tamper ? { ...authoriseCreditNote, creditNoteId: creditNoteUpdateId } : authoriseCreditNote,
+        "xmr-boundary-credit-note-authorise",
+        permit,
+      ),
+    },
+    {
+      name: "credit note allocate",
+      adapterOperation: "XeroLedgerAdjustmentProvider.allocateCreditNote",
+      mutationRequestId: "xmr-boundary-credit-note-allocate",
+      canonicalPayload: allocateCreditNote,
+      sdkMutation: sdk.createCreditNoteAllocation,
+      invoke: (principal, permit, tamper) => ledgerAdjustmentProvider.allocateCreditNote(
+        principal,
+        tamper ? { ...allocateCreditNote, targetInvoiceId: voidSalesInvoiceId } : allocateCreditNote,
+        "xmr-boundary-credit-note-allocate",
+        permit,
+      ),
+    },
+    {
+      name: "credit note unallocate",
+      adapterOperation: "XeroLedgerAdjustmentProvider.unallocateCreditNote",
+      mutationRequestId: "xmr-boundary-credit-note-unallocate",
+      canonicalPayload: unallocateCreditNote,
+      sdkMutation: sdk.deleteCreditNoteAllocations,
+      sdkExposesIdempotencyKey: false,
+      invoke: (principal, permit, tamper) => ledgerAdjustmentProvider.unallocateCreditNote(
+        principal,
+        tamper ? { ...unallocateCreditNote, allocationId: voidCreditNoteId } : unallocateCreditNote,
+        "xmr-boundary-credit-note-unallocate",
+        permit,
+      ),
+    },
+    {
+      name: "credit note refund",
+      adapterOperation: "XeroLedgerAdjustmentProvider.refundCreditNote",
+      mutationRequestId: "xmr-boundary-credit-note-refund",
+      canonicalPayload: refundCreditNote,
+      sdkMutation: sdk.createPayment,
+      invoke: (principal, permit, tamper) => ledgerAdjustmentProvider.refundCreditNote(
+        principal,
+        tamper ? { ...refundCreditNote, amount: "2.0000" } : refundCreditNote,
+        "xmr-boundary-credit-note-refund",
+        permit,
+      ),
+    },
+    {
+      name: "credit note void",
+      adapterOperation: "XeroLedgerAdjustmentProvider.voidCreditNote",
+      mutationRequestId: "xmr-boundary-credit-note-void",
+      canonicalPayload: voidCreditNote,
+      sdkMutation: sdk.updateCreditNote,
+      invoke: (principal, permit, tamper) => ledgerAdjustmentProvider.voidCreditNote(
+        principal,
+        tamper ? { ...voidCreditNote, creditNoteId: adjustmentCreditNoteId } : voidCreditNote,
+        "xmr-boundary-credit-note-void",
+        permit,
+      ),
+    },
+    {
+      name: "manual journal void",
+      adapterOperation: "XeroLedgerAdjustmentProvider.voidManualJournal",
+      mutationRequestId: "xmr-boundary-manual-journal-void",
+      canonicalPayload: voidManualJournal,
+      sdkMutation: sdk.updateManualJournal,
+      invoke: (principal, permit, tamper) => ledgerAdjustmentProvider.voidManualJournal(
+        principal,
+        tamper ? { ...voidManualJournal, manualJournalId: voidCreditNoteId } : voidManualJournal,
+        "xmr-boundary-manual-journal-void",
+        permit,
+      ),
+    },
+    {
+      name: "payment create",
+      adapterOperation: "XeroPaymentBankTransactionProvider.createPayment",
+      mutationRequestId: "xmr-boundary-payment-create",
+      canonicalPayload: paymentCreate,
+      sdkMutation: sdk.createPayment,
+      invoke: (principal, permit, tamper) => paymentBankProvider.createPayment(
+        principal,
+        tamper ? { ...paymentCreate, amount: "2.0000" } : paymentCreate,
+        "xmr-boundary-payment-create",
+        permit,
+      ),
+    },
+    {
+      name: "payment reverse",
+      adapterOperation: "XeroPaymentBankTransactionProvider.reversePayment",
+      mutationRequestId: "xmr-boundary-payment-reverse",
+      canonicalPayload: paymentReverse,
+      sdkMutation: sdk.deletePayment,
+      invoke: (principal, permit, tamper) => paymentBankProvider.reversePayment(
+        principal,
+        tamper ? { ...paymentReverse, paymentId: bankTransactionId } : paymentReverse,
+        "xmr-boundary-payment-reverse",
+        permit,
+      ),
+    },
+    {
+      name: "bank transaction create",
+      adapterOperation: "XeroPaymentBankTransactionProvider.createBankTransaction",
+      mutationRequestId: "xmr-boundary-bank-transaction-create",
+      canonicalPayload: bankTransactionCreate,
+      sdkMutation: sdk.createBankTransactions,
+      invoke: (principal, permit, tamper) => paymentBankProvider.createBankTransaction(
+        principal,
+        tamper ? { ...bankTransactionCreate, reference: "BANK-TAMPERED" } : bankTransactionCreate,
+        "xmr-boundary-bank-transaction-create",
+        permit,
+      ),
+    },
+    {
+      name: "bank transaction update",
+      adapterOperation: "XeroPaymentBankTransactionProvider.updateBankTransaction",
+      mutationRequestId: "xmr-boundary-bank-transaction-update",
+      canonicalPayload: {
+        targetXeroObjectId: bankTransactionId,
+        expectedUpdatedAt,
+        replacement: bankTransactionUpdate,
+      },
+      sdkMutation: sdk.updateBankTransaction,
+      invoke: (principal, permit, tamper) => paymentBankProvider.updateBankTransaction(
+        principal,
+        tamper ? { ...bankTransactionUpdate, reference: "BANK-UPDATE-TAMPERED" } : bankTransactionUpdate,
+        "xmr-boundary-bank-transaction-update",
+        permit,
+      ),
+    },
+    {
+      name: "bank transaction reverse",
+      adapterOperation: "XeroPaymentBankTransactionProvider.reverseBankTransaction",
+      mutationRequestId: "xmr-boundary-bank-transaction-reverse",
+      canonicalPayload: bankTransactionReverse,
+      sdkMutation: sdk.updateBankTransaction,
+      invoke: (principal, permit, tamper) => paymentBankProvider.reverseBankTransaction(
+        principal,
+        tamper ? { ...bankTransactionReverse, bankTransactionId: paymentId } : bankTransactionReverse,
+        "xmr-boundary-bank-transaction-reverse",
         permit,
       ),
     },
@@ -930,9 +1616,10 @@ describe("real manager credential boundary is permit-first", () => {
   });
 });
 
-describe("all ten raw writers fail before Xero SDK mutation", () => {
+describe("all raw action writers fail before Xero SDK mutation", () => {
   const expectedConnection = { tenantId, connectionId } as const;
   const principal = providerWriteTestContext(connectionId);
+  const rawWriterCount = rawWriterContracts(expectedConnection).length;
   const authorityFor = (writer: WriterContract) => issueProviderWriteTestPermit({
     adapterOperation: writer.adapterOperation,
     mutationRequestId: writer.mutationRequestId,
@@ -946,6 +1633,11 @@ describe("all ten raw writers fail before Xero SDK mutation", () => {
       await expect(writer.invoke(principal, undefined)).rejects.toMatchObject({ code: "FORBIDDEN" });
       expect(writer.sdkMutation, writer.name).not.toHaveBeenCalled();
     }
+  });
+
+  it("keeps every raw writer in the manager permit registry", () => {
+    const inventory = rawWriterContracts(expectedConnection).map((writer) => writer.adapterOperation).sort();
+    expect([...XERO_PROVIDER_WRITE_ADAPTER_OPERATIONS].sort()).toEqual(inventory);
   });
 
   it("blocks every writer on the wrong live connection or tenant", async () => {
@@ -987,13 +1679,15 @@ describe("all ten raw writers fail before Xero SDK mutation", () => {
     expect(writer.sdkMutation).toHaveBeenCalledTimes(1);
   });
 
-  it("passes the exact mutation request ID as the SDK idempotency key for all ten raw writers", async () => {
+  it(`passes the exact mutation request ID as the SDK idempotency key for SDK writers that expose one`, async () => {
     for (const writer of rawWriterContracts(expectedConnection)) {
       const authority = authorityFor(writer);
       await expect(writer.invoke(principal, authority)).rejects.toMatchObject({ code: "WRITE_RESULT_UNKNOWN" });
       expect(writer.sdkMutation, writer.name).toHaveBeenCalled();
       const args = writer.sdkMutation.mock.calls.at(-1) as unknown[];
-      expect(args.at(-1), writer.name).toBe(writer.mutationRequestId);
+      if (writer.sdkExposesIdempotencyKey !== false) {
+        expect(args.at(-1), writer.name).toBe(writer.mutationRequestId);
+      }
     }
   });
 
@@ -1036,18 +1730,37 @@ describe("all ten raw writers fail before Xero SDK mutation", () => {
   });
 });
 
-describe("all ten Xero SDK mutation writers are permit-gated", () => {
+describe("all Xero SDK mutation sinks are permit-gated", () => {
   const contracts = [
     ["src/providers/xeroProvider.ts", "createDraftSupplierBill", "XeroAccountingProvider.createDraftSupplierBill", "supplier_bill.create_draft", "createInvoices"],
     ["src/providers/xeroProvider.ts", "createDraftSalesInvoice", "XeroAccountingProvider.createDraftSalesInvoice", "customer_invoice.create_draft", "createInvoices"],
+    ["src/providers/xeroProvider.ts", "#updateDraftInvoice", undefined, undefined, "updateInvoice"],
+    ["src/providers/xeroControlledLedgerTransitionProvider.ts", "#authoriseInvoice", undefined, undefined, "updateInvoice"],
     ["src/providers/xeroControlledMutationProvider.ts", "createQuoteDraft", "XeroControlledMutationProvider.createQuoteDraft", "quote.create_draft", "createQuotes"],
+    ["src/providers/xeroControlledMutationProvider.ts", "updateQuoteDraft", "XeroControlledMutationProvider.updateQuoteDraft", "quote.update_draft", "updateQuote"],
     ["src/providers/xeroControlledMutationProvider.ts", "createPurchaseOrderDraft", "XeroControlledMutationProvider.createPurchaseOrderDraft", "purchase_order.create_draft", "createPurchaseOrders"],
+    ["src/providers/xeroControlledMutationProvider.ts", "updatePurchaseOrderDraft", "XeroControlledMutationProvider.updatePurchaseOrderDraft", "purchase_order.update_draft", "updatePurchaseOrder"],
     ["src/providers/xeroCreditNoteManualJournalProvider.ts", "createCreditNoteDraft", "XeroCreditNoteManualJournalProvider.createCreditNoteDraft", "credit_note.create_draft", "createCreditNotes"],
+    ["src/providers/xeroCreditNoteManualJournalProvider.ts", "updateCreditNoteDraft", "XeroCreditNoteManualJournalProvider.updateCreditNoteDraft", "credit_note.update_draft", "updateCreditNote"],
     ["src/providers/xeroCreditNoteManualJournalProvider.ts", "createManualJournalDraft", "XeroCreditNoteManualJournalProvider.createManualJournalDraft", "manual_journal.create_draft", "createManualJournals"],
+    ["src/providers/xeroCreditNoteManualJournalProvider.ts", "updateManualJournalDraft", "XeroCreditNoteManualJournalProvider.updateManualJournalDraft", "manual_journal.update_draft", "updateManualJournal"],
+    ["src/providers/xeroControlledLedgerTransitionProvider.ts", "postManualJournal", "XeroControlledLedgerTransitionProvider.postManualJournal", "manual_journal.post", "updateManualJournal"],
     ["src/providers/xeroContactItemMutationProvider.ts", "createContact", "XeroContactItemMutationProvider.createContact", "contact.create_basic", "createContacts"],
     ["src/providers/xeroContactItemMutationProvider.ts", "updateContact", "XeroContactItemMutationProvider.updateContact", "contact.update_basic", "updateContact"],
     ["src/providers/xeroContactItemMutationProvider.ts", "createItem", "XeroContactItemMutationProvider.createItem", "item.create_basic_untracked", "createItems"],
     ["src/providers/xeroContactItemMutationProvider.ts", "updateItem", "XeroContactItemMutationProvider.updateItem", "item.update_basic_untracked", "updateItem"],
+    ["src/providers/xeroLedgerAdjustmentProvider.ts", "#voidInvoice", undefined, undefined, "updateInvoice"],
+    ["src/providers/xeroLedgerAdjustmentProvider.ts", "authoriseCreditNote", "XeroLedgerAdjustmentProvider.authoriseCreditNote", "credit_note.authorise", "updateCreditNote"],
+    ["src/providers/xeroLedgerAdjustmentProvider.ts", "allocateCreditNote", "XeroLedgerAdjustmentProvider.allocateCreditNote", "credit_note.allocate", "createCreditNoteAllocation"],
+    ["src/providers/xeroLedgerAdjustmentProvider.ts", "unallocateCreditNote", "XeroLedgerAdjustmentProvider.unallocateCreditNote", "credit_note.unallocate", "deleteCreditNoteAllocations"],
+    ["src/providers/xeroLedgerAdjustmentProvider.ts", "refundCreditNote", "XeroLedgerAdjustmentProvider.refundCreditNote", "credit_note.refund", "createPayment"],
+    ["src/providers/xeroLedgerAdjustmentProvider.ts", "voidCreditNote", "XeroLedgerAdjustmentProvider.voidCreditNote", "credit_note.void", "updateCreditNote"],
+    ["src/providers/xeroLedgerAdjustmentProvider.ts", "voidManualJournal", "XeroLedgerAdjustmentProvider.voidManualJournal", "manual_journal.void", "updateManualJournal"],
+    ["src/providers/xeroPaymentBankTransactionProvider.ts", "createPayment", "XeroPaymentBankTransactionProvider.createPayment", "payment.create", "createPayment"],
+    ["src/providers/xeroPaymentBankTransactionProvider.ts", "reversePayment", "XeroPaymentBankTransactionProvider.reversePayment", "payment.reverse", "deletePayment"],
+    ["src/providers/xeroPaymentBankTransactionProvider.ts", "createBankTransaction", "XeroPaymentBankTransactionProvider.createBankTransaction", "bank_transaction.create", "createBankTransactions"],
+    ["src/providers/xeroPaymentBankTransactionProvider.ts", "updateBankTransaction", "XeroPaymentBankTransactionProvider.updateBankTransaction", "bank_transaction.update", "updateBankTransaction"],
+    ["src/providers/xeroPaymentBankTransactionProvider.ts", "reverseBankTransaction", "XeroPaymentBankTransactionProvider.reverseBankTransaction", "bank_transaction.reverse", "updateBankTransaction"],
   ] as const;
 
   it.each(contracts)("routes %s#%s through the manager-owned permit-first client boundary", (
@@ -1058,15 +1771,23 @@ describe("all ten Xero SDK mutation writers are permit-gated", () => {
     sdkMethod,
   ) => {
     const source = readFileSync(resolve(process.cwd(), relativePath), "utf8");
-    const methodStart = source.indexOf(`  async ${method}(`);
+    const methodStart = source.indexOf(`  async ${method}`);
     expect(methodStart).toBeGreaterThanOrEqual(0);
     const nextMethod = source.indexOf("\n  async ", methodStart + 10);
     const body = source.slice(methodStart, nextMethod < 0 ? undefined : nextMethod);
-    const managerBoundaryAt = body.indexOf("withWriteClient(principal, {");
-    const sdkMutationAt = body.indexOf(`accountingApi.${sdkMethod}(`);
+    const managerBoundaryAt = Math.max(
+      body.indexOf("withWriteClient(principal, {"),
+      body.indexOf("withWriteClient(principal, authorization,"),
+    );
+    const sdkMutationAt = Math.max(
+      body.indexOf(`accountingApi.${sdkMethod}(`),
+      body.indexOf(`api.${sdkMethod}(`),
+    );
     expect(managerBoundaryAt).toBeGreaterThanOrEqual(0);
-    expect(body).toContain(`adapterOperation: "${operation}"`);
-    expect(body).toContain(`actionId: "${action}"`);
+    if (operation && action) {
+      expect(body).toContain(`adapterOperation: "${operation}"`);
+      expect(body).toContain(`actionId: "${action}"`);
+    }
     expect(sdkMutationAt).toBeGreaterThan(managerBoundaryAt);
     expect(body).not.toContain("consumeXeroProviderWritePermitAtMutationBoundary(");
     expect(body).not.toContain("withClient(principal");
@@ -1080,12 +1801,20 @@ describe("all ten Xero SDK mutation writers are permit-gated", () => {
     const productionSources = typescriptSources(resolve(process.cwd(), "src"))
       .map((path) => ({ path, source: readFileSync(path, "utf8") }));
     const mutationSinks = productionSources.flatMap(({ path, source }) =>
-      [...source.matchAll(/accountingApi\.((?:create|update)[A-Z][A-Za-z0-9_]*)\(/gu)]
+      [...source.matchAll(/(?:accountingApi|api)\.((?:create|update|delete)[A-Z][A-Za-z0-9_]*)\(/gu)]
         .map((match) => `${path.slice(process.cwd().length + 1)}:${match[1]}`));
-    const expectedSinks = contracts.map(([path, _method, _operation, _action, sdkMethod]) => `${path}:${sdkMethod}`);
+    const expectedSinks = [
+      ...contracts.map(
+        ([path, _method, _operation, _action, sdkMethod]) => `${path}:${sdkMethod}`,
+      ),
+      "src/providers/xeroTrackingMutationProvider.ts:createTrackingCategory",
+      "src/providers/xeroTrackingMutationProvider.ts:updateTrackingCategory",
+      "src/providers/xeroTrackingMutationProvider.ts:createTrackingOptions",
+      "src/providers/xeroTrackingMutationProvider.ts:updateTrackingOptions",
+    ];
 
     expect(mutationSinks.sort()).toEqual([...expectedSinks].sort());
-    expect(adapterSources.match(/withWriteClient\(principal, \{/gu)).toHaveLength(10);
+    expect(adapterSources.match(/withWriteClient\(principal, (?:\{|authorization)/gu)).toHaveLength(contracts.length);
     expect(adapterSources).not.toContain("consumeXeroProviderWritePermitAtMutationBoundary(");
     expect(adapterSources).not.toContain("consumeLedgerProviderWritePermit(");
     expect(managerSource.match(/consumeXeroProviderWritePermitAtMutationBoundary\(\{/gu)).toHaveLength(1);
@@ -1110,7 +1839,29 @@ describe("all ten Xero SDK mutation writers are permit-gated", () => {
     expect(trialBalanceTransport).toContain('method: "GET"');
     expect(trialBalanceTransport).not.toMatch(/method:\s*"(?:POST|PUT|PATCH|DELETE)"/u);
     expect(productionSources.map(({ source }) => source).join("\n")).not.toContain(".withAccessToken(");
-    expect(adapterSources).not.toContain("accountingApi.updateInvoice(");
-    expect(adapterSources).not.toContain("authoriseSupplierBill");
+    // The invoice update sink is a complete DRAFT-only replacement shared by
+    // two separately permitted business actions; it cannot promote state.
+    expect(accountingProviderSource.match(/accountingApi\.updateInvoice\(/gu)).toHaveLength(1);
+    const draftInvoiceUpdateStart = accountingProviderSource.indexOf("  async #updateDraftInvoice(");
+    const draftInvoiceUpdateEnd = accountingProviderSource.indexOf("\n  async ", draftInvoiceUpdateStart + 10);
+    const draftInvoiceUpdateBody = accountingProviderSource.slice(draftInvoiceUpdateStart, draftInvoiceUpdateEnd);
+    expect(draftInvoiceUpdateBody).toContain('"XeroAccountingProvider.updateDraftSupplierBill"');
+    expect(draftInvoiceUpdateBody).toContain('"supplier_bill.update_draft"');
+    expect(draftInvoiceUpdateBody).toContain('"XeroAccountingProvider.updateDraftSalesInvoice"');
+    expect(draftInvoiceUpdateBody).toContain('"customer_invoice.update_draft"');
+    expect(draftInvoiceUpdateBody).toContain("targetXeroObjectId: normalized.targetXeroObjectId");
+    expect(draftInvoiceUpdateBody).toContain("expectedUpdatedAt");
+    expect(draftInvoiceUpdateBody).toContain("replacement: normalized.replacementPayload");
+    const transitionSource = readFileSync(
+      resolve(process.cwd(), "src/providers/xeroControlledLedgerTransitionProvider.ts"),
+      "utf8",
+    );
+    expect(transitionSource.match(/accountingApi\.updateInvoice\(/gu)).toHaveLength(1);
+    expect(transitionSource.match(/accountingApi\.updateManualJournal\(/gu)).toHaveLength(1);
+    expect(transitionSource).not.toContain("async setStatus");
+    expect(transitionSource).toContain('"XeroControlledLedgerTransitionProvider.authoriseSalesInvoice"');
+    expect(transitionSource).toContain('"customer_invoice.authorise"');
+    expect(transitionSource).toContain('"XeroControlledLedgerTransitionProvider.authoriseSupplierBill"');
+    expect(transitionSource).toContain('"supplier_bill.authorise"');
   });
 });

@@ -2,9 +2,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { compileTestXeroAccountingCase as compileAccountingCase } from "./helpers/xeroTenantCoaProfile.js";
-import type { CommercialDocumentFact, NativeDocumentFact } from "../src/domain/accountingCase.js";
+import { AccountingCaseCompilationError } from "../src/control-kernel/accountingCaseCompiler.js";
+import type { BalancedJournalFact, CommercialDocumentFact, NativeDocumentFact } from "../src/domain/accountingCase.js";
 import type { PrepareAccountingCaseInput } from "../src/domain/accountingCaseSchemas.js";
 import {
+  evaluateXeroBalancedJournalRouteContract,
   evaluateXeroCommercialDocumentRouteContract,
   evaluateXeroNativeRouteContract,
 } from "../src/policy/xeroNativeRouteContract.js";
@@ -311,5 +313,314 @@ describe("Xero commercial-document (quote/purchase order) route contract", () =>
       nativeRoute: "PURCHASE_ORDER",
       terminalState: "ELIGIBLE_FOR_PREFLIGHT",
     });
+  });
+});
+
+// A minimal, self-contained BALANCED_JOURNAL fact plus the source unit it
+// requires, appended to a clone of the golden-14 case. Account codes 453/200
+// are reused verbatim from fact-officehub-bill-v1/fact-sales-invoice-v1 in
+// the same fixture -- already known-good coordinates under the test tenant's
+// COA -- purely for a valid account_code shape; BALANCED_JOURNAL facts carry
+// no counterparty, so nothing about the accounts' real GL categorisation in
+// the fixture is implied by reusing them here.
+function balancedJournalFact(overrides: Partial<BalancedJournalFact> = {}): BalancedJournalFact {
+  return {
+    factId: "fact-journal-route-contract-v1",
+    lineageKey: "journal-route-contract-v1",
+    eventKey: "journal-route-contract-v1",
+    sourceUnitIds: ["journal-route-contract-unit"],
+    origin: "MODEL_EXTRACTED",
+    revision: 1,
+    kind: "BALANCED_JOURNAL",
+    narration: "August 2026 rent accrual",
+    date: "2026-07-02",
+    lines: [
+      {
+        lineId: "rent-expense",
+        description: "Rent expense - August 2026",
+        accountCode: "453",
+        taxType: "NONE",
+        debit: "500.0000",
+      },
+      {
+        lineId: "accrued-liability",
+        description: "Accrued liability - August 2026",
+        accountCode: "200",
+        taxType: "NONE",
+        credit: "500.0000",
+      },
+    ],
+    documentValidity: "TEST_OR_NOT_VALID",
+    ...overrides,
+  };
+}
+
+function balancedJournalsCase(...facts: BalancedJournalFact[]): PrepareAccountingCaseInput {
+  return {
+    ...input,
+    sources: [
+      ...input.sources,
+      ...facts.map((fact) => ({
+        artifactId: `${fact.factId}-artifact`,
+        label: `Balanced journal - ${fact.factId}`,
+        units: [{ unitId: fact.sourceUnitIds[0]!, expectedFactKinds: ["BALANCED_JOURNAL"] as const }],
+      })),
+    ],
+    facts: [...input.facts, ...facts] as PrepareAccountingCaseInput["facts"],
+  };
+}
+
+function balancedJournalCase(fact: BalancedJournalFact): PrepareAccountingCaseInput {
+  return balancedJournalsCase(fact);
+}
+
+describe("Xero balanced-journal (manual journal) route contract", () => {
+  // proves: manual_journal.create_draft is reachable from the case executor
+  // today, not still stuck behind the pending-action gate -- it was the last
+  // of the six orphaned actions (see docs/MANUAL-JOURNAL-DESIGN-2026-08-20.md).
+  it("lists manual_journal.create_draft as agent-reachable and not executor-pending", () => {
+    expect(AGENT_REACHABLE_WRITE_ACTIONS).toContain("manual_journal.create_draft");
+    expect(CASE_EXECUTOR_PENDING_ACTIONS).not.toContain("manual_journal.create_draft");
+    expect(CASE_EXECUTOR_PENDING_ACTIONS).not.toEqual(expect.arrayContaining([
+      "supplier_bill.update_draft",
+      "customer_invoice.update_draft",
+      "quote.update_draft",
+      "purchase_order.update_draft",
+      "credit_note.update_draft",
+      "manual_journal.update_draft",
+    ]));
+    expect(AGENT_REACHABLE_WRITE_ACTIONS).toEqual(expect.arrayContaining([
+      "supplier_bill.update_draft",
+      "customer_invoice.update_draft",
+      "quote.update_draft",
+      "purchase_order.update_draft",
+      "credit_note.update_draft",
+      "manual_journal.update_draft",
+    ]));
+  });
+
+  it("admits a balanced, NoTax journal", () => {
+    expect(evaluateXeroBalancedJournalRouteContract({
+      lines: [
+        { lineId: "l1", description: "d", accountCode: "453", taxType: "NONE", debit: "500.0000" },
+        { lineId: "l2", description: "d", accountCode: "200", taxType: "NONE", credit: "500.0000" },
+      ],
+    })).toMatchObject({ route: "MANUAL_JOURNAL", adapterCanPrepare: true, reasonCodes: [] });
+  });
+
+  it("rejects an unbalanced journal with JOURNAL_NOT_BALANCED before adapter preparation", () => {
+    expect(evaluateXeroBalancedJournalRouteContract({
+      lines: [
+        { lineId: "l1", description: "d", accountCode: "453", taxType: "NONE", debit: "500.0000" },
+        { lineId: "l2", description: "d", accountCode: "200", taxType: "NONE", credit: "499.0000" },
+      ],
+    })).toMatchObject({ adapterCanPrepare: false, reasonCodes: ["JOURNAL_NOT_BALANCED"] });
+  });
+
+  // proves: the released Xero manual-journal adapter hard-codes every line's
+  // TaxType to "NONE" (canonicalManualJournalDraftPayloadSchema); a fact
+  // declaring anything else is refused by name, not silently coerced.
+  it("rejects a declared tax type other than NONE with MANUAL_JOURNAL_TAX_TYPE_UNSUPPORTED", () => {
+    expect(evaluateXeroBalancedJournalRouteContract({
+      lines: [
+        { lineId: "l1", description: "d", accountCode: "453", taxType: "OUTPUTY24", debit: "500.0000" },
+        { lineId: "l2", description: "d", accountCode: "200", taxType: "NONE", credit: "500.0000" },
+      ],
+    })).toMatchObject({ adapterCanPrepare: false, reasonCodes: ["MANUAL_JOURNAL_TAX_TYPE_UNSUPPORTED"] });
+  });
+
+  // proves: debits-equal-credits is an accounting identity decided at compile
+  // time, in the compiler, not the provider adapter -- an unbalanced journal
+  // never reaches ELIGIBLE_FOR_PREFLIGHT and never becomes a dispatchable
+  // operation (docs/MANUAL-JOURNAL-DESIGN-2026-08-20.md, section three).
+  it("rejects an unbalanced journal at compile time with JOURNAL_NOT_BALANCED, and emits no operation", () => {
+    const fact = balancedJournalFact({
+      lines: [
+        {
+          lineId: "rent-expense",
+          description: "Rent expense - August 2026",
+          accountCode: "453",
+          taxType: "NONE",
+          debit: "500.0000",
+        },
+        {
+          lineId: "accrued-liability",
+          description: "Accrued liability - August 2026",
+          accountCode: "200",
+          taxType: "NONE",
+          credit: "499.0000",
+        },
+      ],
+    });
+    const compiled = compileAccountingCase(balancedJournalCase(fact));
+    const event = compiled.events.find((candidate) => candidate.eventKey === fact.eventKey);
+    expect(event).toMatchObject({
+      disposition: "BLOCKED_VALIDATION",
+      reasonCodes: expect.arrayContaining(["JOURNAL_NOT_BALANCED"]),
+    });
+    expect(compiled.operations.find((candidate) => candidate.eventId === event?.eventId)).toBeUndefined();
+  });
+
+  it("rejects a journal line declaring an unsupported tax type at compile time, and emits no operation", () => {
+    const fact = balancedJournalFact({
+      lines: [
+        {
+          lineId: "rent-expense",
+          description: "Rent expense - August 2026",
+          accountCode: "453",
+          taxType: "OUTPUTY24",
+          debit: "500.0000",
+        },
+        {
+          lineId: "accrued-liability",
+          description: "Accrued liability - August 2026",
+          accountCode: "200",
+          taxType: "NONE",
+          credit: "500.0000",
+        },
+      ],
+    });
+    const compiled = compileAccountingCase(balancedJournalCase(fact));
+    const event = compiled.events.find((candidate) => candidate.eventKey === fact.eventKey);
+    expect(event).toMatchObject({
+      disposition: "BLOCKED_VALIDATION",
+      reasonCodes: expect.arrayContaining(["MANUAL_JOURNAL_TAX_TYPE_UNSUPPORTED"]),
+    });
+    expect(compiled.operations.find((candidate) => candidate.eventId === event?.eventId)).toBeUndefined();
+  });
+
+  // proves: a well-formed journal actually reaches a dispatchable operation --
+  // the positive half of "reachable". It carries the explicit
+  // EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE reason code, the same as
+  // commercial documents, because a human posting the identical journal by
+  // hand in the Xero web UI is not detectable by this server today.
+  it("compiles a well-formed balanced journal into an AUTO_EXECUTE manual_journal.create_draft operation", () => {
+    const fact = balancedJournalFact();
+    const compiled = compileAccountingCase(balancedJournalCase(fact));
+    const event = compiled.events.find((candidate) => candidate.eventKey === fact.eventKey);
+    expect(event).toMatchObject({
+      disposition: "AUTO_EXECUTE",
+      route: "MANUAL_JOURNAL",
+      reasonCodes: expect.arrayContaining(["EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE"]),
+    });
+    const operation = compiled.operations.find((candidate) => candidate.eventId === event?.eventId);
+    expect(operation).toMatchObject({
+      actionId: "manual_journal.create_draft",
+      nativeRoute: "MANUAL_JOURNAL",
+      terminalState: "ELIGIBLE_FOR_PREFLIGHT",
+    });
+  });
+});
+
+describe("Xero balanced-journal reservation coordinate (\"the same journal\")", () => {
+  // The coordinate this server reserves against itself: a normalized hash of
+  // narration + date + each line's {accountCode, signed amount}, line order
+  // ignored. See balancedJournalReservationCanonicalFields in
+  // accountingCaseCompiler.ts and section six of
+  // docs/MANUAL-JOURNAL-DESIGN-2026-08-20.md for why this -- not a caller
+  // reference -- is the coordinate: Xero's ManualJournal has none.
+  function journal(id: string, overrides: Partial<BalancedJournalFact> = {}): BalancedJournalFact {
+    return balancedJournalFact({
+      factId: `fact-journal-coord-${id}`,
+      lineageKey: `journal-coord-${id}`,
+      eventKey: `journal-coord-${id}`,
+      sourceUnitIds: [`journal-coord-${id}-unit`],
+      ...overrides,
+    });
+  }
+
+  // proves: two independently-proposed journals that are byte-identical in
+  // narration, date and lines are treated as the same journal and cannot
+  // both compile into one Case -- this is the "this server writing twice"
+  // guard, and it fires even though the two facts are otherwise distinct
+  // (different factId/eventKey, i.e. genuinely two separate proposed events).
+  it("refuses to compile two journals with identical narration, date and lines", () => {
+    const first = journal("a");
+    const second = journal("b");
+    let caught: unknown;
+    try {
+      compileAccountingCase(balancedJournalsCase(first, second));
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AccountingCaseCompilationError);
+    expect((caught as InstanceType<typeof AccountingCaseCompilationError>).reasonCode)
+      .toBe("PLANNED_BUSINESS_DUPLICATE");
+  });
+
+  // proves: swapping which line is listed first does not evade the guard --
+  // the coordinate ignores line order because it is not part of what makes
+  // two journals economically the same.
+  it("still collides when the identical lines are declared in a different order", () => {
+    const first = journal("order-a");
+    const second = journal("order-b", { lines: [...first.lines].reverse() });
+    let caught: unknown;
+    try {
+      compileAccountingCase(balancedJournalsCase(first, second));
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AccountingCaseCompilationError);
+    expect((caught as InstanceType<typeof AccountingCaseCompilationError>).reasonCode)
+      .toBe("PLANNED_BUSINESS_DUPLICATE");
+  });
+
+  // proves: this is a narrow, disclosed limit, not a general "no repeats"
+  // rule -- a caller who genuinely means to post the same journal twice (for
+  // example a recurring accrual deliberately entered twice in one day) must
+  // make the postings distinguishable. A different narration is enough.
+  it("does not collide when only the narration differs", () => {
+    const first = journal("narration-a", { narration: "August 2026 rent accrual" });
+    const second = journal("narration-b", { narration: "August 2026 rent accrual (2 of 2)" });
+    const compiled = compileAccountingCase(balancedJournalsCase(first, second));
+    const firstOp = compiled.operations.find((operation) =>
+      operation.eventId === compiled.events.find((event) => event.eventKey === first.eventKey)?.eventId);
+    const secondOp = compiled.operations.find((operation) =>
+      operation.eventId === compiled.events.find((event) => event.eventKey === second.eventKey)?.eventId);
+    expect(firstOp?.terminalState).toBe("ELIGIBLE_FOR_PREFLIGHT");
+    expect(secondOp?.terminalState).toBe("ELIGIBLE_FOR_PREFLIGHT");
+    expect(firstOp?.businessReservation.coordinateHash).not.toBe(secondOp?.businessReservation.coordinateHash);
+  });
+
+  // proves: a different date is a different journal, even with identical
+  // narration and lines -- an accrual reversed and reposted the next day is
+  // not "the same journal" a second time.
+  it("does not collide when only the date differs", () => {
+    const first = journal("date-a", { date: "2026-07-02" });
+    const second = journal("date-b", { date: "2026-07-03" });
+    const compiled = compileAccountingCase(balancedJournalsCase(first, second));
+    const firstOp = compiled.operations.find((operation) =>
+      operation.eventId === compiled.events.find((event) => event.eventKey === first.eventKey)?.eventId);
+    const secondOp = compiled.operations.find((operation) =>
+      operation.eventId === compiled.events.find((event) => event.eventKey === second.eventKey)?.eventId);
+    expect(firstOp?.businessReservation.coordinateHash).not.toBe(secondOp?.businessReservation.coordinateHash);
+  });
+
+  // proves: a different amount is a different journal.
+  it("does not collide when only a line amount differs", () => {
+    const first = journal("amount-a");
+    const second = journal("amount-b", {
+      lines: [
+        { ...first.lines[0]!, debit: "600.0000" },
+        { ...first.lines[1]!, credit: "600.0000" },
+      ],
+    });
+    const compiled = compileAccountingCase(balancedJournalsCase(first, second));
+    const firstOp = compiled.operations.find((operation) =>
+      operation.eventId === compiled.events.find((event) => event.eventKey === first.eventKey)?.eventId);
+    const secondOp = compiled.operations.find((operation) =>
+      operation.eventId === compiled.events.find((event) => event.eventKey === second.eventKey)?.eventId);
+    expect(firstOp?.businessReservation.coordinateHash).not.toBe(secondOp?.businessReservation.coordinateHash);
+  });
+
+  // proves: the reservation is disjoint from every other route family's
+  // namespace, so a journal can never collide with (or be aliased against)
+  // an invoice, credit note, quote or purchase order.
+  it("uses its own BALANCED_JOURNAL_OCCURRENCE reservation kind, not shared with any other route", () => {
+    const fact = balancedJournalFact();
+    const compiled = compileAccountingCase(balancedJournalCase(fact));
+    const operation = compiled.operations.find((candidate) => candidate.actionId === "manual_journal.create_draft");
+    expect(operation?.businessReservation.kind).toBe("BALANCED_JOURNAL_OCCURRENCE");
+    expect(operation?.businessIdentity.kind).toBe("BALANCED_JOURNAL_OCCURRENCE");
   });
 });

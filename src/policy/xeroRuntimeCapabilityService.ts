@@ -25,7 +25,6 @@ function permissionsFor(context: RequestContext): XeroCapabilityPermission[] {
   const permissions: XeroCapabilityPermission[] = [];
   if (context.scopes.includes("xero.read")) permissions.push("XERO_ACCOUNTING_READ");
   if (context.scopes.includes("xero.draft.write")) permissions.push("XERO_DRAFT_WRITE");
-  if (context.roles.includes("xero.dual_approval")) permissions.push("XERO_DUAL_APPROVAL");
   return permissions;
 }
 

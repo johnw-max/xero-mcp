@@ -5,6 +5,7 @@ import { createLogger } from "../src/logging.js";
 import { hashObject, sha256, stableStringify } from "../src/security/hash.js";
 import { Aes256GcmTokenCipher } from "../src/security/tokenCipher.js";
 import { createXeroBuildIdentity, xeroBuildIdentityHash } from "../src/xeroRelease.js";
+import { TOOL_ALLOWLIST } from "../src/mcp/toolNames.js";
 import {
   testXeroBusinessAuthorityProfile,
 } from "./helpers/xeroTenantCoaProfile.js";
@@ -58,7 +59,7 @@ function validEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     REQUEST_BODY_LIMIT_BYTES: "1048576",
     XERO_CLIENT_ID: "test-client",
     XERO_CLIENT_SECRET: "test-secret",
-    XERO_SCOPES: "openid profile email offline_access accounting.settings.read accounting.settings accounting.contacts.read accounting.contacts accounting.invoices.read accounting.invoices accounting.payments.read accounting.manualjournals.read accounting.manualjournals accounting.banktransactions.read accounting.reports.trialbalance.read",
+    XERO_SCOPES: "openid profile email offline_access accounting.settings.read accounting.settings accounting.contacts.read accounting.contacts accounting.invoices.read accounting.invoices accounting.payments.read accounting.payments accounting.manualjournals.read accounting.manualjournals accounting.banktransactions.read accounting.banktransactions accounting.reports.trialbalance.read accounting.reports.profitandloss.read accounting.reports.balancesheet.read accounting.reports.aged.read",
     TOKEN_ENCRYPTION_KEY_B64: Buffer.alloc(32, 7).toString("base64"),
     XERO_MUTATION_CONFIRMATION_KEY_B64: Buffer.alloc(32, 8).toString("base64"),
     DEMO_ACTOR_ID: "qa-actor",
@@ -74,7 +75,6 @@ const testBuildIdentity = createXeroBuildIdentity({
   releaseSourceManifestSha256: "b".repeat(64),
   sourceArchiveSha256: "c".repeat(64),
   sourceBundleManifestSha256: "d".repeat(64),
-  approvedControlCatalogSha256: "e".repeat(64),
 });
 
 function standingDelegations(): string {
@@ -234,7 +234,7 @@ describe("security configuration contract", () => {
 
   it("accepts a genuinely read-only Xero scope bundle while writes are disabled", () => {
     const config = loadConfig(validEnv({
-      XERO_SCOPES: "offline_access accounting.settings.read accounting.contacts.read accounting.invoices.read accounting.payments.read accounting.manualjournals.read accounting.banktransactions.read accounting.reports.trialbalance.read",
+      XERO_SCOPES: "offline_access accounting.settings.read accounting.contacts.read accounting.invoices.read accounting.payments.read accounting.manualjournals.read accounting.banktransactions.read accounting.journals.read accounting.reports.trialbalance.read accounting.reports.profitandloss.read accounting.reports.balancesheet.read accounting.reports.aged.read",
     }));
     expect(config.xeroWriteEnabled).toBe(false);
     expect(config.xero.scopes).not.toContain("accounting.invoices");
@@ -268,14 +268,14 @@ describe("security configuration contract", () => {
 
   it("accepts deprecated broad scopes only as compatibility equivalents", () => {
     const config = loadConfig(autonomousWriteEnv({
-      XERO_SCOPES: "offline_access accounting.settings accounting.contacts accounting.transactions accounting.reports.read",
+      XERO_SCOPES: "offline_access accounting.settings accounting.contacts accounting.transactions accounting.journals.read accounting.reports.read",
     }));
     expect(config.xero.scopes).toContain("accounting.transactions");
   });
 
   it("does not disconnect legacy rollback connections solely for lacking granular payment read", () => {
     const config = loadConfig(autonomousWriteEnv({
-      XERO_SCOPES: "offline_access accounting.settings accounting.contacts accounting.invoices accounting.manualjournals accounting.banktransactions.read accounting.reports.trialbalance.read",
+      XERO_SCOPES: "offline_access accounting.settings accounting.contacts accounting.invoices accounting.payments accounting.manualjournals accounting.banktransactions.read accounting.banktransactions accounting.reports.trialbalance.read accounting.reports.profitandloss.read accounting.reports.balancesheet.read accounting.reports.aged.read",
     }));
     expect(config.xero.scopes).not.toContain("accounting.payments.read");
   });
@@ -298,27 +298,17 @@ describe("security configuration contract", () => {
     );
   });
 
-  it("rejects Broker writes without an active standing delegation", () => {
-    expect(() => loadConfig(autonomousWriteEnv({ XERO_STANDING_DELEGATIONS_JSON: "[]" }))).toThrow(
-      /active Xero standing delegation.*required/i,
-    );
+  it("allows Broker writes without a deployment-owned standing delegation", () => {
+    expect(loadConfig(autonomousWriteEnv({ XERO_STANDING_DELEGATIONS_JSON: "[]" })).xeroWriteEnabled).toBe(true);
   });
 
-  it("binds autonomous startup to exact standing-delegation bytes and an explicit revision", () => {
-    const environment = autonomousWriteEnv();
-    const config = loadConfig(environment);
-    expect(config.xeroStandingDelegationsConfigSha256).toBe(
-      sha256(environment.XERO_STANDING_DELEGATIONS_JSON!),
-    );
-    expect(() => loadConfig(autonomousWriteEnv({
-      XERO_STANDING_DELEGATIONS_CONFIG_SHA256: "",
-    }))).toThrow(/explicit XERO_AUTHORITY_REVISION.*XERO_STANDING_DELEGATIONS_CONFIG_SHA256/u);
-    expect(() => loadConfig(autonomousWriteEnv({
+  it("does not make legacy delegation hashes or revisions a write startup gate", () => {
+    const config = loadConfig(autonomousWriteEnv({
       XERO_STANDING_DELEGATIONS_CONFIG_SHA256: "f".repeat(64),
-    }))).toThrow(/does not match the exact XERO_STANDING_DELEGATIONS_JSON bytes/u);
-    expect(() => loadConfig(autonomousWriteEnv({
       XERO_AUTHORITY_REVISION: undefined,
-    }))).toThrow(/explicit XERO_AUTHORITY_REVISION/u);
+      XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256: undefined,
+    }));
+    expect(config.xeroWriteEnabled).toBe(true);
   });
 
   // ADR-002: a per-tenant chart-of-accounts profile is no longer a write-startup
@@ -390,33 +380,34 @@ describe("security configuration contract", () => {
     expect(config.xeroWriteEnabled).toBe(true);
   });
 
-  it("accepts write enablement only with Broker, target and an exact standing delegation", () => {
+  it("accepts write enablement with Broker and its required current target session", () => {
     const config = loadConfig(autonomousWriteEnv());
     expect(config.xeroWriteEnabled).toBe(true);
     expect(config.xeroAllowedTenantId).toBeUndefined();
     expect(config.xeroTargetSessionRequired).toBe(true);
-    expect(config.xeroStandingDelegations).toEqual([
-      expect.objectContaining({
-        providerId: "xero",
-        agentId: "agent-test",
-        installationId: "installation-test",
-        tenantIds: [AUTONOMOUS_TENANT_ID],
-        actionIds: ["supplier_bill.create_draft"],
-      }),
-    ]);
   });
 });
 
-describe("fixed MCP tool contract", () => {
-  it("matches the reviewed thirty-tool Accounting Case allowlist exactly", () => {
+describe("MCP tool contract", () => {
+  it("matches the source allowlist and capability manifest without a pinned count", () => {
     const configured = JSON.parse(
       readFileSync(new URL("../config/tool-allowlist.json", import.meta.url), "utf8"),
     ).tools as string[];
     const expected = JSON.parse(
       readFileSync(new URL("./contract/expected-tools.json", import.meta.url), "utf8"),
     ) as string[];
-    expect([...new Set(configured)].sort()).toEqual([...expected].sort());
-    expect(configured).toHaveLength(30);
+    const manifest = JSON.parse(
+      readFileSync(new URL("../config/xero-capability-manifest.json", import.meta.url), "utf8"),
+    ) as { rows: Array<{ public_tool_or_case_action: { tool?: string | null } | null }> };
+    const manifestTools = manifest.rows.flatMap((row) => {
+      const tool = row.public_tool_or_case_action?.tool;
+      return typeof tool === "string" ? [tool] : [];
+    });
+    const configuredSet = [...new Set(configured)].sort();
+    expect(configuredSet).toEqual([...TOOL_ALLOWLIST].sort());
+    expect(configuredSet).toEqual([...new Set(manifestTools)].sort());
+    expect(configuredSet).toEqual([...expected].sort());
+    expect(configured).toHaveLength(TOOL_ALLOWLIST.length);
     expect(configured).toEqual(expect.arrayContaining([
       "xero_prepare_accounting_case",
       "xero_execute_accounting_case",

@@ -1,6 +1,6 @@
 ---
 name: execute-approved-accounting-entry
-description: Execute an already reviewed and balanced accounting-entry proposal through whatever authorized formal-accounting capability is mounted, then verify the exact result. Use when the user explicitly asks to record, submit, post, or save an approved supplier bill, customer invoice, payment, receipt, expense, transfer, credit note, manual journal, or accounting adjustment. Select tools by semantic capability rather than MCP or provider name, preserve the applicable exact approval or standing-delegation and idempotency controls, degrade safely when only source/review storage is available, and never treat a storage receipt or provider draft as a ledger posting.
+description: Execute an already reviewed and balanced accounting-entry proposal through an authorized formal-accounting capability, then verify the exact result. Use when the user explicitly asks to record, submit, post, or save a supplier bill, customer invoice, payment, receipt, expense, transfer, credit note, manual journal, or accounting adjustment. For the R1 Xero typed Accounting Case, preserve the current OAuth target, immutable Case version, released action, write gate, idempotency, receipt, and exact read-back; do not add a per-transaction approval or confirmation flow.
 ---
 
 # Execute Approved Accounting Entry
@@ -20,10 +20,10 @@ Require all of the following before any formal-accounting write:
 - the intended business transaction kind and native-versus-manual-journal route;
 - two or more lines with valid mapped accounts/tax treatment and exact base-currency debit/credit equality;
 - a duplicate/idempotency key bound to entity, destination, source, action, and proposal digest;
-- exactly one effective authorization path for the same target, action, and scope: either an exact current per-transaction approval when the connection/action requires it, or a platform-bound, currently valid standing delegation covering that same target, action, and scope; do not require both;
+- for an R1 Xero typed Accounting Case, the current OAuth binding and pinned target session, effective scope, released policy and server write gate for the same action;
 - an explicit natural-language business request to perform the write. This request expresses business intent; it is not permission by itself.
 
-If the user supplied only raw facts or an unreviewed treatment, route first to `prepare-balanced-accounting-entry`. Do not turn chat consent, an uploaded approval note, a file ID, or a connector name into execution authority. Do not infer either authorization path from the natural-language request.
+If the user supplied only raw facts or an unreviewed treatment, route first to `prepare-balanced-accounting-entry`. Do not turn chat text, an uploaded note, a file ID, or a connector name into a tenant, action, or execution payload. The natural-language request expresses business intent; the current OAuth target and immutable typed Case remain authoritative.
 
 ## Route by semantic capability
 
@@ -42,7 +42,7 @@ If the user supplied only raw facts or an unreviewed treatment, route first to `
 
 1. Resolve the platform-authorized destination binding and require current target evidence with a safe target reference and binding revision. Never accept a tenant, realm, organisation, company-file, folder, or workbook locator supplied only in user text as authorization. Treat missing, stale, failed, or conflicting target evidence as `EXECUTION_BLOCKED`.
 2. Re-read live entity context, accounts, tax treatment, currency, and period status when those formal-ledger reads are required for the action.
-3. Revalidate exactly one authorization path: an exact current per-transaction approval when required by the connection/action, or a platform-bound, currently valid standing delegation that covers the same target, action, and scope. A natural-language business execution request is not permission. For a typed Accounting Case mounted under standing delegation, do not ask for a confirmation phrase or per-item approval; the runtime must still revalidate the target, scope, write gate, deterministic validation, idempotency, one-shot permit, receipt, and exact read-back before and after the provider action.
+3. For an R1 Xero typed Accounting Case, revalidate the current OAuth binding and pinned target session, effective scope, released policy and server write gate for the same action. A natural-language business execution request is not a tenant, action or execution payload. The organisation-selection URL is the only user confirmation flow; do not ask for a confirmation phrase, signature, approval token or per-item approval. The runtime must still revalidate target, scope, policy, write gate, deterministic validation, idempotency, one-shot permit, receipt, and exact read-back before and after the provider action.
 4. Recalculate the proposal digest and debit/credit totals. Refuse changed, stale, unbalanced, invalid-period, unmapped, or authorization-mismatched proposals.
 5. Prefer the provider adapter's native supplier-bill, customer-invoice, payment, receipt, expense, transfer, or credit-note capability. Use manual journal only when the approved business treatment requires it.
 6. Start with one provider write attempt using the stable idempotency key. If the result is timeout, ambiguous, or `outcome unknown`, prohibit blind retry and prohibit a new-key retry. The runtime may perform at most one controlled recovery only while the provider-native idempotency window is open, for the same request and same idempotency key, under a durable single claim. Then query the original attempt or exact business record when supported; when recovery/query is unavailable, retain `OUTCOME_UNKNOWN` and route to manual investigation without resubmission.
@@ -53,7 +53,7 @@ If the user supplied only raw facts or an unreviewed treatment, route first to `
 
 ## Hard controls
 
-- Require the MCP/runtime to enforce tenant binding, permission, the selected authorization path, valid accounts/tax/period, exact debit/credit equality, approval/delegation scope, idempotency, legal state transition, and audit receipt deterministically. Skill reasoning does not replace these controls.
+- Require the MCP/runtime to enforce the current OAuth target, typed Case/action scope, write gate, valid accounts/tax/period, exact debit/credit equality, idempotency, legal state transition, one-shot permit, receipt, and exact read-back deterministically. Skill reasoning does not replace these controls.
 - Do not expose or invent raw provider IDs, connector secrets, OAuth credentials, folder IDs, workbook ranges, or provider-specific fields that are not returned through the authorized binding.
 - Do not silently change a native transaction into a manual journal, change the destination, weaken tax/account mapping, or create a suspense plug merely because one capability is unavailable.
 - Treat a definitive successful write receipt without successful exact read-back as `WRITE_RESULT_UNVERIFIED`, not posted. This remains true when exact read-back is supported but the attempt fails, is partial, or times out. Treat a timeout or ambiguous execution result as `OUTCOME_UNKNOWN`; prohibit blind or new-key retry, while allowing at most one runtime-controlled recovery in the provider-native idempotency window for the same request and same key under a durable single claim. Query the original attempt/idempotency outcome when supported; otherwise investigate manually. Treat conflicting read-back as `WRITE_RESULT_MISMATCH` and do not retry blindly.
@@ -66,7 +66,7 @@ Lead with exactly one state: `READY_FOR_MANUAL_POSTING`, `PROPOSAL_SAVED_OUTSIDE
 
 Then show:
 
-1. entity, period, transaction kind, proposal/source references, totals, and approval reference;
+1. entity, period, transaction kind, proposal/source references, totals, and Case/proposal version;
 2. destination role and semantic capability used or missing;
 3. action receipt and exact read-back comparison when an external action occurred;
 4. what changed and what did not change;

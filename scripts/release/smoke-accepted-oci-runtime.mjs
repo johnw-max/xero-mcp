@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,12 +19,10 @@ function parseArguments(argv) {
     if (!value) throw new Error(`${flag ?? "argument"} requires a value`);
     if (flag === "--artifact") options.artifact = resolve(value);
     else if (flag === "--receipt") options.receipt = resolve(value);
-    else if (flag === "--approved-control-catalog-sha256") options.approvedControlCatalogSha256 = value;
     else throw new Error(`Unknown argument: ${flag}`);
   }
-  if (!options.artifact || !options.receipt ||
-      !/^[a-f0-9]{64}$/u.test(options.approvedControlCatalogSha256 ?? "")) {
-    throw new Error("--artifact, --receipt, and --approved-control-catalog-sha256 are required");
+  if (!options.artifact || !options.receipt) {
+    throw new Error("--artifact and --receipt are required");
   }
   return options;
 }
@@ -75,9 +73,6 @@ function assertRuntimeIdentity(body, receipt, endpoint) {
       body?.sourceArchiveSha256 !== receipt.sourceArchiveSha256) {
     throw new Error(`OCI_RUNTIME_${endpoint}_BUILD_IDENTITY_MISMATCH`);
   }
-  if (body?.approvedControlCatalogSha256 !== receipt.approvedControlCatalogSha256) {
-    throw new Error(`OCI_RUNTIME_${endpoint}_CONTROL_CATALOG_MISMATCH`);
-  }
 }
 
 export function localDockerImageIdForOci(verified) {
@@ -106,9 +101,6 @@ async function main() {
     throw new Error("OCI_RUNTIME_ARTIFACT_TYPE_INVALID");
   }
   const receipt = JSON.parse(receiptRaw);
-  if (receipt.approvedControlCatalogSha256 !== options.approvedControlCatalogSha256) {
-    throw new Error("OCI_RUNTIME_CONTROL_CATALOG_MISMATCH");
-  }
   const verified = verifyOciLayoutArtifact(artifact, receipt);
   const loadedImageId = localDockerImageIdForOci(verified);
   if (receipt.schemaVersion !== "xero-accepted-oci-build-receipt:v2" ||
@@ -184,38 +176,24 @@ async function main() {
       "run", "--rm", "--entrypoint", "node", loadedImageId,
       "--input-type=module", "--eval",
       "import { XERO_RELEASE_ATTESTATION, XERO_RELEASE_VERSION, parseXeroBuildIdentity, xeroBuildIdentityHash } from './dist/xeroRelease.js';" +
-      "import { ledgerAuthoritySnapshotHash } from './dist/domain/ledgerAuthority.js';" +
       "import { TOOL_ALLOWLIST } from './dist/mcp/toolNames.js';" +
       "import { hashObject } from './dist/security/hash.js';" +
       "const identity=parseXeroBuildIdentity(process.env.XERO_BUILD_IDENTITY_JSON);" +
-      "const readOnlyAuthoritySnapshotHash=ledgerAuthoritySnapshotHash({providerId:'xero',revision:1,writeKillSwitchEnabled:false,standingDelegations:[]});" +
-      "process.stdout.write(JSON.stringify({releaseVersion:XERO_RELEASE_VERSION,releaseAttestationHash:hashObject(XERO_RELEASE_ATTESTATION),requiredMigration:XERO_RELEASE_ATTESTATION.requiredMigration,toolCount:TOOL_ALLOWLIST.length,toolsetHash:hashObject(TOOL_ALLOWLIST),buildIdentityHash:xeroBuildIdentityHash(identity),acceptanceSourceSha256:identity.acceptanceSourceSha256,sourceArchiveSha256:identity.sourceArchiveSha256,approvedControlCatalogSha256:identity.approvedControlCatalogSha256,approvedControlCatalogEnvironmentSha256:process.env.XERO_APPROVED_CONTROL_CATALOG_SHA256,readOnlyAuthoritySnapshotHash}));",
+      "process.stdout.write(JSON.stringify({releaseVersion:XERO_RELEASE_VERSION,releaseAttestationHash:hashObject(XERO_RELEASE_ATTESTATION),requiredMigration:XERO_RELEASE_ATTESTATION.requiredMigration,toolCount:TOOL_ALLOWLIST.length,toolsetHash:hashObject(TOOL_ALLOWLIST),buildIdentityHash:xeroBuildIdentityHash(identity),acceptanceSourceSha256:identity.acceptanceSourceSha256,sourceArchiveSha256:identity.sourceArchiveSha256}));",
     ), dockerOptions({ label: "OCI_RUNTIME_SOURCE_CHALLENGE" }));
     const challengeResult = JSON.parse(challenge.stdout);
     if (challengeResult.releaseVersion !== receipt.releaseVersion ||
         challengeResult.releaseAttestationHash !== receipt.releaseAttestationHash ||
         challengeResult.requiredMigration !== receipt.requiredMigration ||
-        challengeResult.toolCount !== 30 ||
+        !Number.isSafeInteger(challengeResult.toolCount) || challengeResult.toolCount < 1 ||
         challengeResult.toolsetHash !== receipt.toolsetHash ||
         challengeResult.buildIdentityHash !== receipt.semanticBuildIdentityHash ||
         challengeResult.acceptanceSourceSha256 !== receipt.acceptanceSourceSha256 ||
         challengeResult.sourceArchiveSha256 !== receipt.sourceArchiveSha256) {
       throw new Error("OCI_RUNTIME_SOURCE_CHALLENGE_MISMATCH");
     }
-    if (!/^[a-f0-9]{64}$/u.test(challengeResult.readOnlyAuthoritySnapshotHash ?? "")) {
-      throw new Error("OCI_RUNTIME_READ_ONLY_AUTHORITY_SNAPSHOT_INVALID");
-    }
-    if (challengeResult.approvedControlCatalogSha256 !== receipt.approvedControlCatalogSha256 ||
-        challengeResult.approvedControlCatalogEnvironmentSha256 !== receipt.approvedControlCatalogSha256) {
-      throw new Error("OCI_RUNTIME_SOURCE_CHALLENGE_CONTROL_CATALOG_MISMATCH");
-    }
-
-    const standingDelegationsJson = "[]";
-    const standingDelegationsConfigSha256 = createHash("sha256")
-      .update(standingDelegationsJson)
-      .digest("hex");
     await run(docker, dockerArgs(
-      "run", "-d", "--rm", "--name", containerName,
+      "run", "-d", "--name", containerName,
       "--network", networkName,
       "-p", "127.0.0.1::3000",
       "-e", "PUBLIC_BASE_URL=https://runtime-smoke.invalid",
@@ -225,13 +203,8 @@ async function main() {
       "-e", "MCP_ALLOWED_HOSTS=runtime-smoke.invalid,127.0.0.1,localhost",
       "-e", "XERO_CLIENT_ID=runtime-smoke-client",
       "-e", "XERO_CLIENT_SECRET=runtime-smoke-secret",
-      "-e", "XERO_SCOPES=openid profile email offline_access accounting.settings.read accounting.settings accounting.contacts.read accounting.contacts accounting.invoices.read accounting.invoices accounting.payments.read accounting.manualjournals.read accounting.manualjournals accounting.banktransactions.read accounting.reports.trialbalance.read",
+      "-e", "XERO_SCOPES=openid profile email offline_access accounting.settings.read accounting.settings accounting.contacts.read accounting.contacts accounting.invoices.read accounting.invoices accounting.payments.read accounting.manualjournals.read accounting.manualjournals accounting.banktransactions.read accounting.reports.trialbalance.read accounting.reports.profitandloss.read accounting.reports.balancesheet.read accounting.reports.aged.read accounting.journals.read",
       "-e", "XERO_WRITE_ENABLED=false",
-      "-e", "XERO_AUTHORITY_REVISION=1",
-      "-e", `XERO_STANDING_DELEGATIONS_JSON=${standingDelegationsJson}`,
-      "-e", `XERO_STANDING_DELEGATIONS_CONFIG_SHA256=${standingDelegationsConfigSha256}`,
-      "-e", `XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256=${challengeResult.readOnlyAuthoritySnapshotHash}`,
-      "-e", "XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256=NOT_REQUIRED",
       "-e", `TOKEN_ENCRYPTION_KEY_B64=${tokenKey}`,
       "-e", `XERO_MUTATION_CONFIRMATION_KEY_B64=${confirmationKey}`,
       "-e", "XERO_TARGET_SESSION_REQUIRED=true",
@@ -282,10 +255,10 @@ async function main() {
     const health = await fetchJson(`${origin}/healthz`);
     if (health.response.status !== 200 || health.body?.status !== "ok" ||
         ready.writeMode !== "READ_ONLY" || ready.processWriteGateEnabled !== false ||
-        ready.authorityWriteKillSwitchEnabled !== false ||
         ready.requiredMigrationStatus !== "APPLIED" || ready.migrationHead !== ready.requiredMigration ||
         ready.activeAccountingCaseRecoveryProjection?.status !== "COMPATIBLE" ||
-        health.body?.toolCount !== 30 || health.body?.toolsetHash !== ready.toolsetHash) {
+        health.body?.toolCount !== challengeResult.toolCount || health.body?.toolsetHash !== challengeResult.toolsetHash ||
+        health.body?.toolsetHash !== ready.toolsetHash) {
       throw new Error("OCI_RUNTIME_HEALTH_READINESS_CONTRACT_INVALID");
     }
     assertRuntimeIdentity(health.body, receipt, "HEALTH");
@@ -320,7 +293,6 @@ async function main() {
       build_identity_hash: receipt.semanticBuildIdentityHash,
       acceptance_source_sha256: receipt.acceptanceSourceSha256,
       source_archive_sha256: receipt.sourceArchiveSha256,
-      approved_control_catalog_sha256: receipt.approvedControlCatalogSha256,
       postgres_image: POSTGRES_IMAGE,
       required_migration: ready.requiredMigration,
       tool_count: health.body.toolCount,
@@ -330,6 +302,7 @@ async function main() {
   } finally {
     if (containerStarted) {
       await run(docker, dockerArgs("stop", "--time", "5", containerName), dockerOptions({ allowFailure: true }));
+      await run(docker, dockerArgs("rm", "--force", containerName), dockerOptions({ allowFailure: true }));
     }
     if (postgresStarted) {
       await run(docker, dockerArgs("stop", "--time", "5", postgresContainerName), dockerOptions({ allowFailure: true }));

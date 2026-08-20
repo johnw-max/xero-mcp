@@ -8,8 +8,6 @@ readonly BLUE_PORT="18002"
 readonly GREEN_PORT="18004"
 readonly BLUE_VERSION="0.2.13"
 readonly GREEN_VERSION="0.4.0-rc.1"
-readonly GREEN_TOOL_COUNT="30"
-readonly GREEN_TOOLSET_HASH="ed6667e843ea916ad672ad260d0d7705df75ad4632c181e4e554250b82b076e5"
 readonly PUBLIC_SETTLE_ATTEMPTS="3"
 readonly PUBLIC_SETTLE_SLEEP_SECONDS="1"
 readonly PUBLIC_SETTLE_CURL_MAX_TIME_SECONDS="1"
@@ -52,16 +50,17 @@ test ! -L "$SITE_FILE" || fail "SITE_FILE_MUST_NOT_BE_SYMLINK"
 
 load_green_release_environment() {
   test "$#" = "1" || fail "RELEASE_ENV_OVERRIDE_FORBIDDEN"
+  capability_identity=$(/usr/bin/node scripts/validate-capability-manifest.mjs --require-ready --format fields) \
+    || fail "CAPABILITY_MANIFEST_ADMISSION_FAILED"
+  GREEN_TOOL_COUNT=$(printf '%s\n' "$capability_identity" | awk -F'|' '$1 == "tool_count" { print $2 }')
+  GREEN_TOOLSET_HASH=$(printf '%s\n' "$capability_identity" | awk -F'|' '$1 == "toolset_hash" { print $2 }')
+  test "$GREEN_TOOL_COUNT" -gt 0 || fail "CAPABILITY_TOOL_COUNT_INVALID"
+  printf '%s' "$GREEN_TOOLSET_HASH" | grep -Eq '^[0-9a-f]{64}$' || fail "CAPABILITY_TOOLSET_HASH_INVALID"
   admitted_identity=$(/usr/bin/node scripts/release/production-deployment-admission.mjs --format fields) \
     || fail "PRODUCTION_DEPLOYMENT_ADMISSION_FAILED"
   IFS='|' read -r APP_IMAGE accepted_manifest_digest XERO_APPROVED_BUILD_IDENTITY_HASH \
     XERO_APPROVED_ACCEPTANCE_SOURCE_SHA256 XERO_APPROVED_SOURCE_ARCHIVE_SHA256 \
-    XERO_APPROVED_CONTROL_CATALOG_SHA256 XERO_ADMITTED_GOVERNANCE_TRUST_BUNDLE_SHA256 \
-    XERO_ADMITTED_GOVERNANCE_RECEIPTS_SHA256 XERO_ADMITTED_GOVERNANCE_STATUS_SHA256 \
-    XERO_ADMITTED_AUTHORITY_REVISION XERO_ADMITTED_STANDING_DELEGATIONS_CONFIG_SHA256 \
-    XERO_ADMITTED_WRITE_ENABLED XERO_ADMITTED_FIRM_GOVERNANCE_REQUIRED \
-    XERO_ADMITTED_EXPECTED_AUTHORITY_SNAPSHOT_SHA256 \
-    XERO_ADMITTED_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 <<EOF
+    XERO_ADMITTED_WRITE_ENABLED <<EOF
 $admitted_identity
 EOF
   test -n "$APP_IMAGE" \
@@ -69,16 +68,7 @@ EOF
     && test -n "$XERO_APPROVED_BUILD_IDENTITY_HASH" \
     && test -n "$XERO_APPROVED_ACCEPTANCE_SOURCE_SHA256" \
     && test -n "$XERO_APPROVED_SOURCE_ARCHIVE_SHA256" \
-    && test -n "$XERO_APPROVED_CONTROL_CATALOG_SHA256" \
-    && test -n "$XERO_ADMITTED_GOVERNANCE_TRUST_BUNDLE_SHA256" \
-    && test -n "$XERO_ADMITTED_GOVERNANCE_RECEIPTS_SHA256" \
-    && test -n "$XERO_ADMITTED_GOVERNANCE_STATUS_SHA256" \
-    && test -n "$XERO_ADMITTED_AUTHORITY_REVISION" \
-    && test -n "$XERO_ADMITTED_STANDING_DELEGATIONS_CONFIG_SHA256" \
     && test -n "$XERO_ADMITTED_WRITE_ENABLED" \
-    && test -n "$XERO_ADMITTED_FIRM_GOVERNANCE_REQUIRED" \
-    && test -n "$XERO_ADMITTED_EXPECTED_AUTHORITY_SNAPSHOT_SHA256" \
-    && test -n "$XERO_ADMITTED_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256" \
     || fail "PRODUCTION_DEPLOYMENT_ADMISSION_FIELDS_INVALID"
 }
 
@@ -108,8 +98,6 @@ verify_green_image_identity() {
   test "$actual_build_hash" = "$XERO_APPROVED_BUILD_IDENTITY_HASH" || return 1
   test "$actual_source_hash" = "$XERO_APPROVED_ACCEPTANCE_SOURCE_SHA256" || return 1
   test "$actual_archive_hash" = "$XERO_APPROVED_SOURCE_ARCHIVE_SHA256" || return 1
-  actual_control_catalog_hash=$("$DOCKER_CLI" image inspect --format '{{index .Config.Labels "io.zcloak.xero.approved-control-catalog-sha256"}}' "$APP_IMAGE") || return 1
-  test "$actual_control_catalog_hash" = "$XERO_APPROVED_CONTROL_CATALOG_SHA256" || return 1
 }
 
 exec 9>"$LOCK_FILE"
@@ -221,23 +209,10 @@ check_loopback() {
       printf '%s' "$ready" | grep -Fq "\"buildIdentityHash\":\"${XERO_APPROVED_BUILD_IDENTITY_HASH}\"" || fail "GREEN_READY_BUILD_IDENTITY_MISMATCH"
       printf '%s' "$ready" | grep -Fq "\"acceptanceSourceSha256\":\"${XERO_APPROVED_ACCEPTANCE_SOURCE_SHA256}\"" || fail "GREEN_READY_SOURCE_IDENTITY_MISMATCH"
       printf '%s' "$ready" | grep -Fq "\"sourceArchiveSha256\":\"${XERO_APPROVED_SOURCE_ARCHIVE_SHA256}\"" || fail "GREEN_READY_ARCHIVE_IDENTITY_MISMATCH"
-      printf '%s' "$ready" | grep -Fq "\"approvedControlCatalogSha256\":\"${XERO_APPROVED_CONTROL_CATALOG_SHA256}\"" || fail "GREEN_READY_CONTROL_CATALOG_MISMATCH"
-      printf '%s' "$ready" | /usr/bin/node deploy/scripts/governance-cutover-contract.mjs \
-        "$XERO_ADMITTED_GOVERNANCE_TRUST_BUNDLE_SHA256" \
-        "$XERO_ADMITTED_GOVERNANCE_RECEIPTS_SHA256" \
-        "$XERO_ADMITTED_GOVERNANCE_STATUS_SHA256" \
-        "$XERO_ADMITTED_AUTHORITY_REVISION" \
-        "$XERO_ADMITTED_STANDING_DELEGATIONS_CONFIG_SHA256" \
-        "$XERO_ADMITTED_WRITE_ENABLED" \
-        "$XERO_ADMITTED_FIRM_GOVERNANCE_REQUIRED" \
-        "$XERO_ADMITTED_EXPECTED_AUTHORITY_SNAPSHOT_SHA256" \
-        "$XERO_ADMITTED_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256" \
-        || fail "GREEN_READY_GOVERNANCE_ADMISSION_MISMATCH"
       printf '%s' "$health" | grep -Fq "\"version\":\"${GREEN_VERSION}\"" || fail "GREEN_VERSION_MISMATCH"
       printf '%s' "$health" | grep -Fq "\"toolCount\":${GREEN_TOOL_COUNT}" || fail "GREEN_TOOL_COUNT_MISMATCH"
       printf '%s' "$health" | grep -Fq "\"toolsetHash\":\"${GREEN_TOOLSET_HASH}\"" || fail "GREEN_TOOLSET_HASH_MISMATCH"
       printf '%s' "$health" | grep -Fq "\"buildIdentityHash\":\"${XERO_APPROVED_BUILD_IDENTITY_HASH}\"" || fail "GREEN_BUILD_IDENTITY_MISMATCH"
-      printf '%s' "$health" | grep -Fq "\"approvedControlCatalogSha256\":\"${XERO_APPROVED_CONTROL_CATALOG_SHA256}\"" || fail "GREEN_CONTROL_CATALOG_MISMATCH"
       ;;
     "$BLUE_PORT")
       fetch_blue_http_response \
@@ -273,23 +248,10 @@ check_public() {
       printf '%s' "$ready" | grep -Fq "\"buildIdentityHash\":\"${XERO_APPROVED_BUILD_IDENTITY_HASH}\"" || return 1
       printf '%s' "$ready" | grep -Fq "\"acceptanceSourceSha256\":\"${XERO_APPROVED_ACCEPTANCE_SOURCE_SHA256}\"" || return 1
       printf '%s' "$ready" | grep -Fq "\"sourceArchiveSha256\":\"${XERO_APPROVED_SOURCE_ARCHIVE_SHA256}\"" || return 1
-      printf '%s' "$ready" | grep -Fq "\"approvedControlCatalogSha256\":\"${XERO_APPROVED_CONTROL_CATALOG_SHA256}\"" || return 1
-      printf '%s' "$ready" | /usr/bin/node deploy/scripts/governance-cutover-contract.mjs \
-        "$XERO_ADMITTED_GOVERNANCE_TRUST_BUNDLE_SHA256" \
-        "$XERO_ADMITTED_GOVERNANCE_RECEIPTS_SHA256" \
-        "$XERO_ADMITTED_GOVERNANCE_STATUS_SHA256" \
-        "$XERO_ADMITTED_AUTHORITY_REVISION" \
-        "$XERO_ADMITTED_STANDING_DELEGATIONS_CONFIG_SHA256" \
-        "$XERO_ADMITTED_WRITE_ENABLED" \
-        "$XERO_ADMITTED_FIRM_GOVERNANCE_REQUIRED" \
-        "$XERO_ADMITTED_EXPECTED_AUTHORITY_SNAPSHOT_SHA256" \
-        "$XERO_ADMITTED_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256" \
-        || return 1
       printf '%s' "$health" | grep -Fq "\"version\":\"${GREEN_VERSION}\"" || return 1
       printf '%s' "$health" | grep -Fq "\"toolCount\":${GREEN_TOOL_COUNT}" || return 1
       printf '%s' "$health" | grep -Fq "\"toolsetHash\":\"${GREEN_TOOLSET_HASH}\"" || return 1
       printf '%s' "$health" | grep -Fq "\"buildIdentityHash\":\"${XERO_APPROVED_BUILD_IDENTITY_HASH}\"" || return 1
-      printf '%s' "$health" | grep -Fq "\"approvedControlCatalogSha256\":\"${XERO_APPROVED_CONTROL_CATALOG_SHA256}\"" || return 1
       ;;
     "$BLUE_PORT")
       fetch_blue_http_response "${PUBLIC_BASE_URL}/healthz" "$response_max_time" || return 1

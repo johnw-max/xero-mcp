@@ -81,6 +81,23 @@ export function toXeroCreditNoteCreatePayload(input: unknown): CreditNotes {
   };
 }
 
+/**
+ * Builds the complete Xero body for a Credit Note DRAFT replacement. The
+ * target UUID is repeated in the body as well as the SDK path; this is an
+ * explicit replacement body, never a generic patch or update-or-create path.
+ */
+export function toXeroCreditNoteUpdatePayload(
+  targetCreditNoteId: string,
+  input: unknown,
+): CreditNotes {
+  const target = providerUuid(targetCreditNoteId);
+  if (!target) throw new Error("Credit Note update target must be a UUID.");
+  const created = toXeroCreditNoteCreatePayload(input);
+  const creditNote = created.creditNotes?.[0];
+  if (!creditNote) throw new Error("Credit Note replacement could not be constructed.");
+  return { creditNotes: [{ ...creditNote, creditNoteID: target }] };
+}
+
 export function toXeroManualJournalCreatePayload(input: unknown): ManualJournals {
   const value = parseCanonicalManualJournalDraftPayload(input);
   return {
@@ -93,6 +110,19 @@ export function toXeroManualJournalCreatePayload(input: unknown): ManualJournals
       journalLines: value.lines.map(journalLine),
     }],
   };
+}
+
+/** See toXeroCreditNoteUpdatePayload: this is a full DRAFT replacement. */
+export function toXeroManualJournalUpdatePayload(
+  targetManualJournalId: string,
+  input: unknown,
+): ManualJournals {
+  const target = providerUuid(targetManualJournalId);
+  if (!target) throw new Error("Manual Journal update target must be a UUID.");
+  const created = toXeroManualJournalCreatePayload(input);
+  const manualJournal = created.manualJournals?.[0];
+  if (!manualJournal) throw new Error("Manual Journal replacement could not be constructed.");
+  return { manualJournals: [{ ...manualJournal, manualJournalID: target }] };
 }
 
 type ProviderRecord = Record<string, unknown>;

@@ -71,8 +71,6 @@ function config(): AppConfig {
       scopes: ["offline_access", "accounting.invoices"],
     },
     xeroWriteEnabled: false,
-    xeroAuthorityRevision: 1,
-    xeroStandingDelegationsConfigSha256: "7".repeat(64),
     tokenEncryptionKey: Buffer.alloc(32, 3),
     mcpOAuthBroker: {
       enabled: true,
@@ -291,8 +289,6 @@ describe("HTTP OAuth edge", () => {
       version: XERO_RELEASE_VERSION,
       writeMode: "WRITE_ENABLED",
       processWriteGateEnabled: true,
-      configuredAuthorityRevision: 1,
-      standingDelegationsConfigSha256: "7".repeat(64),
       authoritySnapshotRevision: 1,
       authoritySnapshotHash: rev1Authority.snapshotHash,
       authorityWriteKillSwitchEnabled: true,
@@ -313,11 +309,8 @@ describe("HTTP OAuth edge", () => {
       buildIdentityHash: null,
       acceptanceSourceSha256: null,
       sourceArchiveSha256: null,
-      approvedControlCatalogSha256: null,
       writeMode: "WRITE_ENABLED",
       processWriteGateEnabled: true,
-      configuredAuthorityRevision: 1,
-      standingDelegationsConfigSha256: "7".repeat(64),
       authoritySnapshotRevision: 1,
       authoritySnapshotHash: rev1Authority.snapshotHash,
       authorityWriteKillSwitchEnabled: true,
@@ -327,28 +320,23 @@ describe("HTTP OAuth edge", () => {
       requiredMigrationStatus: "APPLIED",
       migrationHead: XERO_RELEASE_ATTESTATION.requiredMigration,
       activeAccountingCaseRecoveryProjection: compatibleRecoveryProjection,
-      firmGovernance: notRequiredFirmGovernance,
     });
     await expect(ready.clone().json()).resolves.toEqual({
       status: "ready",
       version: XERO_RELEASE_VERSION,
       writeMode: "WRITE_ENABLED",
       processWriteGateEnabled: true,
-      configuredAuthorityRevision: 1,
-      standingDelegationsConfigSha256: "7".repeat(64),
       authoritySnapshotRevision: 1,
       authoritySnapshotHash: rev1Authority.snapshotHash,
       authorityWriteKillSwitchEnabled: true,
       buildIdentityHash: null,
       acceptanceSourceSha256: null,
       sourceArchiveSha256: null,
-      approvedControlCatalogSha256: null,
       storageMode: "POSTGRES",
       requiredMigration: XERO_RELEASE_ATTESTATION.requiredMigration,
       requiredMigrationStatus: "APPLIED",
       migrationHead: XERO_RELEASE_ATTESTATION.requiredMigration,
       activeAccountingCaseRecoveryProjection: compatibleRecoveryProjection,
-      firmGovernance: notRequiredFirmGovernance,
       toolsetHash: hashObject(TOOL_ALLOWLIST),
       attestationHash: hashObject(XERO_RELEASE_ATTESTATION),
       runtimeAttestation,
@@ -374,13 +362,16 @@ describe("HTTP OAuth edge", () => {
     const dynamicallyRevokedBody = await dynamicallyRevoked.json() as Record<string, unknown>;
     expect(dynamicallyRevokedBody).toMatchObject({
       status: "ready",
-      writeMode: "READ_ONLY",
+      // Authority snapshots are retained as readiness evidence, but they no
+      // longer dynamically revoke the process write gate. The gate is the
+      // deployment's OAuth-target-bound XERO_WRITE_ENABLED switch.
+      writeMode: "WRITE_ENABLED",
       processWriteGateEnabled: true,
       authoritySnapshotRevision: 2,
       authoritySnapshotHash: rev2Authority.snapshotHash,
       authorityWriteKillSwitchEnabled: false,
       runtimeAttestation: {
-        writeMode: "READ_ONLY",
+        writeMode: "WRITE_ENABLED",
         authoritySnapshotRevision: 2,
         authoritySnapshotHash: rev2Authority.snapshotHash,
       },
@@ -389,7 +380,7 @@ describe("HTTP OAuth edge", () => {
     const revokedHealth = await fetch(`${local}/healthz`, { headers: { Origin: agent2Origin } });
     await expect(revokedHealth.json()).resolves.toMatchObject({
       status: "ok",
-      writeMode: "READ_ONLY",
+      writeMode: "WRITE_ENABLED",
       processWriteGateEnabled: true,
       authoritySnapshotRevision: 2,
       authoritySnapshotHash: rev2Authority.snapshotHash,
@@ -412,7 +403,7 @@ describe("HTTP OAuth edge", () => {
     expect(missingMigration.status).toBe(503);
     await expect(missingMigration.json()).resolves.toMatchObject({
       status: "not_ready",
-      writeMode: "READ_ONLY",
+      writeMode: "WRITE_ENABLED",
       processWriteGateEnabled: true,
       authoritySnapshotRevision: 2,
       authoritySnapshotHash: rev2Authority.snapshotHash,
@@ -460,10 +451,11 @@ describe("HTTP OAuth edge", () => {
 
     authoritySnapshot = undefined;
     const missingAuthority = await fetch(`${local}/readyz`, { headers: { Origin: agent2Origin } });
-    expect(missingAuthority.status).toBe(503);
+    expect(missingAuthority.status).toBe(200);
     await expect(missingAuthority.json()).resolves.toMatchObject({
-      status: "not_ready",
-      writeMode: "READ_ONLY",
+      status: "ready",
+      writeMode: "WRITE_ENABLED",
+      processWriteGateEnabled: true,
       authoritySnapshotRevision: null,
       authoritySnapshotHash: null,
       authorityWriteKillSwitchEnabled: null,
@@ -682,6 +674,20 @@ describe("HTTP OAuth edge", () => {
     // denial because no HTTP caller can reach a credential-backed writer.
     expect(reviewMutation.status).toBe(404);
     expect(reviewMutation.headers.get("access-control-allow-origin")).toBeNull();
+
+    for (const [path, method] of [
+      ["/review/pr_cors_contract_1234", "GET"],
+      ["/review/pr_cors_contract_1234/reject", "POST"],
+    ] as const) {
+      const response = await fetch(`${local}${path}`, {
+        method,
+        ...(method === "POST" ? {
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        } : {}),
+      });
+      expect(response.status, `${method} ${path}`).toBe(404);
+    }
 
     for (const [path, method] of [
       ["/authorize", "GET"],

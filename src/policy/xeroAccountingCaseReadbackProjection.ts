@@ -150,6 +150,12 @@ export function validateXeroAccountingCaseReadbackEconomics(
 ) {
   const expectation: AccountingCaseReadbackExpectation = operation.nativeRoute === "CONTACT_CREATE"
     ? { applicability: "NOT_A_NATIVE_DOCUMENT" }
+    : operation.nativeRoute === "DRAFT_DOCUMENT_UPDATE"
+      ? { applicability: "NOT_A_NATIVE_DOCUMENT" }
+    : operation.nativeRoute === "LEDGER_STATE_TRANSITION"
+      ? { applicability: "NOT_A_NATIVE_DOCUMENT" }
+    : operation.nativeRoute === "MANUAL_JOURNAL"
+      ? { applicability: "NOT_A_NATIVE_DOCUMENT" }
     : operation.nativeRoute === "SALES_INVOICE"
       ? { applicability: "INVOICE_OR_BILL", providerStatus: "DRAFT", providerDocumentType: "ACCREC" }
       : operation.nativeRoute === "SUPPLIER_BILL"

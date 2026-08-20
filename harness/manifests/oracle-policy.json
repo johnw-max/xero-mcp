@@ -53,7 +53,7 @@
   ],
   "write_rules": {
     "single_writer_persona": "controller_recovery_agent",
-    "authority_model": "EXACT_VERSIONED_STANDING_DELEGATION",
+    "authority_model": "OAUTH_TARGET_BOUND_WRITE_GATE",
     "agent_execute_tool": "xero_execute_accounting_case",
     "per_transaction_confirmation_required": false,
     "execute_accepts_accounting_payload": false,

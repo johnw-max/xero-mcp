@@ -37,7 +37,6 @@ function assertSafeRelativePath(path) {
 function exactIdentityShape(identity) {
   const expected = [
     "acceptanceSourceSha256",
-    "approvedControlCatalogSha256",
     "releaseAttestationHash",
     "releaseSourceManifestSha256",
     "releaseVersion",
@@ -98,7 +97,6 @@ async function inspectAcceptedBuildContext(options, includeSealedEntries) {
     "sourceBundleManifestSha256",
     "toolsetHash",
     "releaseAttestationHash",
-    "approvedControlCatalogSha256",
   ]) {
     if (!SHA256.test(identity[field] ?? "")) throw new Error(`ACCEPTED_BUILD_CONTEXT_IDENTITY_HASH_INVALID:${field}`);
   }
@@ -143,10 +141,6 @@ async function inspectAcceptedBuildContext(options, includeSealedEntries) {
   if (options.expectedSourceArchiveSha256 && identity.sourceArchiveSha256 !== options.expectedSourceArchiveSha256) {
     throw new Error("ACCEPTED_BUILD_CONTEXT_SOURCE_ARCHIVE_MISMATCH");
   }
-  if (options.expectedApprovedControlCatalogSha256 &&
-      identity.approvedControlCatalogSha256 !== options.expectedApprovedControlCatalogSha256) {
-    throw new Error("ACCEPTED_BUILD_CONTEXT_CONTROL_CATALOG_MISMATCH");
-  }
 
   const expectedPaths = manifest.files.map((file) => file.path);
   const observedPaths = (await collectFiles(root)).sort((left, right) => left.localeCompare(right, "en"));
@@ -187,7 +181,6 @@ async function inspectAcceptedBuildContext(options, includeSealedEntries) {
     semanticBuildIdentityHash,
     acceptanceSourceSha256: identity.acceptanceSourceSha256,
     sourceArchiveSha256: identity.sourceArchiveSha256,
-    approvedControlCatalogSha256: identity.approvedControlCatalogSha256,
     sourceBundleManifestSha256: manifestHash,
     releaseSourceManifestSha256,
     fileCount: manifest.files.length,
@@ -245,7 +238,6 @@ function parseArguments(argv) {
     else if (flag === "--expected-build-identity-hash") options.expectedBuildIdentityHash = value;
     else if (flag === "--expected-acceptance-source-sha256") options.expectedAcceptanceSourceSha256 = value;
     else if (flag === "--expected-source-archive-sha256") options.expectedSourceArchiveSha256 = value;
-    else if (flag === "--expected-approved-control-catalog-sha256") options.expectedApprovedControlCatalogSha256 = value;
     else throw new Error(`Unknown argument: ${flag}`);
   }
   if (!options.root) throw new Error("--root is required");

@@ -63,7 +63,6 @@ function parseArguments(argv) {
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     if ([
-      "--approved-control-catalog-sha256",
       "--approved-review-codex-sha256",
       "--approved-review-runtime-sha256",
     ].includes(argv[index])) {
@@ -72,7 +71,6 @@ function parseArguments(argv) {
         throw new Error(`${argv[index]} requires a SHA-256 digest`);
       }
       const field = new Map([
-        ["--approved-control-catalog-sha256", "approvedControlCatalogSha256"],
         ["--approved-review-codex-sha256", "approvedReviewCodexSha256"],
         ["--approved-review-runtime-sha256", "approvedReviewRuntimeSha256"],
       ]).get(argv[index]);
@@ -93,13 +91,6 @@ function parseArguments(argv) {
   // demanding them forces an operator to invent a digest for a reviewer that was
   // never invoked, and the receipt then carries an attestation nobody earned.
   // A host that does run the review may still supply them and have them pinned.
-  if ([
-    options.approvedControlCatalogSha256,
-  ].some((value) => value === undefined)) {
-    throw new Error(
-      "--approved-control-catalog-sha256 is required from the host acceptance boundary",
-    );
-  }
   return options;
 }
 
@@ -118,7 +109,6 @@ async function releaseArtifactIdentity(
   ociArtifactRoot,
   sourceSnapshotRoot,
   expectedSourceFingerprint,
-  approvedControlCatalogSha256,
 ) {
   const [archive, bundleManifest, buildIdentity, checksum, ociArtifact, ociMetadata, ociReceiptContent] = await Promise.all([
     readFile(resolve(acceptedBuildContextRoot, ".accepted-release/source.tar.gz")),
@@ -174,7 +164,6 @@ async function releaseArtifactIdentity(
   }
   const releaseSourceManifestSha256 = sha256Buffer(Buffer.from(JSON.stringify(releaseSourceEntries), "utf8"));
   if (parsedBuildIdentity.acceptanceSourceSha256 !== expectedSourceFingerprint ||
-      parsedBuildIdentity.approvedControlCatalogSha256 !== approvedControlCatalogSha256 ||
       parsedBuildIdentity.releaseSourceManifestSha256 !== releaseSourceManifestSha256 ||
       parsedBuildIdentity.sourceArchiveSha256 !== archiveHash ||
       parsedBuildIdentity.sourceBundleManifestSha256 !== sha256Buffer(bundleManifest) ||
@@ -198,7 +187,6 @@ async function releaseArtifactIdentity(
       parsedOciReceipt.toolsetHash !== parsedBuildIdentity.toolsetHash ||
       parsedOciReceipt.semanticBuildIdentityHash !== semanticBuildIdentityHash ||
       parsedOciReceipt.acceptanceSourceSha256 !== expectedSourceFingerprint ||
-      parsedOciReceipt.approvedControlCatalogSha256 !== approvedControlCatalogSha256 ||
       parsedOciReceipt.sourceArchiveSha256 !== archiveHash ||
       parsedOciReceipt.sourceBundleManifestSha256 !== sha256Buffer(bundleManifest) ||
       parsedOciReceipt.releaseSourceManifestSha256 !== releaseSourceManifestSha256 ||
@@ -216,7 +204,6 @@ async function releaseArtifactIdentity(
   return {
     release_version: "0.4.0-rc.1",
     source_fingerprint_sha256: expectedSourceFingerprint,
-    approved_control_catalog_sha256: approvedControlCatalogSha256,
     release_source_manifest_sha256: releaseSourceManifestSha256,
     archive_sha256: archiveHash,
     archive_size_bytes: archive.length,
@@ -267,7 +254,7 @@ export function exactArtifactStreamEntries(artifactStream, expectedPaths) {
   return new Map(entries.map((entry) => [entry.path, entry.content]));
 }
 
-function sourceBundleContextEntries(artifactStream, approvedControlCatalogSha256) {
+function sourceBundleContextEntries(artifactStream) {
   const files = exactArtifactStreamEntries(artifactStream, [
     "source.tar.gz",
     "manifest.json",
@@ -286,8 +273,7 @@ function sourceBundleContextEntries(artifactStream, approvedControlCatalogSha256
     maxEntries: 50_000,
   });
   if (!Array.isArray(manifest.files) || manifest.files.length !== archiveEntries.length ||
-      manifest.archive?.sha256 !== sha256Buffer(archive) ||
-      buildIdentity.approvedControlCatalogSha256 !== approvedControlCatalogSha256) {
+      manifest.archive?.sha256 !== sha256Buffer(archive)) {
     throw new Error("LOCAL_GATE_SOURCE_BUNDLE_STREAM_IDENTITY_INVALID");
   }
   const contextEntries = manifest.files.map((file, index) => {
@@ -523,7 +509,6 @@ async function main() {
       finished_at: null,
       test_database: database,
       execution_boundary: "DIGEST_NAMED_READ_ONLY_SOURCE_SNAPSHOT",
-      approved_control_catalog_sha256: options.approvedControlCatalogSha256,
       source_snapshot: {
         fingerprint: sourceBefore,
         original_mutation_guard: snapshot.originalMutationState,
@@ -563,7 +548,7 @@ async function main() {
           if (step.artifactStreamKind === "SOURCE_BUNDLE") {
             if (acceptedBuildContextSnapshot) throw new Error("LOCAL_GATE_SOURCE_BUNDLE_STREAM_DUPLICATE");
             acceptedBuildContextSnapshot = await createCapturedArtifactSnapshot(
-              sourceBundleContextEntries(raw.artifactStream, options.approvedControlCatalogSha256),
+              sourceBundleContextEntries(raw.artifactStream),
               step.artifactStreamKind,
               raw.artifactStream,
             );
@@ -694,7 +679,6 @@ async function main() {
           ociArtifactSnapshot.snapshot.root,
           snapshot.root,
           sourceBefore.sha256,
-          options.approvedControlCatalogSha256,
         );
       } catch (error) {
         manifest.status = "FAIL";
@@ -752,7 +736,6 @@ async function main() {
         source_fingerprint_sha256: sourceBefore.sha256,
         gate_result_sha256: sha256Buffer(unsignedGate),
         required_step_ids: REQUIRED_GATE_STEP_IDS,
-        approved_control_catalog_sha256: options.approvedControlCatalogSha256,
         ...(options.approvedReviewCodexSha256
           ? { approved_review_codex_sha256: options.approvedReviewCodexSha256 }
           : {}),

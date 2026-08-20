@@ -2,11 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 import type { AccountingRepository } from "../src/db/repository.js";
 import {
   listBankTransactionsSchema,
+  listContactGroupsSchema,
   listItemsSchema,
+  listJournalsSchema,
   listManualJournalsSchema,
   listPurchaseOrdersSchema,
   listQuotesSchema,
+  listTrackingCategoriesSchema,
 } from "../src/domain/extendedReadSchemas.js";
+import {
+  agedPayablesSchema,
+  agedReceivablesSchema,
+  balanceSheetSchema,
+  profitAndLossSchema,
+} from "../src/domain/schemas.js";
 import { XeroClientManager } from "../src/providers/xeroClientManager.js";
 import { XeroAccountingProvider } from "../src/providers/xeroProvider.js";
 import { loadXeroResponse } from "./fixtures/xero-provider-responses/index.js";
@@ -311,5 +320,92 @@ describe("Xero item reads against a captured Xero response", () => {
 
     expect(result.code).toBe("BOOK");
     expect(result).not.toHaveProperty("purchaseDetails");
+  });
+
+  it("maps the remaining bounded ledger, report, payment, and reference-data reads to exact SDK calls", async () => {
+    const paymentId = "66666666-6666-4666-8666-666666666666";
+    const categoryId = "77777777-7777-4777-8777-777777777777";
+    const optionId = "88888888-8888-4888-8888-888888888888";
+    const groupId = "99999999-9999-4999-8999-999999999999";
+    const getJournals = vi.fn().mockResolvedValue({
+      body: {
+        journals: [{
+          journalID: "journal-1",
+          journalNumber: 41,
+          journalLines: [{ accountCode: "200", netAmount: 10 }],
+        }],
+      },
+    });
+    const getReportProfitAndLoss = vi.fn().mockResolvedValue({ body: { reports: [{ reportName: "Profit and Loss" }] } });
+    const getReportBalanceSheet = vi.fn().mockResolvedValue({ body: { reports: [{ reportName: "Balance Sheet" }] } });
+    const getReportAgedReceivablesByContact = vi.fn().mockResolvedValue({ body: { reports: [{ reportName: "Aged Receivables" }] } });
+    const getReportAgedPayablesByContact = vi.fn().mockResolvedValue({ body: { reports: [{ reportName: "Aged Payables" }] } });
+    const getPayment = vi.fn().mockResolvedValue({
+      body: {
+        payments: [{
+          paymentID: paymentId,
+          paymentType: "ACCRECPAYMENT",
+          status: "AUTHORISED",
+          amount: 10,
+          invoice: { invoiceID: "invoice-1", currencyCode: "SGD" },
+        }],
+      },
+    });
+    const getTrackingCategories = vi.fn().mockResolvedValue({
+      body: {
+        trackingCategories: [{
+          trackingCategoryID: categoryId,
+          name: "Region",
+          status: "ACTIVE",
+          options: [{ trackingOptionID: optionId, name: "East", status: "ACTIVE" }],
+        }],
+      },
+    });
+    const getContactGroups = vi.fn().mockResolvedValue({
+      body: { contactGroups: [{ contactGroupID: groupId, name: "Priority", status: "ACTIVE" }] },
+    });
+    const provider = providerWithClient({
+      accountingApi: {
+        getJournals,
+        getReportProfitAndLoss,
+        getReportBalanceSheet,
+        getReportAgedReceivablesByContact,
+        getReportAgedPayablesByContact,
+        getPayment,
+        getTrackingCategories,
+        getContactGroups,
+      },
+    });
+
+    await expect(provider.listJournals("actor-a", listJournalsSchema.parse({ offset: 40 })))
+      .resolves.toMatchObject({ journals: [{ journalNumber: 41 }], pagination: { nextOffset: 41 } });
+    await expect(provider.getProfitAndLoss("actor-a", profitAndLossSchema.parse({
+      date_from: "2026-01-01", date_to: "2026-01-31", periods: 1, timeframe: "MONTH",
+    }))).resolves.toMatchObject({ reports: [{ reportName: "Profit and Loss" }] });
+    await expect(provider.getBalanceSheet("actor-a", balanceSheetSchema.parse({
+      date: "2026-01-31", periods: 2, timeframe: "MONTH",
+    }))).resolves.toMatchObject({ reports: [{ reportName: "Balance Sheet" }] });
+    await expect(provider.getAgedReceivables("actor-a", agedReceivablesSchema.parse({
+      contact_id: quoteId, date: "2026-01-31",
+    }))).resolves.toMatchObject({ reports: [{ reportName: "Aged Receivables" }] });
+    await expect(provider.getAgedPayables("actor-a", agedPayablesSchema.parse({
+      contact_id: quoteId, date_from: "2026-01-01", date_to: "2026-01-31",
+    }))).resolves.toMatchObject({ reports: [{ reportName: "Aged Payables" }] });
+    await expect(provider.getPayment("actor-a", paymentId)).resolves.toMatchObject({
+      paymentId, amount: "10.0000", currency: "SGD",
+    });
+    await expect(provider.listTrackingCategories("actor-a", listTrackingCategoriesSchema.parse({})))
+      .resolves.toMatchObject({ trackingCategories: [{ trackingCategoryId: categoryId, options: [{ trackingOptionId: optionId }] }] });
+    await expect(provider.listContactGroups("actor-a", listContactGroupsSchema.parse({})))
+      .resolves.toMatchObject({ contactGroups: [{ contactGroupId: groupId, name: "Priority" }] });
+
+    expect(getJournals).toHaveBeenCalledWith("tenant-a", undefined, 40);
+    expect(getReportProfitAndLoss).toHaveBeenCalledWith("tenant-a", "2026-01-01", "2026-01-31", 1, "MONTH");
+    expect(getReportBalanceSheet).toHaveBeenCalledWith("tenant-a", "2026-01-31", 2, "MONTH");
+    expect(getReportAgedReceivablesByContact).toHaveBeenCalledWith("tenant-a", quoteId, "2026-01-31", undefined, undefined);
+    expect(getReportAgedPayablesByContact).toHaveBeenCalledWith("tenant-a", quoteId, undefined, "2026-01-01", "2026-01-31");
+    expect(getPayment).toHaveBeenCalledWith("tenant-a", paymentId);
+    expect(getTrackingCategories).toHaveBeenCalledWith("tenant-a", undefined, "Name ASC", false);
+    expect(getContactGroups).toHaveBeenCalledWith("tenant-a", undefined, "Name ASC");
   });
 });

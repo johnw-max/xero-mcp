@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   RELEASE_BASENAME,
@@ -25,7 +25,6 @@ function parseArguments(argv) {
     manifest: resolve(repoRoot, `artifacts/release/${RELEASE_BASENAME}.manifest.json`),
     buildIdentity: resolve(repoRoot, `artifacts/release/${RELEASE_BASENAME}.build-identity.json`),
     checksum: resolve(repoRoot, `artifacts/release/${RELEASE_BASENAME}.sha256`),
-    approvedControlCatalogSha256: undefined,
   };
   const keys = new Map([
     ["--archive", "archive"],
@@ -34,24 +33,12 @@ function parseArguments(argv) {
     ["--checksum", "checksum"],
   ]);
   for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] === "--approved-control-catalog-sha256") {
-      const value = argv[index + 1];
-      if (!value || !/^[a-f0-9]{64}$/u.test(value)) {
-        throw new Error("--approved-control-catalog-sha256 requires a SHA-256 digest.");
-      }
-      options.approvedControlCatalogSha256 = value;
-      index += 1;
-      continue;
-    }
     const key = keys.get(argv[index]);
     if (!key) throw new Error(`Unknown argument: ${argv[index]}`);
     const value = argv[index + 1];
     if (!value) throw new Error(`${argv[index]} requires a path.`);
     options[key] = resolve(value);
     index += 1;
-  }
-  if (!options.approvedControlCatalogSha256) {
-    throw new Error("--approved-control-catalog-sha256 is required from the host acceptance boundary.");
   }
   return options;
 }
@@ -95,9 +82,12 @@ async function main() {
     readFile(options.checksum, "utf8"),
   ]);
   const checksums = parseChecksumFile(checksumContent);
-  const archiveName = basename(options.archive);
-  const manifestName = basename(options.manifest);
-  const buildIdentityName = basename(options.buildIdentity);
+  // Checksum entries and manifest metadata identify the canonical release
+  // artifact names, independent of the temporary names used by an immutable
+  // capture directory during acceptance.
+  const archiveName = `${RELEASE_BASENAME}.tar.gz`;
+  const manifestName = `${RELEASE_BASENAME}.manifest.json`;
+  const buildIdentityName = `${RELEASE_BASENAME}.build-identity.json`;
   const archiveSha256 = sha256(archive);
   const manifestSha256 = sha256(manifestContent);
   const buildIdentitySha256 = sha256(buildIdentityContent);
@@ -181,9 +171,6 @@ async function main() {
       buildIdentity.sourceArchiveSha256 !== archiveSha256 ||
       buildIdentity.sourceBundleManifestSha256 !== manifestSha256) {
     throw new Error("Build identity is not bound to this exact accepted source bundle.");
-  }
-  if (buildIdentity.approvedControlCatalogSha256 !== options.approvedControlCatalogSha256) {
-    throw new Error("Build identity is not bound to the host-approved control catalog.");
   }
   if (manifest.policy?.secretFindingCount !== 0 || manifest.policy?.legacyDomainFindingCount !== 0) {
     throw new Error("Manifest does not declare a clean release scan.");

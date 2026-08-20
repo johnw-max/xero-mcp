@@ -1,6 +1,23 @@
 import { hashObject } from "../security/hash.js";
+import type {
+  AllocateCreditNotePayload,
+  AuthoriseCreditNotePayload,
+  LedgerAdjustmentAction,
+  RefundCreditNotePayload,
+  UnallocateCreditNotePayload,
+  VoidCreditNotePayload,
+  VoidInvoicePayload,
+  VoidManualJournalPayload,
+} from "./xeroLedgerAdjustment.js";
+import type {
+  CanonicalBankTransactionCreatePayload,
+  CanonicalBankTransactionReversePayload,
+  CanonicalBankTransactionUpdatePayload,
+  CanonicalPaymentCreatePayload,
+  CanonicalPaymentReversePayload,
+} from "./xeroPaymentBankTransaction.js";
 
-export const ACCOUNTING_CASE_COMPILER_VERSION = "0.11.0";
+export const ACCOUNTING_CASE_COMPILER_VERSION = "0.13.0";
 
 export type AccountingFactOrigin =
   | "MODEL_EXTRACTED"
@@ -42,8 +59,17 @@ export type AccountingCaseSourceSystem = typeof ACCOUNTING_CASE_SOURCE_SYSTEMS[n
 
 export const ACCOUNTING_FACT_KINDS = [
   "CONTACT_CANDIDATE",
+  "CONTACT_BASIC_UPDATE",
+  "ITEM_BASIC_CREATE_UNTRACKED",
+  "ITEM_BASIC_UPDATE_UNTRACKED",
+  "TRACKING_REFERENCE_DATA",
   "NATIVE_DOCUMENT",
   "COMMERCIAL_DOCUMENT",
+  "BALANCED_JOURNAL",
+  "DRAFT_DOCUMENT_UPDATE",
+  "LEDGER_STATE_TRANSITION",
+  "LEDGER_ADJUSTMENT",
+  "PAYMENT_BANK_LEDGER",
   "PAYMENT",
   "BANK_FEE",
   "PREPAYMENT",
@@ -129,6 +155,95 @@ export interface ContactCandidateFact extends AccountingFactBase {
   bankVerification?: "NOT_APPLICABLE" | "PENDING_CALLBACK" | "VERIFIED";
 }
 
+/**
+ * Closed reference-data facts. These are deliberately individual Case fact
+ * kinds rather than a generic object/patch envelope: the only public
+ * maintenance paths are the already-reviewed safe Contact and untracked Item
+ * primitives, with their own preflight, provider receipt, exact read-back and
+ * recovery behavior.
+ */
+export interface ContactBasicUpdateFact extends AccountingFactBase {
+  kind: "CONTACT_BASIC_UPDATE";
+  contactId: string;
+  patch: ContactBasicPatch;
+}
+
+export interface ItemBasicCreateUntrackedFact extends AccountingFactBase {
+  kind: "ITEM_BASIC_CREATE_UNTRACKED";
+  item: ItemBasicCreateUntracked;
+}
+
+export interface ItemBasicUpdateUntrackedFact extends AccountingFactBase {
+  kind: "ITEM_BASIC_UPDATE_UNTRACKED";
+  itemId: string;
+  patch: ItemBasicPatch;
+}
+
+export type TrackingReferenceDataAction =
+  | "tracking_category.create"
+  | "tracking_category.update"
+  | "tracking_option.create"
+  | "tracking_option.update";
+
+/** One closed typed fact family for the four safe ACTIVE tracking mutations. */
+export interface TrackingReferenceDataFact extends AccountingFactBase {
+  kind: "TRACKING_REFERENCE_DATA";
+  action: TrackingReferenceDataAction;
+  name: string;
+  trackingCategoryId?: string;
+  trackingOptionId?: string;
+}
+
+/** Exact, deliberately small public Contact patch vocabulary. */
+export interface ContactBasicPhonePatch {
+  phone_type: "DEFAULT" | "DDI" | "MOBILE" | "FAX" | "OFFICE";
+  phone_number: string;
+  area_code?: string;
+  country_code?: string;
+}
+
+export interface ContactBasicAddressPatch {
+  address_type: "POBOX" | "STREET";
+  line_1?: string;
+  line_2?: string;
+  line_3?: string;
+  line_4?: string;
+  city?: string;
+  region?: string;
+  postal_code?: string;
+  country?: string;
+  attention_to?: string;
+}
+
+export interface ContactBasicPatch {
+  name?: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  company_number?: string;
+  account_number?: string;
+  phones?: ContactBasicPhonePatch[];
+  addresses?: ContactBasicAddressPatch[];
+}
+
+/** Exact, deliberately small untracked Item vocabulary. */
+export interface ItemBasicCreateUntracked {
+  code: string;
+  name?: string;
+  description?: string;
+  purchase_description?: string;
+  is_sold: boolean;
+  is_purchased: boolean;
+}
+
+export interface ItemBasicPatch {
+  name?: string;
+  description?: string;
+  purchase_description?: string;
+  is_sold?: boolean;
+  is_purchased?: boolean;
+}
+
 export type NativeDocumentRoute =
   | "SALES_INVOICE"
   | "SUPPLIER_BILL"
@@ -148,6 +263,59 @@ export type NativeDocumentRoute =
  * machinery built for documents that post to the general ledger.
  */
 export type CommercialDocumentRoute = "QUOTE" | "PURCHASE_ORDER";
+
+/**
+ * A manual journal posts directly to the general ledger -- unlike
+ * CommercialDocumentRoute, "it is not a ledger event" is not the reason it
+ * stays out of NativeDocumentRoute. The reason is structural: it has no
+ * counterparty and no ACCREC/ACCPAY document type. xeroBusinessCoordinateHistory's
+ * ACCREC/ACCPAY duplicate check has nothing to say about an object with
+ * neither, and #executeNativeDocument requires a contactName unconditionally
+ * (#assertSealedContactBinding) -- routing a journal through either would
+ * mean fabricating a counterparty the source fact never asserted. Kept as a
+ * single-member union, not a bare string literal, for the same reason
+ * CommercialDocumentRoute is named rather than inlined: every switch over
+ * AccountingCaseOperation["nativeRoute"] names it explicitly instead of
+ * falling through an else branch built for a different route family.
+ */
+export type BalancedJournalRoute = "MANUAL_JOURNAL";
+
+/**
+ * One closed route family for replacing an existing Xero DRAFT document.
+ * The exact provider UUID and optimistic version are part of the fact; the
+ * nested replacement remains one of the already-released complete create
+ * document shapes.  It is intentionally not a patch and not six generic
+ * object-mutation routes.
+ */
+export type DraftDocumentUpdateRoute = "DRAFT_DOCUMENT_UPDATE";
+
+export type DraftDocumentUpdateAction =
+  | "customer_invoice.update_draft"
+  | "supplier_bill.update_draft"
+  | "quote.update_draft"
+  | "purchase_order.update_draft"
+  | "credit_note.update_draft"
+  | "manual_journal.update_draft";
+
+/**
+ * Closed route for promoting one already-existing Xero draft. It is kept
+ * disjoint from NativeDocumentRoute because it mutates an exact provider UUID
+ * rather than creating a new document from source economics.
+ */
+export type LedgerStateTransitionRoute = "LEDGER_STATE_TRANSITION";
+
+export type LedgerStateTransitionAction =
+  | "customer_invoice.authorise"
+  | "supplier_bill.authorise"
+  | "manual_journal.post";
+
+/** Typed Case routes for the three released reference-data mutations only. */
+export type ReferenceDataRoute =
+  | "CONTACT_BASIC_UPDATE"
+  | "ITEM_BASIC_CREATE_UNTRACKED"
+  | "ITEM_BASIC_UPDATE_UNTRACKED"
+  | "TRACKING_REFERENCE_DATA";
+
 
 /**
  * Opaque provider-native ledger coordinate carried through the shared kernel.
@@ -276,6 +444,86 @@ export interface CommercialDocumentFact extends AccountingFactBase {
   lines: CommercialDocumentLine[];
   documentValidity: AccountingDocumentValidity;
 }
+
+export interface BalancedJournalLine {
+  lineId: string;
+  description: string;
+  /** Explicit provider-native account code declared for this exact line. */
+  accountCode: string;
+  /** Explicit provider-native TaxType declared for this exact line. */
+  taxType: string;
+  /** Exactly one of debit/credit is present on every line -- enforced at the schema boundary. */
+  debit?: string;
+  credit?: string;
+}
+
+/**
+ * A manual (general) journal: N debit/credit lines, a narration and a date.
+ * Kept parallel to, not merged into, NativeDocumentFact -- see the design
+ * record this fact type implements (docs/MANUAL-JOURNAL-DESIGN-2026-08-20.md)
+ * for why the earlier LedgerEventFact-union proposal was overturned. A
+ * journal has no counterparty, so there is deliberately no contactName or
+ * counterpartyRole here, and no ACCREC/ACCPAY document type, so no
+ * reference/referenceKind either -- Xero's ManualJournal carries no natural
+ * unique number the way an Invoice's InvoiceNumber does. There is also no
+ * declaredNet/declaredTax/declaredGross: a journal's only caller-declared
+ * total is the balance of its own lines (see JOURNAL_NOT_BALANCED in
+ * accountingCaseCompiler.ts), not a source figure to reconcile against.
+ */
+export interface BalancedJournalFact extends AccountingFactBase {
+  kind: "BALANCED_JOURNAL";
+  narration: string;
+  date: string;
+  lines: BalancedJournalLine[];
+  documentValidity: AccountingDocumentValidity;
+}
+
+export type DraftDocumentUpdateReplacement =
+  | NativeDocumentFact
+  | CommercialDocumentFact
+  | BalancedJournalFact;
+
+export interface DraftDocumentUpdateFact extends AccountingFactBase {
+  kind: "DRAFT_DOCUMENT_UPDATE";
+  actionId: DraftDocumentUpdateAction;
+  targetXeroObjectId: string;
+  /** ISO-8601 instant with an explicit UTC offset, sealed into the permit. */
+  expectedUpdatedAt: string;
+  /** Complete DRAFT replacement; never a partial patch. */
+  replacement: DraftDocumentUpdateReplacement;
+}
+
+export type LedgerStateTransitionFact = AccountingFactBase & Readonly<{
+  kind: "LEDGER_STATE_TRANSITION";
+  actionId: LedgerStateTransitionAction;
+  targetXeroObjectId: string;
+}>;
+
+export type LedgerAdjustmentRoute = "LEDGER_ADJUSTMENT";
+
+/** One exact existing-object ledger adjustment using the provider canonical schema. */
+export type LedgerAdjustmentFact = AccountingFactBase & Readonly<
+  | { kind: "LEDGER_ADJUSTMENT"; actionId: "customer_invoice.void"; payload: VoidInvoicePayload & { invoiceType: "ACCREC" } }
+  | { kind: "LEDGER_ADJUSTMENT"; actionId: "supplier_bill.void"; payload: VoidInvoicePayload & { invoiceType: "ACCPAY" } }
+  | { kind: "LEDGER_ADJUSTMENT"; actionId: "credit_note.authorise"; payload: AuthoriseCreditNotePayload }
+  | { kind: "LEDGER_ADJUSTMENT"; actionId: "credit_note.allocate"; payload: AllocateCreditNotePayload }
+  | { kind: "LEDGER_ADJUSTMENT"; actionId: "credit_note.refund"; payload: RefundCreditNotePayload }
+  | { kind: "LEDGER_ADJUSTMENT"; actionId: "credit_note.void"; payload: VoidCreditNotePayload }
+  | { kind: "LEDGER_ADJUSTMENT"; actionId: "credit_note.unallocate"; payload: UnallocateCreditNotePayload }
+  | { kind: "LEDGER_ADJUSTMENT"; actionId: "manual_journal.void"; payload: VoidManualJournalPayload }
+>;
+
+export type PaymentBankLedgerRoute = "PAYMENT_BANK_LEDGER";
+export type PaymentBankLedgerAction = "payment.create" | "payment.reverse" |
+  "bank_transaction.create" | "bank_transaction.update" | "bank_transaction.reverse";
+export type PaymentBankLedgerFact = AccountingFactBase & Readonly<
+  | { kind: "PAYMENT_BANK_LEDGER"; actionId: "payment.create"; payload: CanonicalPaymentCreatePayload }
+  | { kind: "PAYMENT_BANK_LEDGER"; actionId: "payment.reverse"; payload: CanonicalPaymentReversePayload }
+  | { kind: "PAYMENT_BANK_LEDGER"; actionId: "bank_transaction.create"; payload: CanonicalBankTransactionCreatePayload }
+  | { kind: "PAYMENT_BANK_LEDGER"; actionId: "bank_transaction.update"; payload: CanonicalBankTransactionUpdatePayload }
+  | { kind: "PAYMENT_BANK_LEDGER"; actionId: "bank_transaction.reverse"; payload: CanonicalBankTransactionReversePayload }
+>;
+
 
 export interface PaymentFact extends AccountingFactBase {
   kind: "PAYMENT";
@@ -458,8 +706,17 @@ export interface ControlFindingFact extends AccountingFactBase {
 
 export type AccountingFact =
   | ContactCandidateFact
+  | ContactBasicUpdateFact
+  | ItemBasicCreateUntrackedFact
+  | ItemBasicUpdateUntrackedFact
+  | TrackingReferenceDataFact
   | NativeDocumentFact
   | CommercialDocumentFact
+  | BalancedJournalFact
+  | DraftDocumentUpdateFact
+  | LedgerStateTransitionFact
+  | LedgerAdjustmentFact
+  | PaymentBankLedgerFact
   | PaymentFact
   | BankFeeFact
   | PrepaymentFact
@@ -487,7 +744,8 @@ export interface AccountingEvent {
   factIds: string[];
   sourceUnitIds: string[];
   disposition: AccountingEventDisposition;
-  route?: NativeDocumentRoute | CommercialDocumentRoute | "CONTACT_CREATE";
+  route?: NativeDocumentRoute | CommercialDocumentRoute | BalancedJournalRoute | DraftDocumentUpdateRoute |
+    LedgerStateTransitionRoute | LedgerAdjustmentRoute | PaymentBankLedgerRoute | ReferenceDataRoute | "CONTACT_CREATE";
   reasonCodes: string[];
 }
 
@@ -591,8 +849,28 @@ export interface AccountingCaseOperation {
     | "supplier_bill.create_draft"
     | "credit_note.create_draft"
     | "quote.create_draft"
-    | "purchase_order.create_draft";
-  nativeRoute: NativeDocumentRoute | CommercialDocumentRoute | "CONTACT_CREATE";
+    | "purchase_order.create_draft"
+    | "manual_journal.create_draft"
+    | DraftDocumentUpdateAction
+    | "customer_invoice.authorise"
+    | "supplier_bill.authorise"
+    | "manual_journal.post"
+    | "contact.update_basic"
+    | "item.create_basic_untracked"
+    | "item.update_basic_untracked"
+    | TrackingReferenceDataAction
+    | LedgerAdjustmentAction
+    | PaymentBankLedgerAction;
+  nativeRoute:
+    | NativeDocumentRoute
+    | CommercialDocumentRoute
+    | BalancedJournalRoute
+    | DraftDocumentUpdateRoute
+    | LedgerStateTransitionRoute
+    | LedgerAdjustmentRoute
+    | PaymentBankLedgerRoute
+    | ReferenceDataRoute
+    | "CONTACT_CREATE";
   dependencyEventKeys: string[];
   canonicalPayload: Record<string, unknown>;
   canonicalPayloadHash: string;

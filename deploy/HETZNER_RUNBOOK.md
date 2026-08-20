@@ -24,7 +24,7 @@ Accounting MCP (3000, not published)
         +---- PostgreSQL (5432, not published)
 ```
 
-这是受控 Demo 部署，不是多租户生产身份系统。共享 MCP Bearer 只适用于封闭测试且只在 `/mcp` 被接受；它不能启动浏览器 OAuth 或换取 reviewer session。Xero OAuth Token 与 Agent 入站 Bearer 必须保持完全独立。
+这是受控 Demo 部署，不是多租户生产身份系统。共享 MCP Bearer 只适用于封闭测试且只在 `/mcp` 被接受；它不能启动浏览器 OAuth 或取得浏览器写入授权。Xero OAuth Token 与 Agent 入站 Bearer 必须保持完全独立。唯一的用户浏览器交互是 Organisation selection URL：用户只能在该页面选择已授权的 Xero Organisation，聊天文本不能切换账套或充当额外确认。
 
 ## 2. 部署资产
 
@@ -108,8 +108,8 @@ openssl rand -hex 32
 - `PUBLIC_BASE_URL` 必须是 HTTPS 且不能带额外路径。
 - 初始和默认必须保持 `XERO_WRITE_ENABLED=false`；此时先完成 OAuth 和只读 Tenant 核对。
 - `XERO_WRITE_ENABLED=true` 时必须同时配置 OAuth 后只读取得并人工核对的精确 `XERO_ALLOWED_TENANT_ID`；不得为空、使用通配值、名称或预估 ID。
-- `XERO_AUTHORITY_REVISION` 是 PostgreSQL 共享授权快照的单调版本。写闸或 Standing Delegation 的任何内容变化都必须升版；同版异内容和低版本旧配置都会启动失败，同版同内容才是幂等重放。
-- 紧急撤权必须先（或与切流同时）发布更高 revision、`XERO_WRITE_ENABLED=false` / `REVOKED`。旧进程无需重启，会在下一次 preflight/最终 claim 读取共享快照并阻断；已 claim 的单次在途 Provider 调用是边界。动态 true 不能越过进程启动时仍为 false 的服务层/Provider 层安全闸。
+- `XERO_WRITE_ENABLED` 是唯一部署级写闸。初始保持 `false`；开启或关闭后重建 App，并通过 `/readyz`、Capability Manifest 与 live UAT 确认实际运行态。它不替代当前 OAuth binding、已 pin 的 Organisation、typed Accounting Case、幂等、Provider 回执或 exact read-back。
+- 紧急停止写入时设置 `XERO_WRITE_ENABLED=false` 并重建 App/切回只读版本；已 claim 的单次在途 Provider 调用是边界。未知结果只能以 exact read-back 恢复，不能自动补写。
 - 环境文件仍会被 Docker 管理权限持有者看到；这只满足封闭 Demo。生产版应迁移到受控 Secret Manager 和逐用户身份。
 
 部署前确认模板占位符已经全部移除：
@@ -167,20 +167,17 @@ docker compose \
 
 # APP_IMAGE 必须来自本地 PASS acceptance Gate 的同一 OCI artifact，并由
 # registry 返回完全相同的 manifest digest。VPS 禁止 docker/compose build。
-# 先用 scripts/verify-accepted-oci-release.mjs 和单独 host-approved control
-# catalog digest 验证，再填写 repo@sha256 APP_IMAGE。
+# 先用 scripts/verify-accepted-oci-release.mjs 验证，再填写 repo@sha256 APP_IMAGE。
 GATE_DIR=artifacts/local-acceptance/REPLACE_WITH_GATE_RUN
-APPROVED_CONTROL_CATALOG_SHA256=REPLACE_WITH_SEPARATELY_HOST_APPROVED_SHA256
 node scripts/verify-accepted-oci-release.mjs \
   --gate-result "$GATE_DIR/gate-result.json" \
   --gate-receipt "$GATE_DIR/accepted-build-context-receipt.json" \
   --oci-receipt "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci-receipt.json" \
-  --oci-artifact "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar" \
-  --approved-control-catalog-sha256 "$APPROVED_CONTROL_CATALOG_SHA256"
+  --oci-artifact "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar"
 
 # registry copy 完成并把 APP_IMAGE 填成 receipt 对应的 repo@sha256 后，将四份
 # Gate 证据密封进固定 root trust root。deploy/.env.vps 中的四个证据路径必须
-# 分别填写下面固定目标；批准 catalog digest 仍必须来自独立 host reviewer。
+# 分别填写下面固定目标。
 sudo install -o root -g root -m 0400 "$GATE_DIR/gate-result.json" \
   /srv/xero-accounting-mcp/release/gate-result.json
 sudo install -o root -g root -m 0400 "$GATE_DIR/accepted-build-context-receipt.json" \
@@ -192,55 +189,18 @@ sudo install -o root -g root -m 0400 \
   "$GATE_DIR/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar" \
   /srv/xero-accounting-mcp/release/xero-accounting-mcp-0.4.0-rc.1.oci.tar
 
-# Firm-governance evidence must arrive out of band from the accounting firm's
-# governance authority. It must not come from the candidate source tree, Gate
-# output, image, app configuration, or an application-held signing key.
-FIRM_GOVERNANCE_DIR=REPLACE_WITH_OUT_OF_BAND_FIRM_GOVERNANCE_DIRECTORY
-sudo install -d -o root -g root -m 0755 /etc/xero-accounting-mcp/governance
-sudo install -o root -g root -m 0444 "$FIRM_GOVERNANCE_DIR/trust-bundle.json" \
-  /etc/xero-accounting-mcp/governance/trust-bundle.json
-sudo install -o root -g root -m 0444 "$FIRM_GOVERNANCE_DIR/receipts.json" \
-  /etc/xero-accounting-mcp/governance/receipts.json
-sudo install -o root -g root -m 0444 "$FIRM_GOVERNANCE_DIR/status.json" \
-  /etc/xero-accounting-mcp/governance/status.json
-sha256sum \
-  /etc/xero-accounting-mcp/governance/trust-bundle.json \
-  /etc/xero-accounting-mcp/governance/receipts.json \
-  /etc/xero-accounting-mcp/governance/status.json
-# A root/host governance reviewer independently approves these exact hashes,
-# then writes only the three SHA256 values into release.env. The paths are fixed.
-# A missing file, placeholder hash, invalid/expired signature or status is a hard
-# stop: do not run admission, create a container, or apply a migration.
-
-# The reviewer also approves an explicit XERO_AUTHORITY_REVISION and the exact
-# one-line XERO_STANDING_DELEGATIONS_JSON value. Hash that value without the
-# variable-name prefix or trailing newline into
-# XERO_STANDING_DELEGATIONS_CONFIG_SHA256. Any delegation or write-kill-switch
-# change requires a higher revision; admission and /readyz must match both.
-# The same independent reviewer must calculate and approve the canonical v2
-# snapshot and normalized governance projection with the separately approved
-# offline authority projector, never by copying a candidate /readyz response,
-# then set XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256 and
-# XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256 in release.env.
-#
-# Every trust-bundle, receipt, or status renewal requires a higher XERO_AUTHORITY_REVISION.
-# Replacing a host governance file does not refresh an existing container bind mount.
-# Therefore install the renewed root-owned 0444 files atomically, independently
-# approve their three hashes plus the new expected snapshot/aggregate, admit a
-# newly restarted green process, and restart and republish the higher durable authority snapshot before cutover.
-# A same-revision renewal must conflict and must never be cut over.
-#
-# Runtime status is captured only at startup: startup-captured revocation remains bounded by the effective expiry
-# (the signed status lifetime is at most one hour), rather than becoming visible
-# immediately. For urgent revocation, publish the signed replacement, raise the
-# authority revision, restart/republish, and cut traffic immediately. Without a
-# replacement, /readyz becomes 503 at the effective expiry; do not route writes.
+# 当前发布不使用 Firm Governance、签名 trust bundle、Standing Delegation、
+# authority revision 或其 hash 作为账本写入前提。部署准入只绑定不可变镜像、
+# migration、accepted Gate/OCI identity、Capability Manifest 与 `XERO_WRITE_ENABLED`。
+# 正常账本写入由运行时的当前 OAuth binding、已 pin Organisation、typed Accounting
+# Case、确定性校验、幂等、Provider 回执和 exact read-back 共同约束；不要把聊天文本、
+# 浏览器 Review 或外部签名文件当作第二授权层。
 
 sudo install -o root -g root -m 0600 deploy/.env.vps \
   /etc/xero-accounting-mcp/release.env
 
 # admission 会一次打开并捕获 root-only env 与四份证据，比较 APP_IMAGE、
-# host-approved catalog、Gate receipt 和 OCI identity，pull+inspect 精确镜像；
+# Gate receipt 和 OCI identity，pull+inspect 精确镜像；
 # 只有全部通过才允许创建第一个生产容器。
 sudo deploy/scripts/admit-and-compose.sh full-postgres-up
 
@@ -317,7 +277,7 @@ curl -sk -o /dev/null -w '%{http_code}\n' \
   https://invalid.example/healthz
 ```
 
-预期：health/readiness为200且无敏感字段；无Bearer的MCP请求为401；错误Host在边缘被拒绝。随后还要验证错误Origin为403、超过1 MiB的请求为413，以及OAuth callback的访问日志不含 `code`、`state` 或查询字符串。合法 MCP Bearer 也不得在 `/connect/xero`、OAuth callback、Review 路径或旧 `/operator/session`、`/oauth/xero/start` 路径建立身份或能力。
+预期：health/readiness为200且无敏感字段；无Bearer的MCP请求为401；错误Host在边缘被拒绝。随后还要验证错误Origin为403、超过1 MiB的请求为413，以及OAuth callback的访问日志不含 `code`、`state` 或查询字符串。合法 MCP Bearer 也不得在 `/connect/xero`、OAuth callback、Organisation selection 以外的浏览器路径或旧 `/operator/session`、`/oauth/xero/start` 路径建立身份或写入能力。
 
 ### 9.3 MCP 与 Xero
 
@@ -325,13 +285,13 @@ curl -sk -o /dev/null -w '%{http_code}\n' \
 
 1. 保持 `XERO_WRITE_ENABLED=false`，确认 `xero_connection_status` 显示尚未连接。
 2. 使用 `/mcp` 返回的一次性 connect ticket；浏览器消费 ticket 后应直接进入 Xero OAuth，并选择唯一测试 Tenant，不经过 Bearer session/start 路由。
-3. 只有成功 callback 的同一浏览器取得 reviewer session；取消、失败、错误 state、Token/Tenant 失败均不得取得。
+3. callback 成功后，若需要切换 Organisation，只能消费 `xero_start_organisation_switch` 返回的一次性 URL 并在页面选择已授权组织；取消、失败、错误 state、Token/Tenant 失败均不得改变当前 target。
 4. `xero_connection_status` 和组织读取成功，但响应不包含 Token；只读记录并人工核对精确 Tenant ID。
 5. 把该 ID 配置为唯一 `XERO_ALLOWED_TENANT_ID`，再显式设置 `XERO_WRITE_ENABLED=true` 并只重建 App；不符合这两个条件时写工具必须在 Provider 前拒绝。
 6. 读取科目、税码和联系人；通过 `xero_prepare_accounting_case` 检查合成资料的 coverage、异常和 eligible-write 状态。
-7. 仅在测试 Tenant 的 Standing Delegation、动态 authority 和写闸同时有效时，用 `xero_execute_accounting_case` 创建 Case 支持的低风险 `DRAFT`；无需逐笔确认，但必须取得 provider ID、mutation receipt 和同 ID exact readback。
-8. 当前候选不开放 `AUTHORISE`、`SUBMIT`、`POST`、付款或分配；任何提示词、旧 Review 路径或历史工具都不得把 `DRAFT` 推进为已入账状态。
-9. 通过 `xero_get_accounting_case_status` 和 Xero UI 再次核对同一 provider ID、金额、币种、行项目和 `DRAFT` 状态；不得把 DRAFT 描述成 posted/authorised/paid。
+7. 用 `xero_execute_accounting_case` 对 Case 当前版本执行已开放并完成 live UAT 的 typed action；必须取得 provider ID、mutation receipt 和同 ID exact read-back。执行不接受会计 payload，也没有逐笔确认、签名或 Review 路径。
+8. 每个状态动作按其当前 release/manifest route 验收预期 Xero status：DRAFT create 为 `DRAFT`，已开放的 authorise/post 必须精确读回 `AUTHORISED`/`POSTED`。付款、分配、对账、作废、删除等资金或高风险动作仍不得执行。
+9. 通过 `xero_get_accounting_case_status` 和 Xero UI 再次核对同一 provider ID、金额、币种、行项目和预期状态；不得把未完成 read-back 的结果描述成成功。
 10. 对相同 `case_id`、`case_version` 和 `request_id` 做顺序及并发复验，Provider 写入计数最多一次且不得创建第二个对象；unknown 结果只能恢复或安全阻断，不能自动补写。
 
 连接状态不是服务就绪状态；Xero临时不可用不应令健康端点泄露内部错误或凭证。

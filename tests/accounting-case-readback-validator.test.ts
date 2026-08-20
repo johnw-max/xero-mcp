@@ -52,6 +52,8 @@ function baseRequest(
       ? "SALES_INVOICE"
       : operation.nativeRoute === "SUPPLIER_BILL"
         ? "SUPPLIER_BILL"
+        : operation.nativeRoute === "MANUAL_JOURNAL"
+          ? "MANUAL_JOURNAL"
         : "CREDIT_NOTE",
     operation: "CREATE_DRAFT",
     canonicalPayload,
@@ -136,6 +138,68 @@ function replaceEvidence(request: XeroMutationRequest, evidence: Record<string, 
 }
 
 describe("Accounting Case exact economic readback validator", () => {
+  it("accepts a readback-verified Manual Journal Case without treating it as a credit note", () => {
+    const journal = compileAccountingCase({
+      ...fixture,
+      caseId: "case-readback-manual-journal",
+      sources: [
+        ...fixture.sources,
+        {
+          artifactId: "manual-journal-artifact",
+          label: "Manual journal",
+          units: [{ unitId: "manual-journal-unit", expectedFactKinds: ["BALANCED_JOURNAL"] as const }],
+        },
+      ],
+      facts: [
+        ...fixture.facts,
+        {
+          factId: "manual-journal-readback-v1",
+          lineageKey: "manual-journal-readback",
+          eventKey: "manual-journal-readback-event",
+          sourceUnitIds: ["manual-journal-unit"],
+          origin: "MODEL_EXTRACTED" as const,
+          revision: 1,
+          kind: "BALANCED_JOURNAL" as const,
+          narration: "Readback validator journal",
+          date: "2026-08-13",
+          lines: [
+            {
+              lineId: "debit",
+              description: "Debit",
+              accountCode: "453",
+              taxType: "NONE",
+              debit: "100.0000",
+            },
+            {
+              lineId: "credit",
+              description: "Credit",
+              accountCode: "200",
+              taxType: "NONE",
+              credit: "100.0000",
+            },
+          ],
+          documentValidity: "TEST_OR_NOT_VALID" as const,
+        },
+      ],
+    }).operations.find((candidate) => candidate.nativeRoute === "MANUAL_JOURNAL");
+    if (!journal) throw new Error("Fixture did not compile a Manual Journal operation");
+
+    const request = baseRequest(journal, {
+      objectType: "MANUAL_JOURNAL",
+      manualJournalId: "44444444-4444-4444-8444-444444444444",
+      providerTaxEvidence: {
+        taxTypes: ["NONE", "NONE"],
+        taxAmounts: ["0.0000", "0.0000"],
+        allNoneAndZero: true,
+      },
+      balanceVerified: true,
+    });
+    expect(validateAccountingCaseReadbackEconomics(journal, request)).toEqual({
+      ok: true,
+      applicability: "NOT_A_NATIVE_DOCUMENT",
+    });
+  });
+
   it("accepts exact invoice and credit-note provider economics", () => {
     const invoice = nativeOperation("SALES_INVOICE");
     const credit = nativeOperation("CUSTOMER_CREDIT");

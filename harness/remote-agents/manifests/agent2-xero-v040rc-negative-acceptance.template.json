@@ -1,6 +1,7 @@
 {
   "version": 1,
   "name": "agent2-xero-v0.4.0-rc.1-negative-acceptance-template",
+  "capabilityManifest": "config/xero-capability-manifest.json",
   "releaseContract": "0.4.0-rc.1 / governed Accounting Case negative acceptance",
   "evidenceClass": "LIVE_AGENT2_ACCEPTANCE",
   "settings": {

@@ -362,6 +362,16 @@ class DurableSyntheticXeroProvider implements AccountingProvider {
   readonly createDraftSupplierBill: AccountingProvider["createDraftSupplierBill"] = async () =>
     this.#unexpected("createDraftSupplierBill");
   readonly getTrialBalance: AccountingProvider["getTrialBalance"] = async () => this.#unexpected("getTrialBalance");
+  readonly listJournals: AccountingProvider["listJournals"] = async () => this.#unexpected("listJournals");
+  readonly getProfitAndLoss: AccountingProvider["getProfitAndLoss"] = async () => this.#unexpected("getProfitAndLoss");
+  readonly getBalanceSheet: AccountingProvider["getBalanceSheet"] = async () => this.#unexpected("getBalanceSheet");
+  readonly getAgedReceivables: AccountingProvider["getAgedReceivables"] = async () => this.#unexpected("getAgedReceivables");
+  readonly getAgedPayables: AccountingProvider["getAgedPayables"] = async () => this.#unexpected("getAgedPayables");
+  readonly getPayment: AccountingProvider["getPayment"] = async () => this.#unexpected("getPayment");
+  readonly listTrackingCategories: AccountingProvider["listTrackingCategories"] = async () =>
+    this.#unexpected("listTrackingCategories");
+  readonly listContactGroups: AccountingProvider["listContactGroups"] = async () =>
+    this.#unexpected("listContactGroups");
 
   #invoice(input: Parameters<NonNullable<AccountingProvider["createDraftSalesInvoice"]>>[1]): SalesInvoiceSnapshot {
     const lines = input.lines.map((line) => {
@@ -638,6 +648,7 @@ async function main(): Promise<void> {
     const anchor = new Date(metadata.anchor_at);
     const mutations = new XeroMutationService(repository, {
       confirmationSecret: "process-crash-harness-confirmation-secret-at-least-32-bytes",
+      writeEnabled: true,
       authoritySnapshotResolver: new RepositoryLedgerAuthoritySnapshotResolver(repository),
       now: () => new Date(anchor),
       providerCapabilityEvaluator: {

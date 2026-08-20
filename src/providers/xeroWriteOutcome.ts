@@ -36,6 +36,20 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/**
+ * xero-node@19 serializes ApiError.generateError() before rejecting. Preserve
+ * the fail-closed default for arbitrary strings, but recover the structured
+ * response shape when that exact SDK error envelope is present.
+ */
+function deserializeSdkError(error: unknown): unknown {
+  if (typeof error !== "string") return error;
+  try {
+    return JSON.parse(error) as unknown;
+  } catch {
+    return error;
+  }
+}
+
 function nonEmptyValidationErrors(value: unknown): boolean {
   const candidate = record(value);
   if (!candidate) return false;
@@ -65,7 +79,7 @@ function structuredXeroRejection(value: unknown): boolean {
  * UNKNOWN and retains the source reservation for exact recovery.
  */
 export function classifyXeroWriteException(error: unknown): XeroWriteOutcomeClassification {
-  const candidate = errorShape(error);
+  const candidate = errorShape(deserializeSdkError(error));
   if (candidate.code && UNKNOWN_NETWORK_CODES.has(candidate.code)) return "UNKNOWN";
   if (
     candidate.status === undefined ||

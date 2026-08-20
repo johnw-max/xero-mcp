@@ -250,6 +250,50 @@ export const trialBalanceSchema = z.object({
   date: yyyyMmDd.optional(),
 }).strict();
 
+/**
+ * Mirrors the trial-balance tool's minimalism: only the dimensions Xero's
+ * report actually varies by (a date range and a period comparison), not
+ * every optional SDK parameter (tracking categories are intentionally out of
+ * scope; standardLayout/paymentsOnly are left at the provider default so the
+ * read-evidence query-bounds projection - which assumes a report is either
+ * "as of" a single date or the provider default - stays accurate).
+ */
+export const profitAndLossSchema = z.object({
+  date_from: yyyyMmDd.optional(),
+  date_to: yyyyMmDd.optional(),
+  periods: z.number().int().min(1).max(12).optional(),
+  timeframe: z.enum(["MONTH", "QUARTER", "YEAR"]).optional(),
+}).strict().refine((value) => !value.date_from || !value.date_to || value.date_to >= value.date_from, {
+  message: "date_to must not be before date_from",
+  path: ["date_to"],
+});
+
+export const balanceSheetSchema = z.object({
+  date: yyyyMmDd.optional(),
+  periods: z.number().int().min(1).max(12).optional(),
+  timeframe: z.enum(["MONTH", "QUARTER", "YEAR"]).optional(),
+}).strict();
+
+export const agedReceivablesSchema = z.object({
+  contact_id: xeroId,
+  date: yyyyMmDd.optional(),
+  date_from: yyyyMmDd.optional(),
+  date_to: yyyyMmDd.optional(),
+}).strict().refine((value) => !value.date_from || !value.date_to || value.date_to >= value.date_from, {
+  message: "date_to must not be before date_from",
+  path: ["date_to"],
+});
+
+export const agedPayablesSchema = z.object({
+  contact_id: xeroId,
+  date: yyyyMmDd.optional(),
+  date_from: yyyyMmDd.optional(),
+  date_to: yyyyMmDd.optional(),
+}).strict().refine((value) => !value.date_from || !value.date_to || value.date_to >= value.date_from, {
+  message: "date_to must not be before date_from",
+  path: ["date_to"],
+});
+
 export type ListAccountsInput = z.infer<typeof listAccountsSchema>;
 export type ListContactsInput = z.infer<typeof listContactsSchema>;
 export type GetContactInput = z.infer<typeof getContactSchema>;
@@ -273,3 +317,7 @@ export type CreateDraftSalesInvoiceInput = z.infer<typeof createDraftSalesInvoic
 export type PrepareSalesInvoiceDraftInput = z.infer<typeof prepareSalesInvoiceDraftSchema>;
 export type AuthoriseSupplierBillInput = z.infer<typeof authoriseSupplierBillSchema>;
 export type TrialBalanceInput = z.infer<typeof trialBalanceSchema>;
+export type ProfitAndLossInput = z.infer<typeof profitAndLossSchema>;
+export type BalanceSheetInput = z.infer<typeof balanceSheetSchema>;
+export type AgedReceivablesInput = z.infer<typeof agedReceivablesSchema>;
+export type AgedPayablesInput = z.infer<typeof agedPayablesSchema>;

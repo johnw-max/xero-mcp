@@ -14,12 +14,12 @@
     },
     {
       "id": "XR-002",
-      "title": "Standing Delegation binding and revocation must be evidenced on every Case execution",
-      "baseline_evidence": "An enabled write flag or Agent statement does not prove that the exact workspace, Agent, installation, Tenant, target session, action and Case version are covered by one active delegation revision.",
+      "title": "OAuth target binding and write-gate evidence must be recorded on every Case execution",
+      "baseline_evidence": "An enabled write flag or Agent statement alone does not prove the current OAuth binding, pinned Tenant/target session, effective scope, released action policy and stored Case version match the execution.",
       "case_ids": ["AC-DELEGATION-003", "AA-CASE-EXECUTE-002"],
       "risk": "A stale or cross-bound request could execute beyond the authority actually granted to that Agent and target.",
-      "clear_when": "Deterministic and PostgreSQL tests prove exact binding, revision checks, revocation before Provider call, and durable execution receipts for every operation.",
-      "prohibited_claim": "Do not describe an emergency write flag or model instruction as business authority."
+      "clear_when": "Deterministic and PostgreSQL tests prove exact OAuth target/session binding, effective-scope and released-policy checks, write-gate enforcement before Provider call, and durable execution receipts for every operation.",
+      "prohibited_claim": "Do not describe an emergency write flag or model instruction alone as sufficient execution authority."
     },
     {
       "id": "XR-003",

@@ -24,7 +24,7 @@ export const XERO_RELEASE_ATTESTATION = Object.freeze({
   xeroContactIdentityContract: XERO_CONTACT_IDENTITY_CONTRACT_VERSION,
   requiredMigration: REQUIRED_MIGRATION_HEAD,
   publicToolProfile: "xero-accounting-case-business-intake-v4",
-  executionAuthority: "STANDING_DELEGATION",
+  executionAuthority: "OAUTH_TARGET_BOUND_WRITE_GATE",
   writeCompletion: "PROVIDER_ID_RECEIPT_EXACT_READBACK",
 });
 
@@ -34,11 +34,8 @@ export interface XeroRuntimeAttestationInput {
   buildIdentityHash: string | null;
   acceptanceSourceSha256: string | null;
   sourceArchiveSha256: string | null;
-  approvedControlCatalogSha256: string | null;
   writeMode: XeroRuntimeWriteMode;
   processWriteGateEnabled: boolean;
-  configuredAuthorityRevision: number;
-  standingDelegationsConfigSha256: string | null;
   authoritySnapshotRevision: number | null;
   authoritySnapshotHash: string | null;
   authorityWriteKillSwitchEnabled: boolean | null;
@@ -48,7 +45,6 @@ export interface XeroRuntimeAttestationInput {
   requiredMigrationStatus: "APPLIED" | "MISSING" | "NOT_APPLICABLE" | "UNKNOWN";
   migrationHead: string | null;
   activeAccountingCaseRecoveryProjection: ActiveAccountingCaseRecoveryProjectionEvidence;
-  firmGovernance: LedgerFirmGovernanceReadinessEvidence;
 }
 
 /** Binds the build identity to the observed process and storage state. */
@@ -76,7 +72,6 @@ import { REQUIRED_MIGRATION_HEAD } from "./db/requiredMigrations.js";
 import { LEDGER_AUTHORITY_SNAPSHOT_SCHEMA_VERSION } from "./domain/ledgerAuthority.js";
 import { TOOL_ALLOWLIST } from "./mcp/toolNames.js";
 import type { ActiveAccountingCaseRecoveryProjectionEvidence } from "./db/accountingCaseRecoveryProjectionReadiness.js";
-import type { LedgerFirmGovernanceReadinessEvidence } from "./domain/ledgerAuthority.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 
@@ -89,7 +84,6 @@ export interface XeroBuildIdentity {
   releaseSourceManifestSha256: string;
   sourceArchiveSha256: string;
   sourceBundleManifestSha256: string;
-  approvedControlCatalogSha256: string;
   toolsetHash: string;
   releaseAttestationHash: string;
   requiredMigration: string;
@@ -100,7 +94,6 @@ export interface XeroBuildArtifactIdentityInput {
   releaseSourceManifestSha256: string;
   sourceArchiveSha256: string;
   sourceBundleManifestSha256: string;
-  approvedControlCatalogSha256: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -110,7 +103,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function exactBuildIdentityFields(value: Record<string, unknown>): boolean {
   return JSON.stringify(Object.keys(value).sort()) === JSON.stringify([
     "acceptanceSourceSha256",
-    "approvedControlCatalogSha256",
     "releaseAttestationHash",
     "releaseSourceManifestSha256",
     "releaseVersion",
@@ -132,7 +124,6 @@ export function createXeroBuildIdentity(input: XeroBuildArtifactIdentityInput): 
     input.releaseSourceManifestSha256,
     input.sourceArchiveSha256,
     input.sourceBundleManifestSha256,
-    input.approvedControlCatalogSha256,
   ].every((value) => SHA256.test(value))) {
     throw new Error("XERO_BUILD_IDENTITY_ARTIFACT_HASH_INVALID");
   }
@@ -143,7 +134,6 @@ export function createXeroBuildIdentity(input: XeroBuildArtifactIdentityInput): 
     releaseSourceManifestSha256: input.releaseSourceManifestSha256,
     sourceArchiveSha256: input.sourceArchiveSha256,
     sourceBundleManifestSha256: input.sourceBundleManifestSha256,
-    approvedControlCatalogSha256: input.approvedControlCatalogSha256,
     toolsetHash: hashObject(TOOL_ALLOWLIST),
     releaseAttestationHash: hashObject(XERO_RELEASE_ATTESTATION),
     requiredMigration: XERO_RELEASE_ATTESTATION.requiredMigration,
@@ -165,7 +155,6 @@ export function parseXeroBuildIdentity(raw: string): XeroBuildIdentity {
     releaseSourceManifestSha256: String(parsed.releaseSourceManifestSha256),
     sourceArchiveSha256: String(parsed.sourceArchiveSha256),
     sourceBundleManifestSha256: String(parsed.sourceBundleManifestSha256),
-    approvedControlCatalogSha256: String(parsed.approvedControlCatalogSha256),
   });
   if (hashObject(parsed) !== hashObject(expected)) {
     throw new Error("XERO_BUILD_IDENTITY_CONTRACT_MISMATCH");

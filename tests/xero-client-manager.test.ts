@@ -20,10 +20,16 @@ const requiredScopes = [
   "accounting.invoices.read",
   "accounting.invoices",
   "accounting.payments.read",
+  "accounting.payments",
   "accounting.manualjournals.read",
   "accounting.manualjournals",
   "accounting.banktransactions.read",
+  "accounting.banktransactions",
+  "accounting.journals.read",
   "accounting.reports.trialbalance.read",
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.balancesheet.read",
+  "accounting.reports.aged.read",
 ];
 const readOnlyScopes = [
   "openid",
@@ -36,7 +42,11 @@ const readOnlyScopes = [
   "accounting.payments.read",
   "accounting.manualjournals.read",
   "accounting.banktransactions.read",
+  "accounting.journals.read",
   "accounting.reports.trialbalance.read",
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.balancesheet.read",
+  "accounting.reports.aged.read",
 ];
 
 function logger(): Logger {

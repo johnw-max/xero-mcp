@@ -48,7 +48,6 @@ const BUILD_IDENTITY = createXeroBuildIdentity({
   releaseSourceManifestSha256: "b".repeat(64),
   sourceArchiveSha256: "c".repeat(64),
   sourceBundleManifestSha256: "d".repeat(64),
-  approvedControlCatalogSha256: "e".repeat(64),
 });
 
 function validEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -64,7 +63,7 @@ function validEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     REQUEST_BODY_LIMIT_BYTES: "1048576",
     XERO_CLIENT_ID: "xero-client",
     XERO_CLIENT_SECRET: "xero-secret",
-    XERO_SCOPES: "openid profile email offline_access accounting.settings.read accounting.settings accounting.contacts.read accounting.contacts accounting.invoices.read accounting.invoices accounting.payments.read accounting.manualjournals.read accounting.manualjournals accounting.banktransactions.read accounting.reports.trialbalance.read",
+    XERO_SCOPES: "openid profile email offline_access accounting.settings.read accounting.settings accounting.contacts.read accounting.contacts accounting.invoices.read accounting.invoices accounting.payments.read accounting.payments accounting.manualjournals.read accounting.manualjournals accounting.banktransactions.read accounting.banktransactions accounting.reports.trialbalance.read accounting.reports.profitandloss.read accounting.reports.balancesheet.read accounting.reports.aged.read",
     TOKEN_ENCRYPTION_KEY_B64: TOKEN_ENCRYPTION_KEY,
     XERO_MUTATION_CONFIRMATION_KEY_B64: MUTATION_CONFIRMATION_KEY,
     DEMO_ACTOR_ID: "qa-actor",
@@ -220,26 +219,19 @@ describe("MCP OAuth Broker configuration", () => {
     expect(config.mcpOAuthBroker?.enabled).toBe(true);
   });
 
-  it("accepts a standing delegation that is not pinned to an OAuth installation", () => {
-    // Pinning to an installation ties the grant to one connection; the next
-    // Xero re-authorisation mints a new installation and the grant dies. The
-    // recommended shape omits it, so the config must accept that shape.
-    const [pinned] = JSON.parse(standingDelegations()) as Array<Record<string, unknown>>;
-    const { installation_id: _installation, ...unpinned } = pinned!;
-    const delegations = JSON.stringify([unpinned]);
+  it("does not require or parse removed Standing Delegation configuration", () => {
     const config = loadConfig(enabledEnv({
       XERO_WRITE_ENABLED: "true",
-      XERO_AUTHORITY_REVISION: "1",
-      XERO_ALLOWED_TENANT_ID: "",
       XERO_TARGET_SESSION_REQUIRED: "true",
-      XERO_STANDING_DELEGATIONS_JSON: delegations,
-      XERO_STANDING_DELEGATIONS_CONFIG_SHA256: sha256(delegations),
-      XERO_EXPECTED_AUTHORITY_SNAPSHOT_SHA256: "6".repeat(64),
-      XERO_EXPECTED_FIRM_GOVERNANCE_AGGREGATE_SHA256: "NOT_REQUIRED",
+      // These legacy variables are intentionally malformed. The current
+      // OAuth-target write gate must ignore them rather than revive the old
+      // Standing Delegation configuration or make it a boot prerequisite.
+      XERO_STANDING_DELEGATIONS_JSON: "not-json",
+      XERO_STANDING_DELEGATIONS_CONFIG_SHA256: "not-a-hash",
     }));
 
-    expect(config.xeroStandingDelegations).toHaveLength(1);
-    expect(config.xeroStandingDelegations?.[0]).not.toHaveProperty("installationId");
+    expect(config.xeroWriteEnabled).toBe(true);
+    expect(config).not.toHaveProperty("xeroStandingDelegations");
   });
 
   it("enables isolated multi-user early UAT behind an explicit test-only flag", () => {

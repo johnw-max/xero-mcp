@@ -11,7 +11,7 @@ describe("Xero 0.4 runtime attestation", () => {
     expect(XERO_RELEASE_ATTESTATION).toEqual({
       controlKernel: "ledger-control-kernel-v2",
       ledgerAuthoritySnapshot: "ledger-authority-snapshot:v2",
-      accountingCaseCompiler: "0.11.0",
+      accountingCaseCompiler: "0.13.0",
       accountingPolicy: "v1",
       accountingPolicyProjection: "xero-declared-ledger-policy-projection:v1",
       accountingCaseProviderContract: "xero-accounting-case-provider-v14",
@@ -20,9 +20,9 @@ describe("Xero 0.4 runtime attestation", () => {
       accountingCaseReadbackValidator: "accounting-case-observed-line-readback-v4",
       xeroNativeRouteContract: "xero-native-route-contract-v1",
       xeroContactIdentityContract: "xero-contact-identity-v3",
-      requiredMigration: "041_accounting_case_source_case_binding.sql",
+      requiredMigration: "042_accounting_case_ledger_state_transitions.sql",
       publicToolProfile: "xero-accounting-case-business-intake-v4",
-      executionAuthority: "STANDING_DELEGATION",
+      executionAuthority: "OAUTH_TARGET_BOUND_WRITE_GATE",
       writeCompletion: "PROVIDER_ID_RECEIPT_EXACT_READBACK",
     });
     const migration = readFileSync(
@@ -30,16 +30,15 @@ describe("Xero 0.4 runtime attestation", () => {
       "utf8",
     );
     // The attested head must actually define what it claims, not merely exist.
-    // Head 041 is the cross-MCP source-case binding: its primary key is what
-    // makes one upstream case unable to span two Xero tenants.
-    expect(migration).toContain("accounting_case_source_case_bindings");
-    expect(migration).toContain("PRIMARY KEY (workspace_id, source_system, source_case_ref_hash)");
-    expect(migration).toContain("source_case_claim");
+    // Head 042 closes the ledger-state transition action and operation guards.
+    expect(migration).toContain("accounting_case_ledger_state_transition_guard");
+    expect(migration).toContain("accounting_case_operations_action_id_check");
+    expect(migration).toContain("LEDGER_STATE_TRANSITION");
     expect(hashObject(XERO_RELEASE_ATTESTATION)).toMatch(/^[a-f0-9]{64}$/u);
   });
 
-  it("attests the reviewed 30-tool public surface with only one mutation route", () => {
-    expect(TOOL_ALLOWLIST).toHaveLength(30);
+  it("attests the current public surface with only one mutation route", () => {
+    expect(TOOL_ALLOWLIST.length).toBeGreaterThan(0);
     expect(TOOL_ALLOWLIST).toContain("xero_execute_accounting_case");
     expect(TOOL_ALLOWLIST.some((tool) => /xero_(?:create|prepare)_manual_journal/u.test(tool))).toBe(false);
     expect(TOOL_ALLOWLIST.some((tool) => /^xero_(?:create|prepare)_(?!accounting_case)/u.test(tool))).toBe(false);

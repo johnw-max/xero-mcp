@@ -12,7 +12,11 @@ const readOnlyXeroScopes = [
   "offline_access",
   "accounting.settings.read",
   "accounting.contacts.read",
+  "accounting.journals.read",
   "accounting.reports.trialbalance.read",
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.balancesheet.read",
+  "accounting.reports.aged.read",
   "accounting.invoices.read",
   "accounting.payments.read",
   "accounting.manualjournals.read",
@@ -23,12 +27,20 @@ const granularWriteXeroScopes = [
   ...readOnlyXeroScopes,
   "accounting.contacts",
   "accounting.invoices",
+  "accounting.settings",
+  "accounting.manualjournals",
+  "accounting.payments",
+  "accounting.banktransactions",
 ];
 
 const draftOnlyXeroScopes = [
   "offline_access",
   "accounting.contacts",
   "accounting.invoices",
+  "accounting.settings",
+  "accounting.manualjournals",
+  "accounting.payments",
+  "accounting.banktransactions",
 ];
 
 const config: AppConfig = {
@@ -377,6 +389,10 @@ describe("BrokerXeroAuthorizationService", () => {
   it.each([
     ["accounting.invoices", /draft invoice.*purchase-order write/i],
     ["accounting.contacts", /contact create and update/i],
+    ["accounting.settings", /item create and update/i],
+    ["accounting.manualjournals", /manual journal draft write/i],
+    ["accounting.payments", /payment create.*reversal/i],
+    ["accounting.banktransactions", /bank transaction create.*reversal/i],
   ])("rejects draft write when the granular token lacks %s", async (missingScope, message) => {
     const { service } = createSubject({
       scopes: granularWriteXeroScopes.filter((scope) => scope !== missingScope),
@@ -396,6 +412,7 @@ describe("BrokerXeroAuthorizationService", () => {
       scopes: [
         "offline_access",
         "accounting.transactions",
+        "accounting.journals.read",
         "accounting.settings",
         "accounting.contacts",
         "accounting.reports.read",
@@ -415,6 +432,7 @@ describe("BrokerXeroAuthorizationService", () => {
       scopes: [
         "offline_access",
         "accounting.transactions.read",
+        "accounting.journals.read",
         "accounting.settings.read",
         "accounting.contacts.read",
         "accounting.reports.read",

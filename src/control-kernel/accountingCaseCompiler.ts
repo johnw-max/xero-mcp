@@ -13,6 +13,8 @@ import {
   type AccountingFact,
   type AccountingFactKind,
   type AccountingSourceArtifact,
+  type BalancedJournalFact,
+  type BalancedJournalRoute,
   type BankStatementSummaryFact,
   type CommercialDocumentFact,
   type CommercialDocumentRoute,
@@ -21,11 +23,20 @@ import {
   type EmployeeExpenseFact,
   type FxSettlementFact,
   type GoodsReceiptControlFact,
+  type LedgerStateTransitionFact,
+  type LedgerStateTransitionRoute,
+  type LedgerAdjustmentFact,
+  type LedgerAdjustmentRoute,
+  type PaymentBankLedgerFact,
+  type PaymentBankLedgerRoute,
+  type DraftDocumentUpdateFact,
   type NativeDocumentFact,
   type NativeDocumentRoute,
   type OriginalTransactionEvidenceFact,
   type PrepaymentFact,
+  type ReferenceDataRoute,
 } from "../domain/accountingCase.js";
+import { parseLedgerAdjustmentPayload } from "../domain/xeroLedgerAdjustment.js";
 import {
   prepareAccountingCaseSchema,
   type PrepareAccountingCaseInput,
@@ -90,8 +101,17 @@ function compilationFailure(
 
 const PRIMARY_FACT_KINDS = new Set<AccountingFactKind>([
   "CONTACT_CANDIDATE",
+  "CONTACT_BASIC_UPDATE",
+  "ITEM_BASIC_CREATE_UNTRACKED",
+  "ITEM_BASIC_UPDATE_UNTRACKED",
+  "TRACKING_REFERENCE_DATA",
   "NATIVE_DOCUMENT",
   "COMMERCIAL_DOCUMENT",
+  "BALANCED_JOURNAL",
+  "DRAFT_DOCUMENT_UPDATE",
+  "LEDGER_STATE_TRANSITION",
+  "LEDGER_ADJUSTMENT",
+  "PAYMENT_BANK_LEDGER",
   "PAYMENT",
   "BANK_FEE",
   "PREPAYMENT",
@@ -760,6 +780,293 @@ function operationForCommercialDocument(
   };
 }
 
+/**
+ * Debits-equal-credits is a recording identity, not a provider-adapter
+ * capability limit -- true for every accounting system, not just Xero's -- so
+ * it is computed here, inline, the same way commercialDocumentRouteReasonCodes
+ * above keeps QUOTE/PURCHASE_ORDER's universal shape rules out of the
+ * Xero-specific xeroNativeRouteContract.ts. Xero's own manual-journal adapter
+ * additionally hard-codes every line's TaxType to "NONE"
+ * (canonicalManualJournalDraftPayloadSchema in xeroCreditNoteManualJournalDraft.ts)
+ * -- that half genuinely is an adapter capability limit, so it is duplicated
+ * (not shared) in evaluateXeroBalancedJournalRouteContract, matching the same
+ * redundant-by-construction idiom used for the commercial-document reasons.
+ *
+ * Called from validationReasons() below -- i.e. while compileAccountingCase()
+ * is still assembling `events` and `operations` -- not at execution time.
+ * JOURNAL_NOT_BALANCED, when present, blocks the event's disposition to
+ * BLOCKED_VALIDATION before any operation for that fact is ever built (see
+ * the AUTO_EXECUTE gate in compileAccountingCase's operations flatMap), and
+ * either way -- present or absent -- becomes part of the returned
+ * CompiledAccountingCase, which XeroAccountingCaseService seals into
+ * `compiledPlanHash` (accountingCasePlanHash(binding, compiled) in
+ * accountingCasePersistence.ts) immediately after compilation. There is no
+ * later point at which this identity is decided or could be redecided: it is
+ * fixed the moment the plan hash is taken, not at preflight, prepare or
+ * execute.
+ */
+function balancedJournalRouteReasonCodes(
+  fact: Pick<BalancedJournalFact, "lines">,
+): string[] {
+  const reasons: string[] = [];
+  let debits = 0n;
+  let credits = 0n;
+  for (const line of fact.lines) {
+    if (line.taxType !== "NONE") reasons.push("MANUAL_JOURNAL_TAX_TYPE_UNSUPPORTED");
+    if (line.debit !== undefined) debits += decimalMinor(line.debit);
+    if (line.credit !== undefined) credits += decimalMinor(line.credit);
+  }
+  if (debits !== credits) reasons.push("JOURNAL_NOT_BALANCED");
+  return reasons;
+}
+
+/**
+ * A balanced journal's own reservation coordinate -- see "六、日记账去重是本设计里
+ * 最难的一处" in docs/MANUAL-JOURNAL-DESIGN-2026-08-20.md. Xero's ManualJournal has
+ * no InvoiceNumber-equivalent natural unique number, so unlike every other
+ * operation kind this coordinate is a content hash, not a caller-declared
+ * reference: normalized narration + date + each line's {accountCode,
+ * signed amount}, line order ignored (two journals naming the same accounts
+ * for the same amounts on the same date are "the same journal" regardless of
+ * which line was typed first). This treats two journals as colliding
+ * exactly when they are byte-identical in narration, date and every line --
+ * including a genuinely-intended same-day repeat, for example a recurring
+ * accrual deliberately posted twice. That is a deliberate, disclosed limit,
+ * not an oversight: a manual journal carries no caller-supplied reference to
+ * key a coordinate on the way CommercialDocumentFact's `reference` field
+ * does, so this server cannot distinguish "the same journal, deliberately
+ * repeated" from "the same journal, accidentally repeated" without one. A
+ * caller that means to post the same journal twice must make the postings
+ * distinguishable (vary the narration, or a line) -- the reservation is not
+ * weakened to accept an unqualified duplicate silently.
+ */
+function balancedJournalReservationCanonicalFields(
+  fact: Pick<BalancedJournalFact, "narration" | "date" | "lines">,
+): Readonly<Record<string, unknown>> {
+  const normalizedNarration = fact.narration.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleUpperCase("en");
+  const normalizedLines = fact.lines
+    .map((line) => ({
+      accountCode: line.accountCode,
+      debit: line.debit !== undefined ? fixedFour(decimalMinor(line.debit)) : null,
+      credit: line.credit !== undefined ? fixedFour(decimalMinor(line.credit)) : null,
+    }))
+    .sort((left, right) =>
+      left.accountCode.localeCompare(right.accountCode) ||
+      (left.debit ?? "").localeCompare(right.debit ?? "") ||
+      (left.credit ?? "").localeCompare(right.credit ?? ""));
+  return Object.freeze({
+    route: "MANUAL_JOURNAL" as const,
+    narration: normalizedNarration,
+    date: fact.date,
+    lines: normalizedLines,
+  });
+}
+
+function operationForBalancedJournal(
+  fact: BalancedJournalFact,
+  context: {
+    caseId: string;
+    caseVersion: number;
+    target: AccountingCaseTarget;
+    sourceRevisionHash: string;
+    providerId: string;
+  },
+): AccountingCaseOperation {
+  const route: BalancedJournalRoute = "MANUAL_JOURNAL";
+  const reasons = balancedJournalRouteReasonCodes(fact);
+  if (fact.documentValidity === "UNKNOWN") reasons.push("DOCUMENT_VALIDITY_UNKNOWN");
+  if (fact.documentValidity === "TEST_OR_NOT_VALID" && context.target.environment !== "TEST") {
+    reasons.push("NON_LIVE_DOCUMENT_REQUIRES_TEST_TENANT");
+  }
+  if (context.target.periodLockDate && fact.date <= context.target.periodLockDate) {
+    reasons.push("DOCUMENT_DATE_IN_PERIOD_LOCK");
+  }
+  if (context.target.endOfYearLockDate && fact.date <= context.target.endOfYearLockDate) {
+    reasons.push("DOCUMENT_DATE_IN_END_OF_YEAR_LOCK");
+  }
+  const normalizedLines = fact.lines.map((line) => ({
+    lineId: line.lineId,
+    description: line.description,
+    accountCode: line.accountCode,
+    taxType: line.taxType,
+    ...(line.debit !== undefined ? { debit: line.debit } : {}),
+    ...(line.credit !== undefined ? { credit: line.credit } : {}),
+  }));
+  const canonicalPayload: Record<string, unknown> = {
+    schemaVersion: "accounting-case-balanced-journal:v1",
+    route,
+    narration: fact.narration,
+    date: fact.date,
+    lines: normalizedLines,
+    documentValidity: fact.documentValidity,
+    liveBooksEligible: fact.documentValidity === "VALID_FOR_LIVE_BOOKS",
+    testTenantOnly: fact.documentValidity === "TEST_OR_NOT_VALID",
+    status: "DRAFT",
+  };
+  const actionId = "manual_journal.create_draft" as const;
+  const canonicalPayloadHash = hashObject(canonicalPayload);
+  const operationIdentity = {
+    caseId: context.caseId,
+    caseVersion: context.caseVersion,
+    sourceRevisionHash: context.sourceRevisionHash,
+    eventId: eventId(context.caseId, fact.eventKey),
+    actionId,
+    canonicalPayloadHash,
+  };
+  // Own reservation namespace ("BALANCED_JOURNAL_OCCURRENCE"), disjoint from
+  // both native-document "LEDGER_DOCUMENT_OCCURRENCE" and commercial-document
+  // "COMMERCIAL_DOCUMENT_OCCURRENCE", so this can never collide with -- or be
+  // aliased against -- an invoice, credit note, quote or purchase order.
+  const businessIdentityCanonicalFields = balancedJournalReservationCanonicalFields(fact);
+  const businessIdentity = Object.freeze({
+    schemaVersion: ACCOUNTING_CASE_BUSINESS_IDENTITY_SCHEMA_VERSION,
+    providerId: context.providerId,
+    kind: "BALANCED_JOURNAL_OCCURRENCE",
+    canonicalFields: businessIdentityCanonicalFields,
+  });
+  const reservationCoordinate = Object.freeze({
+    schemaVersion: ACCOUNTING_CASE_BUSINESS_RESERVATION_SCHEMA_VERSION,
+    providerId: context.providerId,
+    kind: "BALANCED_JOURNAL_OCCURRENCE",
+    canonicalFields: businessIdentityCanonicalFields,
+  });
+  const businessReservation = Object.freeze({
+    ...reservationCoordinate,
+    coordinateHash: hashObject(reservationCoordinate),
+    scope: "ALL_OCCURRENCES" as const,
+  });
+  const operationReasons = uniqueSorted(reasons);
+  return {
+    caseId: context.caseId,
+    target: context.target,
+    operationId: `op_${hashObject(operationIdentity).slice(0, 24)}`,
+    eventId: operationIdentity.eventId,
+    actionId,
+    nativeRoute: route,
+    dependencyEventKeys: [],
+    canonicalPayload,
+    canonicalPayloadHash,
+    businessIdentity,
+    businessIdentityHash: hashObject(businessIdentity),
+    businessReservation,
+    sourceRevisionHash: context.sourceRevisionHash,
+    caseVersion: context.caseVersion,
+    terminalState: operationReasons.length === 0 ? "ELIGIBLE_FOR_PREFLIGHT" : "BLOCKED_VALIDATION",
+    reasonCodes: operationReasons,
+  };
+}
+
+function operationForDraftDocumentUpdate(
+  fact: DraftDocumentUpdateFact,
+  context: {
+    caseId: string;
+    caseVersion: number;
+    target: AccountingCaseTarget;
+    sourceRevisionHash: string;
+    policy: AccountingPolicyEnforcementContract;
+    provider: AccountingCaseProviderEnforcementContract;
+    contactBindings: ReadonlyMap<string, AccountingCaseCommercialContactBinding>;
+    allFacts: readonly AccountingFact[];
+  },
+): AccountingCaseOperation {
+  const replacementOperation = fact.replacement.kind === "NATIVE_DOCUMENT"
+    ? operationForNative(fact.replacement, {
+        caseId: context.caseId,
+        caseVersion: context.caseVersion,
+        target: context.target,
+        sourceRevisionHash: context.sourceRevisionHash,
+        dependencyEventKeys: contactDependencies(fact.replacement, context.allFacts),
+        policy: context.policy,
+        provider: context.provider,
+      })
+    : fact.replacement.kind === "COMMERCIAL_DOCUMENT"
+      ? operationForCommercialDocument(fact.replacement, {
+          caseId: context.caseId,
+          caseVersion: context.caseVersion,
+          target: context.target,
+          sourceRevisionHash: context.sourceRevisionHash,
+          dependencyEventKeys: commercialContactDependencies(fact.replacement, context.allFacts),
+          providerId: context.provider.providerId,
+          contactBindings: context.contactBindings,
+        })
+      : operationForBalancedJournal(fact.replacement, {
+          caseId: context.caseId,
+          caseVersion: context.caseVersion,
+          target: context.target,
+          sourceRevisionHash: context.sourceRevisionHash,
+          providerId: context.provider.providerId,
+        });
+  const expectedAction = (() => {
+    switch (replacementOperation.nativeRoute) {
+      case "SALES_INVOICE": return "customer_invoice.update_draft" as const;
+      case "SUPPLIER_BILL": return "supplier_bill.update_draft" as const;
+      case "CUSTOMER_CREDIT":
+      case "SUPPLIER_CREDIT": return "credit_note.update_draft" as const;
+      case "QUOTE": return "quote.update_draft" as const;
+      case "PURCHASE_ORDER": return "purchase_order.update_draft" as const;
+      case "MANUAL_JOURNAL": return "manual_journal.update_draft" as const;
+      default: {
+        throw new Error(`Unhandled update replacement route: ${String(replacementOperation.nativeRoute)}`);
+      }
+    }
+  })();
+  const reasonCodes = [...replacementOperation.reasonCodes];
+  if (fact.actionId !== expectedAction) reasonCodes.push("ACTION_ROUTE_MISMATCH");
+  const canonicalPayload = Object.freeze({
+    targetXeroObjectId: fact.targetXeroObjectId,
+    expectedUpdatedAt: fact.expectedUpdatedAt,
+    replacement: replacementOperation.canonicalPayload,
+  });
+  const canonicalPayloadHash = hashObject(canonicalPayload);
+  const operationIdentity = {
+    caseId: context.caseId,
+    caseVersion: context.caseVersion,
+    sourceRevisionHash: context.sourceRevisionHash,
+    eventId: eventId(context.caseId, fact.eventKey),
+    actionId: fact.actionId,
+    canonicalPayloadHash,
+  };
+  const coordinate = Object.freeze({
+    schemaVersion: ACCOUNTING_CASE_BUSINESS_RESERVATION_SCHEMA_VERSION,
+    providerId: context.provider.providerId,
+    kind: "DRAFT_DOCUMENT_UPDATE_TARGET",
+    canonicalFields: Object.freeze({
+      actionId: fact.actionId,
+      targetXeroObjectId: fact.targetXeroObjectId.toLowerCase(),
+    }),
+  });
+  const businessIdentity = Object.freeze({
+    schemaVersion: ACCOUNTING_CASE_BUSINESS_IDENTITY_SCHEMA_VERSION,
+    providerId: context.provider.providerId,
+    kind: "DRAFT_DOCUMENT_UPDATE_TARGET",
+    canonicalFields: coordinate.canonicalFields,
+  });
+  const operationReasons = uniqueSorted(reasonCodes);
+  return {
+    caseId: context.caseId,
+    target: context.target,
+    operationId: `op_${hashObject(operationIdentity).slice(0, 24)}`,
+    eventId: operationIdentity.eventId,
+    actionId: fact.actionId,
+    nativeRoute: "DRAFT_DOCUMENT_UPDATE",
+    dependencyEventKeys: replacementOperation.dependencyEventKeys,
+    canonicalPayload,
+    canonicalPayloadHash,
+    businessIdentity,
+    businessIdentityHash: hashObject(businessIdentity),
+    businessReservation: Object.freeze({
+      ...coordinate,
+      coordinateHash: hashObject(coordinate),
+      scope: "ALL_OCCURRENCES" as const,
+    }),
+    sourceRevisionHash: context.sourceRevisionHash,
+    caseVersion: context.caseVersion,
+    ...(replacementOperation.amountBridge ? { amountBridge: replacementOperation.amountBridge } : {}),
+    terminalState: operationReasons.length === 0 ? "ELIGIBLE_FOR_PREFLIGHT" : "BLOCKED_VALIDATION",
+    reasonCodes: operationReasons,
+  };
+}
+
 function validatePrepayment(fact: PrepaymentFact): string[] {
   const reasons: string[] = [];
   const net = decimalMinor(fact.net);
@@ -1063,6 +1370,22 @@ function validationReasons(
       }
       return uniqueSorted(reasons);
     }
+    case "BALANCED_JOURNAL": {
+      const reasons = balancedJournalRouteReasonCodes(fact);
+      if (fact.documentValidity === "UNKNOWN") reasons.push("DOCUMENT_VALIDITY_UNKNOWN");
+      if (fact.documentValidity === "TEST_OR_NOT_VALID" && target.environment !== "TEST") {
+        reasons.push("NON_LIVE_DOCUMENT_REQUIRES_TEST_TENANT");
+      }
+      if (target.periodLockDate && fact.date <= target.periodLockDate) {
+        reasons.push("DOCUMENT_DATE_IN_PERIOD_LOCK");
+      }
+      if (target.endOfYearLockDate && fact.date <= target.endOfYearLockDate) {
+        reasons.push("DOCUMENT_DATE_IN_END_OF_YEAR_LOCK");
+      }
+      return uniqueSorted(reasons);
+    }
+    case "DRAFT_DOCUMENT_UPDATE":
+      return validationReasons(fact.replacement, allFacts, target, policy, provider);
     case "PREPAYMENT": return uniqueSorted([
       ...validatePrepayment(fact),
       ...policy.validatePrepayment(fact, target),
@@ -1150,6 +1473,21 @@ function factDisposition(
       };
     }
   }
+  if (primary.kind === "DRAFT_DOCUMENT_UPDATE") {
+    const replacement = primary.replacement;
+    if (replacement.kind === "NATIVE_DOCUMENT" && !provider.contactBinding(replacement).resolvedId) {
+      return {
+        disposition: "REVIEW_REQUIRED",
+        reasonCodes: uniqueSorted([provider.unresolvedContactReasonCode, ...reasons]),
+      };
+    }
+    if (replacement.kind === "COMMERCIAL_DOCUMENT" && !commercialContactBindings.has(primary.factId)) {
+      return {
+        disposition: "REVIEW_REQUIRED",
+        reasonCodes: uniqueSorted([provider.unresolvedContactReasonCode, ...reasons]),
+      };
+    }
+  }
   switch (primary.kind) {
     case "CONTACT_CANDIDATE":
       return provider.contactBinding(primary).resolvedId
@@ -1159,7 +1497,12 @@ function factDisposition(
           : {
               disposition: "REVIEW_REQUIRED",
               reasonCodes: uniqueSorted(["CONTACT_DURABLE_IDENTITY_REQUIRED", ...reasons]),
-            };
+          };
+    case "CONTACT_BASIC_UPDATE":
+    case "ITEM_BASIC_CREATE_UNTRACKED":
+    case "ITEM_BASIC_UPDATE_UNTRACKED":
+    case "TRACKING_REFERENCE_DATA":
+      return { disposition: "AUTO_EXECUTE", reasonCodes: reasons };
     case "NATIVE_DOCUMENT": return { disposition: "AUTO_EXECUTE", reasonCodes: reasons };
     // Informational, not blocking: unlike invoices/bills/credit notes, there
     // is no pre-write "does this already exist in Xero" duplicate check for
@@ -1171,6 +1514,22 @@ function factDisposition(
       disposition: "AUTO_EXECUTE",
       reasonCodes: uniqueSorted(["EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE", ...reasons]),
     };
+    // Informational, not blocking -- same idiom as COMMERCIAL_DOCUMENT above,
+    // for the same underlying reason stated in docs/MANUAL-JOURNAL-DESIGN-2026-08-20.md:
+    // a human posting the identical journal by hand in the Xero web UI is not
+    // detectable by this server today. Xero's ManualJournal has no natural
+    // unique number to check the way an Invoice's InvoiceNumber does, so
+    // this is said explicitly rather than silently omitted.
+    case "BALANCED_JOURNAL": return {
+      disposition: "AUTO_EXECUTE",
+      reasonCodes: uniqueSorted(["EXISTING_DOCUMENT_CHECK_UNAVAILABLE_FOR_ROUTE", ...reasons]),
+    };
+    case "DRAFT_DOCUMENT_UPDATE":
+      return { disposition: "AUTO_EXECUTE", reasonCodes: reasons };
+    case "LEDGER_STATE_TRANSITION":
+    case "LEDGER_ADJUSTMENT":
+    case "PAYMENT_BANK_LEDGER":
+      return { disposition: "AUTO_EXECUTE", reasonCodes: reasons };
     case "ORIGINAL_TRANSACTION_EVIDENCE": return { disposition: "EVIDENCE_ONLY", reasonCodes: reasons };
     case "OPENING_BALANCE_REVIEW": return { disposition: "REVIEW_REQUIRED", reasonCodes: uniqueSorted(["OPENING_BALANCE_POLICY_REQUIRED", ...reasons]) };
     case "BANK_STATEMENT_SUMMARY":
@@ -1242,6 +1601,297 @@ function operationForContact(
     reasonCodes: [],
   };
 }
+
+type ReferenceDataFact = Extract<AccountingFact, {
+  kind: "CONTACT_BASIC_UPDATE" | "ITEM_BASIC_CREATE_UNTRACKED" | "ITEM_BASIC_UPDATE_UNTRACKED" |
+    "TRACKING_REFERENCE_DATA";
+}>;
+
+/**
+ * Case-native wrapper for the three safe reference-data primitives. This is
+ * intentionally a closed switch: adding an arbitrary object type or a new
+ * generic patch field requires an explicit compiler, service and provider
+ * decision instead of becoming silently writable through the Case surface.
+ */
+function operationForReferenceData(
+  fact: ReferenceDataFact,
+  context: {
+    caseId: string;
+    caseVersion: number;
+    target: AccountingCaseTarget;
+    sourceRevisionHash: string;
+    providerId: string;
+  },
+): AccountingCaseOperation {
+  const route: ReferenceDataRoute = fact.kind;
+  const mapped = (() => {
+    switch (fact.kind) {
+      case "CONTACT_BASIC_UPDATE":
+        return {
+          actionId: "contact.update_basic" as const,
+          objectType: "CONTACT" as const,
+          operation: "UPDATE" as const,
+          target: { contactId: fact.contactId },
+          input: { contactId: fact.contactId, patch: fact.patch },
+        };
+      case "ITEM_BASIC_CREATE_UNTRACKED":
+        return {
+          actionId: "item.create_basic_untracked" as const,
+          objectType: "ITEM" as const,
+          operation: "CREATE" as const,
+          target: { code: fact.item.code },
+          input: { item: fact.item },
+        };
+      case "ITEM_BASIC_UPDATE_UNTRACKED":
+        return {
+          actionId: "item.update_basic_untracked" as const,
+          objectType: "ITEM" as const,
+          operation: "UPDATE" as const,
+          target: { itemId: fact.itemId },
+          input: { itemId: fact.itemId, patch: fact.patch },
+        };
+      case "TRACKING_REFERENCE_DATA": {
+        const ids = {
+          ...(fact.trackingCategoryId ? { trackingCategoryId: fact.trackingCategoryId } : {}),
+          ...(fact.trackingOptionId ? { trackingOptionId: fact.trackingOptionId } : {}),
+        };
+        return {
+          actionId: fact.action,
+          objectType: fact.action.startsWith("tracking_category.") ? "TRACKING_CATEGORY" as const : "TRACKING_OPTION" as const,
+          operation: fact.action.endsWith(".create") ? "CREATE" as const : "UPDATE" as const,
+          target: fact.action.endsWith(".create")
+            ? { actionId: fact.action, ...ids, name: fact.name }
+            : { actionId: fact.action, ...ids },
+          input: { actionId: fact.action, ...ids, name: fact.name },
+        };
+      }
+      default: {
+        const unreachable: never = fact;
+        throw new Error(`Unhandled reference-data fact: ${String(unreachable)}`);
+      }
+    }
+  })();
+  const canonicalPayload = {
+    schemaVersion: "accounting-case-reference-data:v1",
+    route,
+    actionId: mapped.actionId,
+    objectType: mapped.objectType,
+    operation: mapped.operation,
+    ...mapped.input,
+  };
+  const canonicalPayloadHash = hashObject(canonicalPayload);
+  const operationIdentity = {
+    caseId: context.caseId,
+    caseVersion: context.caseVersion,
+    sourceRevisionHash: context.sourceRevisionHash,
+    eventId: eventId(context.caseId, fact.eventKey),
+    actionId: mapped.actionId,
+    canonicalPayloadHash,
+  };
+  const coordinate = Object.freeze({
+    schemaVersion: ACCOUNTING_CASE_BUSINESS_RESERVATION_SCHEMA_VERSION,
+    providerId: context.providerId,
+    kind: "REFERENCE_DATA_TARGET",
+    canonicalFields: Object.freeze({ route, actionId: mapped.actionId, ...mapped.target }),
+  });
+  const businessIdentity = Object.freeze({
+    schemaVersion: ACCOUNTING_CASE_BUSINESS_IDENTITY_SCHEMA_VERSION,
+    providerId: context.providerId,
+    kind: "REFERENCE_DATA_TARGET",
+    canonicalFields: coordinate.canonicalFields,
+  });
+  return {
+    caseId: context.caseId,
+    target: context.target,
+    operationId: `op_${hashObject(operationIdentity).slice(0, 24)}`,
+    eventId: operationIdentity.eventId,
+    actionId: mapped.actionId,
+    nativeRoute: route,
+    dependencyEventKeys: [],
+    canonicalPayload,
+    canonicalPayloadHash,
+    businessIdentity,
+    businessIdentityHash: hashObject(businessIdentity),
+    businessReservation: Object.freeze({
+      ...coordinate,
+      coordinateHash: hashObject(coordinate),
+      scope: "ALL_OCCURRENCES" as const,
+    }),
+    sourceRevisionHash: context.sourceRevisionHash,
+    caseVersion: context.caseVersion,
+    terminalState: "ELIGIBLE_FOR_PREFLIGHT",
+    reasonCodes: [],
+  };
+}
+
+function operationForLedgerStateTransition(
+  fact: LedgerStateTransitionFact,
+  context: {
+    caseId: string;
+    caseVersion: number;
+    target: AccountingCaseTarget;
+    sourceRevisionHash: string;
+    providerId: string;
+  },
+): AccountingCaseOperation {
+  const canonicalPayload = (() => {
+    switch (fact.actionId) {
+      case "customer_invoice.authorise":
+        return {
+          invoiceId: fact.targetXeroObjectId,
+          invoiceType: "ACCREC" as const,
+          expectedStatus: "DRAFT" as const,
+        };
+      case "supplier_bill.authorise":
+        return {
+          invoiceId: fact.targetXeroObjectId,
+          invoiceType: "ACCPAY" as const,
+          expectedStatus: "DRAFT" as const,
+        };
+      case "manual_journal.post":
+        return {
+          manualJournalId: fact.targetXeroObjectId,
+          expectedStatus: "DRAFT" as const,
+        };
+      default: {
+        const unreachable: never = fact.actionId;
+        throw new Error(`Unhandled ledger-state action: ${String(unreachable)}`);
+      }
+    }
+  })();
+  const canonicalPayloadHash = hashObject(canonicalPayload);
+  const identity = {
+    caseId: context.caseId,
+    caseVersion: context.caseVersion,
+    sourceRevisionHash: context.sourceRevisionHash,
+    eventId: eventId(context.caseId, fact.eventKey),
+    actionId: fact.actionId,
+    canonicalPayloadHash,
+  };
+  const coordinate = Object.freeze({
+    schemaVersion: ACCOUNTING_CASE_BUSINESS_RESERVATION_SCHEMA_VERSION,
+    providerId: context.providerId,
+    kind: "LEDGER_STATE_TARGET",
+    canonicalFields: Object.freeze({
+      actionId: fact.actionId,
+      targetXeroObjectId: fact.targetXeroObjectId,
+    }),
+  });
+  const businessIdentity = Object.freeze({
+    schemaVersion: ACCOUNTING_CASE_BUSINESS_IDENTITY_SCHEMA_VERSION,
+    providerId: context.providerId,
+    kind: "LEDGER_STATE_TARGET",
+    canonicalFields: coordinate.canonicalFields,
+  });
+  return {
+    caseId: context.caseId,
+    target: context.target,
+    operationId: `op_${hashObject(identity).slice(0, 24)}`,
+    eventId: identity.eventId,
+    actionId: fact.actionId,
+    nativeRoute: "LEDGER_STATE_TRANSITION",
+    dependencyEventKeys: [],
+    canonicalPayload,
+    canonicalPayloadHash,
+    businessIdentity,
+    businessIdentityHash: hashObject(businessIdentity),
+    businessReservation: Object.freeze({
+      ...coordinate,
+      coordinateHash: hashObject(coordinate),
+      scope: "ALL_OCCURRENCES" as const,
+    }),
+    sourceRevisionHash: context.sourceRevisionHash,
+    caseVersion: context.caseVersion,
+    terminalState: "ELIGIBLE_FOR_PREFLIGHT",
+    reasonCodes: [],
+  };
+}
+
+function operationForLedgerAdjustment(
+  fact: LedgerAdjustmentFact,
+  context: {
+    caseId: string;
+    caseVersion: number;
+    target: AccountingCaseTarget;
+    sourceRevisionHash: string;
+    providerId: string;
+  },
+): AccountingCaseOperation {
+  const canonicalPayload = parseLedgerAdjustmentPayload(fact.actionId, fact.payload);
+  const canonicalPayloadHash = hashObject(canonicalPayload);
+  const identity = {
+    caseId: context.caseId,
+    caseVersion: context.caseVersion,
+    sourceRevisionHash: context.sourceRevisionHash,
+    eventId: eventId(context.caseId, fact.eventKey),
+    actionId: fact.actionId,
+    canonicalPayloadHash,
+  };
+  const targetXeroObjectId = "invoiceId" in canonicalPayload
+    ? canonicalPayload.invoiceId
+    : "creditNoteId" in canonicalPayload
+      ? canonicalPayload.creditNoteId
+      : canonicalPayload.manualJournalId;
+  const coordinate = Object.freeze({
+    schemaVersion: ACCOUNTING_CASE_BUSINESS_RESERVATION_SCHEMA_VERSION,
+    providerId: context.providerId,
+    kind: "LEDGER_ADJUSTMENT_TARGET",
+    canonicalFields: Object.freeze({ actionId: fact.actionId, targetXeroObjectId }),
+  });
+  const businessIdentity = Object.freeze({
+    schemaVersion: ACCOUNTING_CASE_BUSINESS_IDENTITY_SCHEMA_VERSION,
+    providerId: context.providerId,
+    kind: "LEDGER_ADJUSTMENT_TARGET",
+    canonicalFields: coordinate.canonicalFields,
+  });
+  return {
+    caseId: context.caseId,
+    target: context.target,
+    operationId: `op_${hashObject(identity).slice(0, 24)}`,
+    eventId: identity.eventId,
+    actionId: fact.actionId,
+    nativeRoute: "LEDGER_ADJUSTMENT",
+    dependencyEventKeys: [],
+    canonicalPayload,
+    canonicalPayloadHash,
+    businessIdentity,
+    businessIdentityHash: hashObject(businessIdentity),
+    businessReservation: Object.freeze({
+      ...coordinate,
+      coordinateHash: hashObject(coordinate),
+      scope: "ALL_OCCURRENCES" as const,
+    }),
+    sourceRevisionHash: context.sourceRevisionHash,
+    caseVersion: context.caseVersion,
+    terminalState: "ELIGIBLE_FOR_PREFLIGHT",
+    reasonCodes: [],
+  };
+}
+
+function operationForPaymentBankLedger(
+  fact: PaymentBankLedgerFact,
+  context: { caseId: string; caseVersion: number; target: AccountingCaseTarget; sourceRevisionHash: string; providerId: string },
+): AccountingCaseOperation {
+  const canonicalPayload = fact.payload as unknown as Record<string, unknown>;
+  const canonicalPayloadHash = hashObject(canonicalPayload);
+  const identity = { caseId: context.caseId, caseVersion: context.caseVersion, sourceRevisionHash: context.sourceRevisionHash,
+    eventId: eventId(context.caseId, fact.eventKey), actionId: fact.actionId, canonicalPayloadHash };
+  const targetXeroObjectId = fact.actionId === "payment.reverse" ? fact.payload.paymentId
+    : (fact.actionId === "bank_transaction.update" || fact.actionId === "bank_transaction.reverse")
+      ? fact.payload.bankTransactionId : undefined;
+  const coordinate = Object.freeze({ schemaVersion: ACCOUNTING_CASE_BUSINESS_RESERVATION_SCHEMA_VERSION,
+    providerId: context.providerId, kind: "PAYMENT_BANK_LEDGER_TARGET",
+    canonicalFields: Object.freeze({ actionId: fact.actionId, ...(targetXeroObjectId ? { targetXeroObjectId } : { canonicalPayloadHash }) }) });
+  const businessIdentity = Object.freeze({ schemaVersion: ACCOUNTING_CASE_BUSINESS_IDENTITY_SCHEMA_VERSION,
+    providerId: context.providerId, kind: "PAYMENT_BANK_LEDGER_TARGET", canonicalFields: coordinate.canonicalFields });
+  return { caseId: context.caseId, target: context.target, operationId: `op_${hashObject(identity).slice(0, 24)}`,
+    eventId: identity.eventId, actionId: fact.actionId, nativeRoute: "PAYMENT_BANK_LEDGER", dependencyEventKeys: [],
+    canonicalPayload, canonicalPayloadHash, businessIdentity, businessIdentityHash: hashObject(businessIdentity),
+    businessReservation: Object.freeze({ ...coordinate, coordinateHash: hashObject(coordinate), scope: "ALL_OCCURRENCES" as const }),
+    sourceRevisionHash: context.sourceRevisionHash, caseVersion: context.caseVersion,
+    terminalState: "ELIGIBLE_FOR_PREFLIGHT", reasonCodes: [] };
+}
+
 
 function plannedBusinessKeys(operation: AccountingCaseOperation): string[] {
   const payload = operation.canonicalPayload;
@@ -1428,12 +2078,25 @@ export function compileAccountingCase(
     .map(([eventKey, groupedFacts]) => {
       const primary = primaryFact(groupedFacts);
       const decision = factDisposition(groupedFacts, facts, input.target, policy, provider, commercialContactBindings);
-      let route: NativeDocumentRoute | CommercialDocumentRoute | "CONTACT_CREATE" | undefined;
+      let route: NativeDocumentRoute | CommercialDocumentRoute | BalancedJournalRoute | ReferenceDataRoute |
+        LedgerStateTransitionRoute | LedgerAdjustmentRoute | PaymentBankLedgerRoute |
+        "DRAFT_DOCUMENT_UPDATE" | "CONTACT_CREATE" | undefined;
       if (primary?.kind === "NATIVE_DOCUMENT") {
         route = provider.evaluateNativeRoute(primary, input.target).route;
       }
       if (primary?.kind === "COMMERCIAL_DOCUMENT") route = primary.documentKind;
+      if (primary?.kind === "BALANCED_JOURNAL") route = "MANUAL_JOURNAL";
+      if (primary?.kind === "DRAFT_DOCUMENT_UPDATE") route = "DRAFT_DOCUMENT_UPDATE";
+      if (primary?.kind === "LEDGER_STATE_TRANSITION") route = "LEDGER_STATE_TRANSITION";
+      if (primary?.kind === "LEDGER_ADJUSTMENT") route = "LEDGER_ADJUSTMENT";
+      if (primary?.kind === "PAYMENT_BANK_LEDGER") route = "PAYMENT_BANK_LEDGER";
       if (primary?.kind === "CONTACT_CANDIDATE") route = "CONTACT_CREATE";
+      if (
+        primary?.kind === "CONTACT_BASIC_UPDATE" ||
+        primary?.kind === "ITEM_BASIC_CREATE_UNTRACKED" ||
+        primary?.kind === "ITEM_BASIC_UPDATE_UNTRACKED" ||
+        primary?.kind === "TRACKING_REFERENCE_DATA"
+      ) route = primary.kind;
       return {
         eventId: eventId(input.caseId, eventKey),
         eventKey,
@@ -1455,9 +2118,12 @@ export function compileAccountingCase(
     provider,
   };
   const hasGlobalDocumentEligibilityBlock = facts.some((fact) =>
-    (fact.kind === "NATIVE_DOCUMENT" || fact.kind === "COMMERCIAL_DOCUMENT") &&
-    (fact.documentValidity === "UNKNOWN" ||
-      (fact.documentValidity === "TEST_OR_NOT_VALID" && input.target.environment === "PRODUCTION")));
+    fact.kind === "DRAFT_DOCUMENT_UPDATE"
+      ? fact.replacement.documentValidity === "UNKNOWN" ||
+        (fact.replacement.documentValidity === "TEST_OR_NOT_VALID" && input.target.environment === "PRODUCTION")
+      : (fact.kind === "NATIVE_DOCUMENT" || fact.kind === "COMMERCIAL_DOCUMENT" || fact.kind === "BALANCED_JOURNAL") &&
+        (fact.documentValidity === "UNKNOWN" ||
+          (fact.documentValidity === "TEST_OR_NOT_VALID" && input.target.environment === "PRODUCTION")));
   const operations = (hasGlobalDocumentEligibilityBlock ? [] : facts.flatMap((fact): AccountingCaseOperation[] => {
     const event = events.find((candidate) => candidate.eventKey === fact.eventKey);
     if (event?.disposition !== "AUTO_EXECUTE") return [];
@@ -1479,6 +2145,63 @@ export function compileAccountingCase(
         dependencyEventKeys: commercialContactDependencies(fact, facts),
         providerId: provider.providerId,
         contactBindings: commercialContactBindings,
+      })];
+    }
+    if (fact.kind === "BALANCED_JOURNAL") {
+      return [operationForBalancedJournal(fact, {
+        caseId: input.caseId,
+        caseVersion,
+        target: input.target,
+        sourceRevisionHash,
+        providerId: provider.providerId,
+      })];
+    }
+    if (fact.kind === "DRAFT_DOCUMENT_UPDATE") {
+      return [operationForDraftDocumentUpdate(fact, {
+        caseId: input.caseId,
+        caseVersion,
+        target: input.target,
+        sourceRevisionHash,
+        policy,
+        provider,
+        contactBindings: commercialContactBindings,
+        allFacts: facts,
+      })];
+    }
+    if (fact.kind === "LEDGER_STATE_TRANSITION") {
+      return [operationForLedgerStateTransition(fact, {
+        caseId: input.caseId,
+        caseVersion,
+        target: input.target,
+        sourceRevisionHash,
+        providerId: provider.providerId,
+      })];
+    }
+    if (fact.kind === "LEDGER_ADJUSTMENT") {
+      return [operationForLedgerAdjustment(fact, {
+        caseId: input.caseId,
+        caseVersion,
+        target: input.target,
+        sourceRevisionHash,
+        providerId: provider.providerId,
+      })];
+    }
+    if (fact.kind === "PAYMENT_BANK_LEDGER") {
+      return [operationForPaymentBankLedger(fact, { caseId: input.caseId, caseVersion, target: input.target,
+        sourceRevisionHash, providerId: provider.providerId })];
+    }
+    if (
+      fact.kind === "CONTACT_BASIC_UPDATE" ||
+      fact.kind === "ITEM_BASIC_CREATE_UNTRACKED" ||
+      fact.kind === "ITEM_BASIC_UPDATE_UNTRACKED" ||
+      fact.kind === "TRACKING_REFERENCE_DATA"
+    ) {
+      return [operationForReferenceData(fact, {
+        caseId: input.caseId,
+        caseVersion,
+        target: input.target,
+        sourceRevisionHash,
+        providerId: provider.providerId,
       })];
     }
     return [];
