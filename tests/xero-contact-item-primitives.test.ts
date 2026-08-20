@@ -886,7 +886,10 @@ describe("safe untracked Xero item primitives", () => {
       updatedDateUTC: "2026-08-07T10:00:00.000Z",
     }, {
       expectedCreatedId: "33333333-3333-4333-8333-333333333333",
-    })).toMatchObject({ verified: false, mismatches: ["target"] });
+    // proves: a single disagreeing target field (isTrackedAsInventory: false
+    // vs the provider's true) is now named as "target.isTrackedAsInventory",
+    // not collapsed to the bare, unactionable "target" it used to report.
+    })).toMatchObject({ verified: false, mismatches: ["target.isTrackedAsInventory"] });
     expect(mapSafeItemReadback({
       itemID: "33333333-3333-4333-8333-333333333333",
       code: "SVC-001",
@@ -914,5 +917,31 @@ describe("safe untracked Xero item primitives", () => {
       isTrackedAsInventory: false,
       updatedDateUTC: "2026-08-07T10:00:00.000Z",
     })).toBeUndefined();
+  });
+
+  it("names the exact target field that disagreed and never leaks the disagreeing value through that name", () => {
+    // proves: (1) a single changed target field is now named "target.name",
+    // aligned with verifyContactReadback's existing target.name shape,
+    // instead of the previous bare "target" that told the caller nothing it
+    // could act on; (2) the field NAME is safe to return because it is a
+    // fixed schema key, but the field VALUE never appears anywhere in the
+    // result - mirroring xeroFailureEnvelope.test.ts's "SECRET-LEAK" guarantee
+    // one layer further upstream, at the primitive that feeds it.
+    const prepared = prepareItemCreate({
+      code: "SVC-001",
+      name: "Accounting advisory",
+    }, { confirmationToken: "0102030405060708" });
+    const raw = {
+      itemID: "33333333-3333-4333-8333-333333333333",
+      code: "SVC-001",
+      name: "SECRET-LEAK-PROVIDER-VALUE",
+      isSold: true,
+      isPurchased: true,
+      isTrackedAsInventory: false,
+      updatedDateUTC: "2026-08-07T10:00:00.000Z",
+    };
+    const result = verifyItemReadback(prepared, raw, { expectedCreatedId: raw.itemID });
+    expect(result).toMatchObject({ verified: false, mismatches: ["target.name"] });
+    expect(JSON.stringify(result.mismatches)).not.toContain("SECRET-LEAK");
   });
 });

@@ -19,6 +19,7 @@ import {
   type PrepareQuoteDraftInput,
 } from "../domain/xeroQuotePurchaseOrderDraft.js";
 import { hashObject } from "../security/hash.js";
+import { canonicalPayloadMismatchFields } from "./canonicalPayloadDiff.js";
 import { xeroProviderDateOnly } from "./xeroProviderDate.js";
 
 const QUOTE_LINE_AMOUNT_TYPES: Readonly<Record<CanonicalLineAmountType, QuoteLineAmountTypes>> = {
@@ -145,6 +146,13 @@ export type DraftReadbackVerificationResult<TSnapshot, TCanonical> =
       >;
       snapshot?: TSnapshot;
       readbackCanonicalPayload?: TCanonical;
+      /**
+       * Dot/bracket field paths ("lines[0].accountCode") where the readback
+       * canonical payload disagreed with what was prepared. Only present
+       * alongside CANONICAL_PAYLOAD_MISMATCH, and only names fields - never
+       * values. See canonicalPayloadDiff.ts for the constraint this rests on.
+       */
+      mismatchFields?: readonly string[];
     };
 
 /**
@@ -427,6 +435,7 @@ export function verifyQuoteDraftReadback(
       ...(reasons.includes("CANONICAL_PAYLOAD_MISMATCH") ? {
         snapshot: mapped.snapshot,
         readbackCanonicalPayload: mapped.snapshot.canonicalPayload,
+        mismatchFields: canonicalPayloadMismatchFields(expected, mapped.snapshot.canonicalPayload),
       } : {}),
     };
   }
@@ -463,6 +472,7 @@ export function verifyPurchaseOrderDraftReadback(
       ...(reasons.includes("CANONICAL_PAYLOAD_MISMATCH") ? {
         snapshot: mapped.snapshot,
         readbackCanonicalPayload: mapped.snapshot.canonicalPayload,
+        mismatchFields: canonicalPayloadMismatchFields(expected, mapped.snapshot.canonicalPayload),
       } : {}),
     };
   }

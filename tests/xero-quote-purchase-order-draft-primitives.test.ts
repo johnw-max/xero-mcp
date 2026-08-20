@@ -670,6 +670,68 @@ describe("Quote and purchase-order draft schemas", () => {
     )).toMatchObject({ ok: true });
   });
 
+  it("names the exact canonical-payload field that disagreed, and never the disagreeing value, on CANONICAL_PAYLOAD_MISMATCH", () => {
+    // proves: CANONICAL_PAYLOAD_MISMATCH used to be the entire report - no
+    // field name, just the bucket. A single header-field change is now named
+    // exactly ("reference"), a single line-field change carries the
+    // array-index path shape the implementation plan specifies
+    // ("lines[0].accountCode"), and a provider-controlled value injected into
+    // that same field never appears inside mismatchFields - the only piece of
+    // this result the MCP failure envelope actually projects to the agent.
+    const quote = buildQuoteDraftPrimitive(quoteInput);
+    const purchaseOrder = buildPurchaseOrderDraftPrimitive(purchaseOrderInput);
+    const rawQuote = quoteReadback();
+    const rawPurchaseOrder = purchaseOrderReadback();
+
+    const quoteHeaderResult = verifyQuoteDraftReadback(
+      quoteId,
+      quote.canonicalPayload,
+      { ...rawQuote, reference: "SECRET-LEAK-FROM-PROVIDER" },
+    );
+    expect(quoteHeaderResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["reference"],
+    });
+    if (quoteHeaderResult.ok) throw new Error("expected a mismatch");
+    expect(JSON.stringify(quoteHeaderResult.mismatchFields)).not.toContain("SECRET-LEAK");
+
+    const quoteLineResult = verifyQuoteDraftReadback(
+      quoteId,
+      quote.canonicalPayload,
+      { ...rawQuote, lineItems: [{ ...rawQuote.lineItems[0], accountCode: "201" }] },
+    );
+    expect(quoteLineResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["lines[0].accountCode"],
+    });
+
+    const purchaseOrderHeaderResult = verifyPurchaseOrderDraftReadback(
+      purchaseOrderId,
+      purchaseOrder.canonicalPayload,
+      { ...rawPurchaseOrder, reference: "SECRET-LEAK-FROM-PROVIDER" },
+    );
+    expect(purchaseOrderHeaderResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["reference"],
+    });
+    if (purchaseOrderHeaderResult.ok) throw new Error("expected a mismatch");
+    expect(JSON.stringify(purchaseOrderHeaderResult.mismatchFields)).not.toContain("SECRET-LEAK");
+
+    const purchaseOrderLineResult = verifyPurchaseOrderDraftReadback(
+      purchaseOrderId,
+      purchaseOrder.canonicalPayload,
+      { ...rawPurchaseOrder, lineItems: [{ ...rawPurchaseOrder.lineItems[0], accountCode: "454" }] },
+    );
+    expect(purchaseOrderLineResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["lines[0].accountCode"],
+    });
+  });
+
   it("fails closed on missing, malformed, non-finite, over-precise, duplicate, or provider-error readbacks", () => {
     const rawQuote = quoteReadback();
     const baseLine = rawQuote.lineItems[0];

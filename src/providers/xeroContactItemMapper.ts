@@ -18,6 +18,7 @@ import {
   safeItemSnapshotSchema,
 } from "../domain/xeroContactItemPrimitives.js";
 import { sha256, stableStringify } from "../security/hash.js";
+import { canonicalPayloadMismatchFields } from "./canonicalPayloadDiff.js";
 import { xeroProviderInstant } from "./xeroProviderDate.js";
 
 type ProviderObject = Record<string, unknown>;
@@ -566,6 +567,11 @@ export function verifyItemReadback(
     }
   }
   if (prepared.operation === "UPDATE" && snapshot.itemId !== prepared.itemId) mismatches.push("itemId");
-  if (stableStringify(targetFromItemSnapshot(snapshot)) !== stableStringify(prepared.target)) mismatches.push("target");
+  if (stableStringify(targetFromItemSnapshot(snapshot)) !== stableStringify(prepared.target)) {
+    mismatches.push(...canonicalPayloadMismatchFields(
+      prepared.target,
+      targetFromItemSnapshot(snapshot),
+    ).map((field) => `target.${field}`));
+  }
   return { verified: mismatches.length === 0, snapshot, mismatches };
 }

@@ -661,6 +661,77 @@ describe("Credit Note and Manual Journal DRAFT primitives", () => {
     )).toMatchObject({ ok: true });
   });
 
+  it("names the exact canonical-payload field that disagreed, and never the disagreeing value, on CANONICAL_PAYLOAD_MISMATCH", () => {
+    // proves: CANONICAL_PAYLOAD_MISMATCH used to be the entire report - no
+    // field name, just the bucket. A single header-field change is now named
+    // exactly ("reference" / "narration"), a single line-field change carries
+    // the array-index path shape the implementation plan specifies
+    // ("lines[0].accountCode"), and a provider-controlled value injected into
+    // that same field never appears inside mismatchFields - the only piece of
+    // this result the MCP failure envelope actually projects to the agent
+    // (xeroFailureEnvelope.ts reads safe.details?.mismatchFields only; it
+    // never echoes snapshot/readbackCanonicalPayload, which legitimately do
+    // carry real values here for operator recovery evidence).
+    const credit = buildCreditNoteDraftPrimitive(creditNoteInput);
+    const journal = buildManualJournalDraftPrimitive(manualJournalInput);
+    const rawCredit = creditNoteReadback();
+    const rawJournal = manualJournalReadback();
+
+    const creditHeaderResult = verifyCreditNoteDraftReadback(
+      creditNoteId,
+      credit.canonicalPayload,
+      { ...rawCredit, reference: "SECRET-LEAK-FROM-PROVIDER" },
+    );
+    expect(creditHeaderResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["reference"],
+    });
+    if (creditHeaderResult.ok) throw new Error("expected a mismatch");
+    expect(JSON.stringify(creditHeaderResult.mismatchFields)).not.toContain("SECRET-LEAK");
+
+    const creditLineResult = verifyCreditNoteDraftReadback(
+      creditNoteId,
+      credit.canonicalPayload,
+      { ...rawCredit, lineItems: [{ ...rawCredit.lineItems[0], accountCode: "201" }] },
+    );
+    expect(creditLineResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["lines[0].accountCode"],
+    });
+
+    const journalHeaderResult = verifyManualJournalDraftReadback(
+      manualJournalId,
+      journal.canonicalPayload,
+      { ...rawJournal, narration: "SECRET-LEAK-FROM-PROVIDER" },
+    );
+    expect(journalHeaderResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["narration"],
+    });
+    if (journalHeaderResult.ok) throw new Error("expected a mismatch");
+    expect(JSON.stringify(journalHeaderResult.mismatchFields)).not.toContain("SECRET-LEAK");
+
+    const journalLineResult = verifyManualJournalDraftReadback(
+      manualJournalId,
+      journal.canonicalPayload,
+      {
+        ...rawJournal,
+        journalLines: [
+          { ...rawJournal.journalLines[0], accountCode: "454" },
+          rawJournal.journalLines[1],
+        ],
+      },
+    );
+    expect(journalLineResult).toMatchObject({
+      ok: false,
+      reasons: ["CANONICAL_PAYLOAD_MISMATCH"],
+      mismatchFields: ["lines[0].accountCode"],
+    });
+  });
+
   it("fails closed on final-state evidence, discounts, allocations, malformed values, tax mismatches, and unbalanced journals", () => {
     const sealedCredit = buildCreditNoteDraftPrimitive(creditNoteInput);
     const rawCredit = creditNoteReadback();

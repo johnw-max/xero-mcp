@@ -403,7 +403,11 @@ export class XeroCreditNoteManualJournalService {
           });
           throw new AppError("READBACK_MISMATCH", "Xero readback does not match the confirmed draft.", {
             httpStatus: 409,
-            details: { outcome: recovered.outcome, xeroObjectId: objectId },
+            details: {
+              outcome: recovered.outcome,
+              xeroObjectId: objectId,
+              ...(verified.mismatchFields ? { mismatchFields: verified.mismatchFields } : {}),
+            },
           });
         }
         await this.mutations.markUnknown(context, {
