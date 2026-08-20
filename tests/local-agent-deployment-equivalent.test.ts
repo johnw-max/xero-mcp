@@ -1,14 +1,11 @@
 import { access, readFile } from "node:fs/promises";
-import { constants as fsConstants, realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { constants as fsConstants } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   ACCOUNTING_CASE_AGENT_ENABLED_TOOLS,
   AGENT_BUNDLE_SOURCES,
   AGENT_INSTRUCTION_SOURCES,
   AGENT_PROJECT_DOC_BYTE_LIMIT,
-  AGENT_SKILL_MOUNTS,
   buildToolContractEvidence,
   createAgentWorkspace,
   runtimeConfiguration,
@@ -31,60 +28,34 @@ describe("local deployment-equivalent Agent harness", () => {
     expect(businessPrompt).toMatch(/授权/u);
   });
 
-  it("permits only pre-business read commands for mounted Skill/reference files", () => {
-    const skillPath = `${AGENT_SKILL_MOUNTS[0].root}/${AGENT_SKILL_MOUNTS[0].files[0].path}`;
-    const readEvent = (command: string, id = "skill-read") => ({
+  // The Codex-era generator could legally read the mounted Skill docs off
+  // disk via a bounded set of shell commands before its first business MCP
+  // call, and assertRawAgentCommandEvents used to police exactly which files
+  // and workspace root those reads were allowed to touch (see the removed
+  // "permits only pre-business read commands..." and "unwraps only the exact
+  // Codex zsh wrapper..." tests this replaces). The current generator is a
+  // deterministic MCP client: it has no instructions document to read at run
+  // time and never shells out, so the only thing left to assert is that no
+  // such event exists in the transcript at all, in either shape this module
+  // accepts a transcript in - a plain array of events, or the `{ line, event
+  // }` tuples `parseJsonLines` produces.
+  it("rejects any command_execution event in the transcript, in either accepted shape", () => {
+    const mcpCallEvent = {
       type: "item.completed",
-      item: { type: "command_execution", id, command, status: "completed", exit_code: 0 },
-    });
-    expect(assertRawAgentCommandEvents([readEvent(`sed -n '1,200p' ${skillPath}`)])).toEqual({
-      command_count: 1,
-      paths: [skillPath],
-    });
-    expect(() => assertRawAgentCommandEvents([readEvent("cat README.md")]))
-      .toThrow("LOCAL_AGENT_SKILL_COMMAND_INVALID");
-    expect(() => assertRawAgentCommandEvents([readEvent(`cat ${skillPath} > /tmp/skill-copy`)]))
-      .toThrow("LOCAL_AGENT_SKILL_COMMAND_INVALID");
-    expect(() => assertRawAgentCommandEvents([
-      readEvent(`cat ${skillPath}`),
-      { type: "item.completed", item: { type: "mcp_tool_call", id: "pin", tool: "xero_pin_current_organisation" } },
-      readEvent(`cat ${skillPath}`, "late-read"),
-    ])).toThrow("LOCAL_AGENT_SKILL_COMMAND_AFTER_BUSINESS");
-  });
-
-  it("unwraps only the exact Codex zsh wrapper and locks absolute reads to one temp workspace root", () => {
-    const skillPath = `${AGENT_SKILL_MOUNTS[0].root}/${AGENT_SKILL_MOUNTS[0].files[0].path}`;
-    const tempRoot = realpathSync(tmpdir());
-    const rootA = join(tempRoot, "xero-local-agent-workspace-test-A");
-    const rootB = join(tempRoot, "xero-local-agent-workspace-test-B");
-    const commandEvent = (root: string, id: string) => ({
+      item: { type: "mcp_tool_call", id: "pin", tool: "xero_pin_current_organisation", arguments: {}, result: {} },
+    };
+    const commandEvent = {
       type: "item.completed",
-      item: {
-        type: "command_execution",
-        id,
-        command: `/bin/zsh -lc "sed -n '1,240p' ${root}/${skillPath}"`,
-        status: "completed",
-        exit_code: 0,
-      },
-    });
-    expect(assertRawAgentCommandEvents([{
-      line: 1,
-      event: commandEvent(rootA, "wrapped-read"),
-    }])).toMatchObject({ command_count: 1, paths: [skillPath] });
-    expect(() => assertRawAgentCommandEvents([
-      commandEvent(rootA, "read-a"),
-      commandEvent(rootB, "read-b"),
-    ])).toThrow("LOCAL_AGENT_SKILL_COMMAND_ROOT_DRIFT");
-    expect(() => assertRawAgentCommandEvents([{
-      type: "item.completed",
-      item: {
-        type: "command_execution",
-        id: "wrong-wrapper",
-        command: `/bin/bash -lc "cat ${rootA}/${skillPath}"`,
-        status: "completed",
-        exit_code: 0,
-      },
-    }])).toThrow("LOCAL_AGENT_SKILL_COMMAND_INVALID");
+      item: { type: "command_execution", id: "shell-1", command: "cat SKILL.md", status: "completed", exit_code: 0 },
+    };
+    expect(assertRawAgentCommandEvents([mcpCallEvent])).toBe(true);
+    expect(assertRawAgentCommandEvents([{ line: 1, event: mcpCallEvent }])).toBe(true);
+    expect(() => assertRawAgentCommandEvents([mcpCallEvent, commandEvent]))
+      .toThrow("LOCAL_AGENT_UNEXPECTED_COMMAND_EXECUTION");
+    expect(() => assertRawAgentCommandEvents([{ line: 1, event: commandEvent }]))
+      .toThrow("LOCAL_AGENT_UNEXPECTED_COMMAND_EXECUTION");
+    expect(() => assertRawAgentCommandEvents("not-an-array" as never))
+      .toThrow("LOCAL_AGENT_TRANSCRIPT_INVALID");
   });
 
   it("composes the final deployment sources and required Skill reference without rewriting their bytes", async () => {

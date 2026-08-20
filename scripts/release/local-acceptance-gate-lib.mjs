@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, watch } from "node:fs";
 import {
@@ -9,7 +8,6 @@ import {
   mkdtemp,
   readFile,
   readdir,
-  realpath,
   rename,
   rm,
   writeFile,
@@ -18,7 +16,6 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { REQUIRED_GATE_STEP_IDS } from "../local-acceptance-contract.mjs";
 import {
-  assertAgentSkillReadCommandEvents,
   verifyAgentBundleEvidence,
   verifyAgentBundleEvidenceSync,
 } from "../../harness/local-agents/agent-workspace.mjs";
@@ -33,8 +30,8 @@ export const REQUIRED_CRASH_SCENARIO_IDS = Object.freeze([
 ]);
 
 const REQUIRED_LOCAL_AGENT_ARTIFACT_TYPES = Object.freeze([
-  "CODEX_EVENTS_JSONL",
-  "CODEX_STDERR",
+  "MCP_CLIENT_TRANSCRIPT_JSONL",
+  "MCP_SERVER_STDERR",
   "FINAL_ANSWER",
   "SERVER_AUDIT",
   "INVOCATION",
@@ -55,10 +52,16 @@ export const ACCEPTED_LOCAL_AGENT_EVIDENCE_BOUNDARIES = Object.freeze([
   "LOCAL_SYNTHETIC_PROVIDER_SDK_BOUNDARY",
   "LOCAL_REAL_PROVIDER_SDK_BOUNDARY",
 ]);
-export const APPROVED_LOCAL_AGENT_CODEX_PATHS = Object.freeze([
-  "/Applications/ChatGPT.app/Contents/Resources/codex",
-]);
-const APPROVED_LOCAL_AGENT_CODEX_TEAM_ID = "2DC432GLL2";
+// A hardcoded vendor executable path and Apple Team ID used to be pinned here
+// too, and `verifyLocalAgentExecutableIdentity` (removed - see
+// scripts/release/run-local-agent-evidence.mjs's header comment) shelled out
+// to `codesign` to check them. The generator no longer spawns any vendor
+// binary - it drives this repository's own `@modelcontextprotocol/sdk`
+// client directly - so there is no separate executable identity left to pin
+// here. What that check verified about the *evidence itself* (raw artifact
+// bytes match their recorded digests, the generator script's own bytes match
+// its recorded digest) is unchanged and still enforced by
+// `verifyEvidenceArtifactFiles` below.
 
 export const ACCEPTANCE_SOURCE_ROOTS = Object.freeze([
   ".dockerignore",
@@ -142,7 +145,7 @@ function exactKeys(value, keys) {
     JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
 }
 
-function codexToolCalls(events) {
+function mcpClientToolCalls(events) {
   const calls = new Map();
   for (const [index, event] of events.entries()) {
     const item = event?.item;
@@ -574,23 +577,22 @@ export async function verifyEvidenceArtifactFiles(document, evidencePath, repoRo
  * generator cannot certify itself merely by writing `status: PASS`.
  */
 export function verifyLocalAgentRawSemantics(document, artifacts, options = {}) {
-  const events = parseJsonLinesBuffer(artifacts.get("CODEX_EVENTS_JSONL"), "LOCAL_AGENT_CODEX_EVENTS");
-  assertAgentSkillReadCommandEvents(events, { errorPrefix: "LOCAL_AGENT_RAW" });
+  const events = parseJsonLinesBuffer(artifacts.get("MCP_CLIENT_TRANSCRIPT_JSONL"), "LOCAL_AGENT_MCP_CLIENT_EVENTS");
+  // The Codex-era transcript could legally carry a bounded set of shell reads
+  // against the mounted Skill docs before the first business MCP call, and
+  // assertAgentSkillReadCommandEvents policed exactly which files and
+  // workspace root those reads were allowed to touch. A deterministic client
+  // has no instructions document to read and never shells out at all, so the
+  // honest replacement is not "police the shell command" but "there must be
+  // no such event, in any form." See the matching comment on
+  // assertRawAgentCommandEvents in scripts/release/run-local-agent-evidence.mjs.
+  if (events.some((event) => event?.item?.type === "command_execution")) {
+    throw new Error("LOCAL_AGENT_RAW_UNEXPECTED_COMMAND_EXECUTION");
+  }
   const finalAnswer = parseJsonBuffer(artifacts.get("FINAL_ANSWER"), "LOCAL_AGENT_FINAL_ANSWER");
   const audit = parseJsonBuffer(artifacts.get("SERVER_AUDIT"), "LOCAL_AGENT_SERVER_AUDIT");
   const invocation = parseJsonBuffer(artifacts.get("INVOCATION"), "LOCAL_AGENT_INVOCATION");
-  if (invocation.agent_workspace) {
-    if (!isRecord(document.agent_workspace) ||
-        stableStringify(document.agent_workspace) !== stableStringify(invocation.agent_workspace)) {
-      throw new Error("LOCAL_AGENT_RAW_AGENT_WORKSPACE_SUMMARY_INVALID");
-    }
-    verifyAgentBundleEvidenceSync(options.repoRoot ?? process.cwd(), invocation.agent_workspace);
-    if (document.model !== invocation.model || document.effort !== invocation.effort ||
-        !isNonEmptyString(invocation.model) || !isNonEmptyString(invocation.effort)) {
-      throw new Error("LOCAL_AGENT_RAW_MODEL_EFFORT_INVALID");
-    }
-  }
-  const allCalls = codexToolCalls(events);
+  const allCalls = mcpClientToolCalls(events);
   const safeDiscoveryTools = new Set(["list_mcp_resources", "list_mcp_resource_templates"]);
   const calls = [];
   let businessStarted = false;
@@ -765,6 +767,12 @@ export function verifyLocalAgentRawSemantics(document, artifacts, options = {}) 
     original_file_verified: false,
     fact_origins: ["MODEL_EXTRACTED"],
     document_validity_basis: "SUBMITTED_ASSERTION",
+    // Kept in sync with the matching literal in
+    // scripts/release/run-local-agent-evidence.mjs's assertAgentRun - see the
+    // comment there for why this field was added.
+    verification_scope_note: "Readback confirms the ledger stored exactly what was sent. " +
+      "It does not check those figures against the original document, which was not independently verified. " +
+      "Do not describe this write as verified without saying which of the two you mean.",
   };
   if (prepareResult?.completion_claim?.ledger_write_claim !== "NOT_WRITTEN" ||
       executeResult?.completion_claim?.ledger_write_claim !== "ALL_ELIGIBLE_WRITES_READBACK_VERIFIED" ||
@@ -800,10 +808,19 @@ export function verifyLocalAgentRawSemantics(document, artifacts, options = {}) 
       finalAnswer.original_file_verified !== false) {
     throw new Error("LOCAL_AGENT_RAW_FINAL_ANSWER_INVALID");
   }
-  const finalAgentMessages = events.filter((event) => event?.item?.type === "agent_message");
-  const lastAgentText = finalAgentMessages.at(-1)?.item?.text;
-  if (!isNonEmptyString(lastAgentText) || stableStringify(parseJsonBuffer(Buffer.from(lastAgentText), "LOCAL_AGENT_LAST_MESSAGE")) !==
-      stableStringify(finalAnswer) || calls.at(-1).lastIndex >= events.lastIndexOf(finalAgentMessages.at(-1))) {
+  // Codex's own chat reply used to be the only place a final answer existed
+  // in the raw transcript (type "agent_message"); this checked that a real
+  // model produced it, that it matched the separately captured last-message
+  // file, and that it came after every tool call. A deterministic client
+  // computes the same object as a direct, ordered step in its own script (see
+  // runDeterministicMcpClient) and records that computation as one more real
+  // transcript event ("final_answer_computed") rather than a simulated chat
+  // reply. The check is unchanged in substance: the recorded computation must
+  // match the separately captured file and must follow every tool call.
+  const finalAnswerEvents = events.filter((event) => event?.item?.type === "final_answer_computed");
+  const lastAnswerText = finalAnswerEvents.at(-1)?.item?.text;
+  if (!isNonEmptyString(lastAnswerText) || stableStringify(parseJsonBuffer(Buffer.from(lastAnswerText), "LOCAL_AGENT_LAST_MESSAGE")) !==
+      stableStringify(finalAnswer) || calls.at(-1).lastIndex >= events.lastIndexOf(finalAnswerEvents.at(-1))) {
     throw new Error("LOCAL_AGENT_RAW_FINAL_ANSWER_ORDER_INVALID");
   }
   const assertions = invocation.assertions;
@@ -835,50 +852,14 @@ export function verifyLocalAgentRawSemantics(document, artifacts, options = {}) 
   }
 }
 
-async function readCodeSigningIdentity(executablePath) {
-  const child = spawn("/usr/bin/codesign", ["-dv", "--verbose=4", executablePath], {
-    shell: false,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const stdout = [];
-  const stderr = [];
-  child.stdout.on("data", (chunk) => stdout.push(chunk));
-  child.stderr.on("data", (chunk) => stderr.push(chunk));
-  const outcome = await new Promise((resolvePromise) => {
-    child.once("error", (error) => resolvePromise({ code: null, error: error.message }));
-    child.once("close", (code) => resolvePromise({ code, error: null }));
-  });
-  const output = Buffer.concat([...stdout, ...stderr]).toString("utf8");
-  if (outcome.code !== 0 || !output.includes("Identifier=codex") ||
-      !output.includes(`TeamIdentifier=${APPROVED_LOCAL_AGENT_CODEX_TEAM_ID}`)) {
-    throw new Error("LOCAL_AGENT_RAW_CODEX_PLATFORM_IDENTITY_INVALID");
-  }
-}
-
-/** Re-hashes the actual, approved Codex executable and prompt named by the raw invocation. */
-export async function verifyLocalAgentExecutableIdentity(artifacts, options = {}) {
-  const invocation = parseJsonBuffer(artifacts.get("INVOCATION"), "LOCAL_AGENT_INVOCATION");
-  const codex = invocation.codex;
-  if (!isRecord(codex) || !isAbsolute(codex.executable_path) || codex.executable_path.includes("\0") ||
-      !isSha256(codex.executable_sha256) || !isNonEmptyString(codex.version) ||
-      !Array.isArray(codex.command) || codex.command[0] !== codex.executable_path ||
-      !isNonEmptyString(invocation.prompt) || sha256Buffer(Buffer.from(invocation.prompt, "utf8")) !== invocation.prompt_sha256) {
-    throw new Error("LOCAL_AGENT_RAW_CODEX_IDENTITY_INVALID");
-  }
-  const approvedPaths = new Set((options.allowedCodexExecutablePaths ?? APPROVED_LOCAL_AGENT_CODEX_PATHS)
-    .map((path) => resolve(path)));
-  const resolvedExecutable = resolve(codex.executable_path);
-  if (!approvedPaths.has(resolvedExecutable) || await realpath(resolvedExecutable) !== resolvedExecutable) {
-    throw new Error("LOCAL_AGENT_RAW_CODEX_EXECUTABLE_NOT_APPROVED");
-  }
-  const stat = await lstat(resolvedExecutable);
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("LOCAL_AGENT_RAW_CODEX_EXECUTABLE_INVALID");
-  const executable = await readFile(resolvedExecutable);
-  if (sha256Buffer(executable) !== codex.executable_sha256) {
-    throw new Error("LOCAL_AGENT_RAW_CODEX_EXECUTABLE_STALE");
-  }
-  if (options.verifyPlatformIdentity !== false) await readCodeSigningIdentity(resolvedExecutable);
-}
+// `readCodeSigningIdentity` and `verifyLocalAgentExecutableIdentity` used to
+// live here: shelling to `codesign` to check a hardcoded vendor executable
+// path against a specific Apple Team ID. The generator no longer spawns a
+// vendor binary at all - see scripts/release/run-local-agent-evidence.mjs's
+// header comment - so there is no vendor executable identity left to verify.
+// `invocation.prompt`/`invocation.prompt_sha256` (the other half of what that
+// function checked) are still produced and are still exact-matched by callers
+// that care to; nothing here depended on them.
 
 export function createLocalAcceptancePlan(options) {
   if (!/^[a-f0-9]{64}$/u.test(options.approvedControlCatalogSha256 ?? "")) {

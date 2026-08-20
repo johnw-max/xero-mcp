@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
-import { realpathSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   ACCEPTED_LOCAL_AGENT_EVIDENCE_BOUNDARIES,
@@ -19,7 +17,6 @@ import {
   validateLocalAgentEvidence,
   validateProcessCrashRestartEvidence,
   verifyEvidenceArtifactFiles,
-  verifyLocalAgentExecutableIdentity,
   verifyLocalAgentRawSemantics,
 } from "../scripts/release/local-acceptance-gate-lib.mjs";
 import { createDeterministicTar } from "../scripts/release/release-bundle-lib.mjs";
@@ -62,8 +59,8 @@ function localAgentEvidence() {
     source_fingerprint: sourceFingerprint,
     generator: generator("CURRENT_LOCAL_AGENT_HARNESS"),
     raw_artifacts: [
-      { artifact_type: "CODEX_EVENTS_JSONL", path: "raw/codex-events.jsonl", sha256: digest("raw-agent\n"), size_bytes: 10 },
-      { artifact_type: "CODEX_STDERR", path: "raw/codex-stderr.log", sha256: digest("empty\n"), size_bytes: 6 },
+      { artifact_type: "MCP_CLIENT_TRANSCRIPT_JSONL", path: "raw/mcp-client-transcript.jsonl", sha256: digest("raw-agent\n"), size_bytes: 10 },
+      { artifact_type: "MCP_SERVER_STDERR", path: "raw/mcp-server-stderr.log", sha256: digest("empty\n"), size_bytes: 6 },
       { artifact_type: "FINAL_ANSWER", path: "raw/final-answer.json", sha256: digest("final\n"), size_bytes: 6 },
       { artifact_type: "SERVER_AUDIT", path: "raw/server-audit.json", sha256: digest("audit\n"), size_bytes: 6 },
       { artifact_type: "INVOCATION", path: "raw/invocation.json", sha256: digest("invoke\n"), size_bytes: 7 },
@@ -79,7 +76,7 @@ function localAgentEvidence() {
       provider_write_count: 1,
       final_answer_claim: "COMPLETED_WITH_PROVIDER_ID_RECEIPT_EXACT_READBACK",
       final_answer: "Created and read back provider-1.",
-      raw_artifact_refs: ["raw/codex-events.jsonl", "raw/final-answer.json", "raw/server-audit.json", "raw/invocation.json"],
+      raw_artifact_refs: ["raw/mcp-client-transcript.jsonl", "raw/final-answer.json", "raw/server-audit.json", "raw/invocation.json"],
     }],
   };
 }
@@ -176,6 +173,11 @@ function semanticLocalAgentFixture() {
       original_file_verified: false,
       fact_origins: ["MODEL_EXTRACTED"],
       document_validity_basis: "SUBMITTED_ASSERTION",
+      // Matches the real server literal (src/services/xeroAccountingCaseService.ts)
+      // that verifyLocalAgentRawSemantics's expectedSourceClaim now checks for.
+      verification_scope_note: "Readback confirms the ledger stored exactly what was sent. " +
+        "It does not check those figures against the original document, which was not independently verified. " +
+        "Do not describe this write as verified without saying which of the two you mean.",
     },
     completion_claim: { ledger_write_claim: "ALL_ELIGIBLE_WRITES_READBACK_VERIFIED" },
     operations: [{
@@ -248,7 +250,7 @@ function semanticLocalAgentFixture() {
     type: "item.completed",
     item: { type: "mcp_tool_call", status: "completed", error: null, ...call },
   }));
-  events.push({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(finalAnswer) } } as never);
+  events.push({ type: "item.completed", item: { type: "final_answer_computed", text: JSON.stringify(finalAnswer) } } as never);
   const protocolArguments = toolCalls.map((call) => Object.fromEntries(Object.entries(call.arguments).map(([key, value]) => [
     key,
     key === "target_session_ref" ? redactedTargetSessionRef : value,
@@ -339,8 +341,8 @@ function semanticLocalAgentFixture() {
   return {
     document,
     artifacts: new Map([
-      ["CODEX_EVENTS_JSONL", Buffer.from(`${events.map((event) => JSON.stringify(event)).join("\n")}\n`)],
-      ["CODEX_STDERR", Buffer.from("<empty>\n")],
+      ["MCP_CLIENT_TRANSCRIPT_JSONL", Buffer.from(`${events.map((event) => JSON.stringify(event)).join("\n")}\n`)],
+      ["MCP_SERVER_STDERR", Buffer.from("<empty>\n")],
       ["FINAL_ANSWER", Buffer.from(JSON.stringify(finalAnswer))],
       ["SERVER_AUDIT", Buffer.from(JSON.stringify(audit))],
       ["INVOCATION", Buffer.from(JSON.stringify(invocation))],
@@ -643,8 +645,8 @@ describe("fail-closed local acceptance mechanism", () => {
       await mkdir(join(root, "scripts"), { recursive: true });
       await mkdir(join(evidenceDirectory, "raw"), { recursive: true });
       await writeFile(join(root, "scripts/evidence-generator.mjs"), "generator\n");
-      await writeFile(join(evidenceDirectory, "raw/codex-events.jsonl"), "raw-agent\n");
-      await writeFile(join(evidenceDirectory, "raw/codex-stderr.log"), "empty\n");
+      await writeFile(join(evidenceDirectory, "raw/mcp-client-transcript.jsonl"), "raw-agent\n");
+      await writeFile(join(evidenceDirectory, "raw/mcp-server-stderr.log"), "empty\n");
       await writeFile(join(evidenceDirectory, "raw/final-answer.json"), "final\n");
       await writeFile(join(evidenceDirectory, "raw/server-audit.json"), "audit\n");
       await writeFile(join(evidenceDirectory, "raw/invocation.json"), "invoke\n");
@@ -652,7 +654,7 @@ describe("fail-closed local acceptance mechanism", () => {
       const evidencePath = join(evidenceDirectory, "local-agent-run.json");
       validateLocalAgentEvidence(document, { expectedSourceFingerprint: sourceFingerprint });
       await expect(verifyEvidenceArtifactFiles(document, evidencePath, root)).resolves.toBeInstanceOf(Map);
-      await writeFile(join(evidenceDirectory, "raw/codex-events.jsonl"), "tampered\n");
+      await writeFile(join(evidenceDirectory, "raw/mcp-client-transcript.jsonl"), "tampered\n");
       await expect(verifyEvidenceArtifactFiles(document, evidencePath, root)).rejects.toThrow("RAW_EVIDENCE_STALE");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -695,7 +697,7 @@ describe("fail-closed local acceptance mechanism", () => {
 
   it("allows bounded read-only MCP discovery before the exact business tool sequence", () => {
     const fixture = semanticLocalAgentFixture();
-    const events = fixture.artifacts.get("CODEX_EVENTS_JSONL")!.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const events = fixture.artifacts.get("MCP_CLIENT_TRANSCRIPT_JSONL")!.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
     events.unshift({
       type: "item.completed",
       item: {
@@ -708,88 +710,51 @@ describe("fail-closed local acceptance mechanism", () => {
         result: { content: [] },
       },
     });
-    fixture.artifacts.set("CODEX_EVENTS_JSONL", Buffer.from(`${events.map((event) => JSON.stringify(event)).join("\n")}\n`));
+    fixture.artifacts.set("MCP_CLIENT_TRANSCRIPT_JSONL", Buffer.from(`${events.map((event) => JSON.stringify(event)).join("\n")}\n`));
     expect(() => verifyLocalAgentRawSemantics(fixture.document, fixture.artifacts)).not.toThrow();
   });
 
-  it("independently validates raw Skill reads and rejects boundary, write, and late shell commands", () => {
-    const skillPath = ".agents/skills/execute-approved-accounting-entry/SKILL.md";
-    const commandEvent = (command: string, id = "skill-read") => ({
-      type: "item.completed",
-      item: { type: "command_execution", id, command, status: "completed", exit_code: 0 },
-    });
-    const withCommand = (fixture: ReturnType<typeof semanticLocalAgentFixture>, event: Record<string, unknown>, index = 0) => {
-      const events = fixture.artifacts.get("CODEX_EVENTS_JSONL")!.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
-      events.splice(index, 0, event);
-      fixture.artifacts.set("CODEX_EVENTS_JSONL", Buffer.from(`${events.map((value) => JSON.stringify(value)).join("\n")}\n`));
-    };
-
-    const legal = semanticLocalAgentFixture();
-    withCommand(legal, commandEvent(`cat ${skillPath}`));
-    expect(() => verifyLocalAgentRawSemantics(legal.document, legal.artifacts)).not.toThrow();
-
-    const outOfBoundary = semanticLocalAgentFixture();
-    withCommand(outOfBoundary, commandEvent("cat README.md"));
-    expect(() => verifyLocalAgentRawSemantics(outOfBoundary.document, outOfBoundary.artifacts))
-      .toThrow("LOCAL_AGENT_RAW_SKILL_COMMAND_INVALID");
-
-    const write = semanticLocalAgentFixture();
-    withCommand(write, commandEvent(`cat ${skillPath} > /tmp/skill-copy`));
-    expect(() => verifyLocalAgentRawSemantics(write.document, write.artifacts))
-      .toThrow("LOCAL_AGENT_RAW_SKILL_COMMAND_INVALID");
-
-    const late = semanticLocalAgentFixture();
-    withCommand(late, commandEvent(`cat ${skillPath}`, "late-read"), 1);
-    expect(() => verifyLocalAgentRawSemantics(late.document, late.artifacts))
-      .toThrow("LOCAL_AGENT_RAW_SKILL_COMMAND_AFTER_BUSINESS");
-  });
-
-  it("independently locks Codex wrapper Skill reads to one normalized temporary workspace root", () => {
-    const skillPath = ".agents/skills/execute-approved-accounting-entry/SKILL.md";
-    const tempRoot = realpathSync(tmpdir());
-    const rootA = join(tempRoot, "xero-local-agent-workspace-independent-A");
-    const rootB = join(tempRoot, "xero-local-agent-workspace-independent-B");
-    const commandEvent = (root: string, id: string) => ({
+  // The two tests this replaces ("independently validates raw Skill
+  // reads..." and "independently locks Codex wrapper Skill reads...")
+  // exercised assertAgentSkillReadCommandEvents's shell-command policy: a
+  // bounded, in-scope Skill read was legal before the business sequence
+  // started, and out-of-scope reads, writes, late reads, and workspace-root
+  // drift were all rejected. verifyLocalAgentRawSemantics no longer calls
+  // that policy at all - a deterministic client has no instructions document
+  // to read and never shells out, so there is no "legal shell read" case left
+  // to test. What remains true, and is what this test covers, is that ANY
+  // command_execution event - legal-looking or not - now fails closed.
+  it("rejects any command_execution event in the raw transcript, regardless of what it reads", () => {
+    const commandEvent = {
       type: "item.completed",
       item: {
         type: "command_execution",
-        id,
-        command: `/bin/zsh -lc "sed -n '1,240p' ${root}/${skillPath}"`,
+        id: "shell-1",
+        command: "cat .agents/skills/execute-approved-accounting-entry/SKILL.md",
         status: "completed",
         exit_code: 0,
       },
-    });
-    const withEvents = (fixture: ReturnType<typeof semanticLocalAgentFixture>, eventsToInsert: Record<string, unknown>[]) => {
-      const events = fixture.artifacts.get("CODEX_EVENTS_JSONL")!.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
-      events.splice(0, 0, ...eventsToInsert);
-      fixture.artifacts.set("CODEX_EVENTS_JSONL", Buffer.from(`${events.map((value) => JSON.stringify(value)).join("\n")}\n`));
     };
-    const drift = semanticLocalAgentFixture();
-    withEvents(drift, [commandEvent(rootA, "read-a"), commandEvent(rootB, "read-b")]);
-    expect(() => verifyLocalAgentRawSemantics(drift.document, drift.artifacts))
-      .toThrow("LOCAL_AGENT_RAW_SKILL_COMMAND_ROOT_DRIFT");
+    const withCommand = (fixture: ReturnType<typeof semanticLocalAgentFixture>) => {
+      const events = fixture.artifacts.get("MCP_CLIENT_TRANSCRIPT_JSONL")!.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
+      events.unshift(commandEvent);
+      fixture.artifacts.set("MCP_CLIENT_TRANSCRIPT_JSONL", Buffer.from(`${events.map((value) => JSON.stringify(value)).join("\n")}\n`));
+    };
+    const clean = semanticLocalAgentFixture();
+    expect(() => verifyLocalAgentRawSemantics(clean.document, clean.artifacts)).not.toThrow();
 
-    const wrongAbsolutePath = semanticLocalAgentFixture();
-    withEvents(wrongAbsolutePath, [{
-      type: "item.completed",
-      item: {
-        type: "command_execution",
-        id: "wrong-absolute-path",
-        command: `/bin/zsh -lc "cat ${tempRoot}/not-a-mounted-skill.md"`,
-        status: "completed",
-        exit_code: 0,
-      },
-    }]);
-    expect(() => verifyLocalAgentRawSemantics(wrongAbsolutePath.document, wrongAbsolutePath.artifacts))
-      .toThrow("LOCAL_AGENT_RAW_SKILL_COMMAND_INVALID");
+    const withShellCommand = semanticLocalAgentFixture();
+    withCommand(withShellCommand);
+    expect(() => verifyLocalAgentRawSemantics(withShellCommand.document, withShellCommand.artifacts))
+      .toThrow("LOCAL_AGENT_RAW_UNEXPECTED_COMMAND_EXECUTION");
   });
 
   it("requires the organisation read envelope and strips organisationId only at the service boundary", () => {
     const leaked = semanticLocalAgentFixture();
-    const events = leaked.artifacts.get("CODEX_EVENTS_JSONL")!.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const events = leaked.artifacts.get("MCP_CLIENT_TRANSCRIPT_JSONL")!.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
     const organisationCall = events.find((event) => event.item?.type === "mcp_tool_call" && event.item.tool === "xero_get_organisation" && event.type === "item.completed");
     organisationCall.item.result.structuredContent.result.organisationId = "11111111-1111-4111-8111-111111111111";
-    leaked.artifacts.set("CODEX_EVENTS_JSONL", Buffer.from(`${events.map((value) => JSON.stringify(value)).join("\n")}\n`));
+    leaked.artifacts.set("MCP_CLIENT_TRANSCRIPT_JSONL", Buffer.from(`${events.map((value) => JSON.stringify(value)).join("\n")}\n`));
     expect(() => verifyLocalAgentRawSemantics(leaked.document, leaked.artifacts))
       .toThrow("LOCAL_AGENT_RAW_PROTOCOL_SERVICE_BINDING_INVALID:2");
 
@@ -814,7 +779,7 @@ describe("fail-closed local acceptance mechanism", () => {
 
   it("rejects MCP discovery after the governed business sequence has started", () => {
     const fixture = semanticLocalAgentFixture();
-    const events = fixture.artifacts.get("CODEX_EVENTS_JSONL")!.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const events = fixture.artifacts.get("MCP_CLIENT_TRANSCRIPT_JSONL")!.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
     events.splice(1, 0, {
       type: "item.completed",
       item: {
@@ -827,16 +792,16 @@ describe("fail-closed local acceptance mechanism", () => {
         result: { content: [] },
       },
     });
-    fixture.artifacts.set("CODEX_EVENTS_JSONL", Buffer.from(`${events.map((event) => JSON.stringify(event)).join("\n")}\n`));
+    fixture.artifacts.set("MCP_CLIENT_TRANSCRIPT_JSONL", Buffer.from(`${events.map((event) => JSON.stringify(event)).join("\n")}\n`));
     expect(() => verifyLocalAgentRawSemantics(fixture.document, fixture.artifacts))
       .toThrow("LOCAL_AGENT_RAW_MCP_DISCOVERY_INVALID");
   });
 
   it("rejects raw Agent events that stop carrying the exact server-issued target reference", () => {
     const fixture = semanticLocalAgentFixture();
-    const events = fixture.artifacts.get("CODEX_EVENTS_JSONL")!.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const events = fixture.artifacts.get("MCP_CLIENT_TRANSCRIPT_JSONL")!.toString("utf8").trim().split("\n").map((line) => JSON.parse(line));
     events[3]!.item.arguments.target_session_ref = `xts_${"B".repeat(43)}`;
-    fixture.artifacts.set("CODEX_EVENTS_JSONL", Buffer.from(`${events.map((event) => JSON.stringify(event)).join("\n")}\n`));
+    fixture.artifacts.set("MCP_CLIENT_TRANSCRIPT_JSONL", Buffer.from(`${events.map((event) => JSON.stringify(event)).join("\n")}\n`));
     expect(() => verifyLocalAgentRawSemantics(fixture.document, fixture.artifacts))
       .toThrow("LOCAL_AGENT_RAW_TARGET_SESSION_SEQUENCE_INVALID");
   });
@@ -867,32 +832,12 @@ describe("fail-closed local acceptance mechanism", () => {
       .toThrow("LOCAL_AGENT_RAW_FINAL_ANSWER_INVALID");
   });
 
-  it("rejects a workspace-controlled fake Codex executable even when its self-reported hash matches", async () => {
-    const root = await mkdtemp(join(tmpdir(), "local-agent-fake-codex-"));
-    try {
-      const fakeCodex = join(root, "codex");
-      const bytes = Buffer.from("#!/bin/sh\necho codex-cli 99.0.0\n", "utf8");
-      await writeFile(fakeCodex, bytes, { mode: 0o755 });
-      const canonicalFakeCodex = await realpath(fakeCodex);
-      const prompt = "synthetic local Agent prompt";
-      const artifacts = new Map([["INVOCATION", Buffer.from(JSON.stringify({
-        codex: {
-          executable_path: canonicalFakeCodex,
-          executable_sha256: digest(bytes),
-          version: "codex-cli 99.0.0",
-          command: [canonicalFakeCodex, "exec"],
-        },
-        prompt,
-        prompt_sha256: digest(prompt),
-      }))]]);
-      await expect(verifyLocalAgentExecutableIdentity(artifacts))
-        .rejects.toThrow("LOCAL_AGENT_RAW_CODEX_EXECUTABLE_NOT_APPROVED");
-      await expect(verifyLocalAgentExecutableIdentity(artifacts, {
-        allowedCodexExecutablePaths: [canonicalFakeCodex],
-        verifyPlatformIdentity: false,
-      })).resolves.toBeUndefined();
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
+  // "rejects a workspace-controlled fake Codex executable even when its
+  // self-reported hash matches" is gone with verifyLocalAgentExecutableIdentity
+  // itself (see scripts/release/local-acceptance-gate-lib.mjs): the generator
+  // no longer spawns a vendor binary, so there is no vendor executable
+  // identity left to fake or to verify. What that function's other half
+  // checked - that raw_artifacts' recorded digests match their actual bytes -
+  // is unchanged and still covered by "binds evidence to the current
+  // generator and raw artifact bytes" above.
 });

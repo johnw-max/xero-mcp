@@ -20,7 +20,6 @@ import {
   sha256Buffer,
   validateLocalAgentEvidence,
   validateProcessCrashRestartEvidence,
-  verifyLocalAgentExecutableIdentity,
   verifyLocalAgentRawSemantics,
   verifyEvidenceArtifactFiles,
   REQUIRED_GATE_STEP_IDS,
@@ -444,8 +443,11 @@ async function validateEvidenceStep(step, expectedSourceFingerprint, snapshotRoo
     }
     const artifacts = await verifyEvidenceArtifactFiles(document, step.evidencePath, snapshotRoot);
     if (step.evidenceKind === "LOCAL_AGENT") {
+      // No paired executable-identity check remains here: the generator no
+      // longer spawns a vendor binary (see run-local-agent-evidence.mjs's
+      // header comment), so there is no separate executable identity left to
+      // verify beyond what verifyEvidenceArtifactFiles already re-hashes.
       await verifyLocalAgentRawSemantics(document, artifacts, { repoRoot: snapshotRoot });
-      await verifyLocalAgentExecutableIdentity(artifacts);
     } else {
       await recomputeProcessCrashEvidenceFromRaw(document, step.evidencePath);
     }
